@@ -1,0 +1,39 @@
+{
+  "name": "notional",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev:web": "pnpm --filter web dev",
+    "dev:api": "pnpm --filter api dev",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "docker:logs": "docker compose logs -f",
+    "test:e2e": "playwright test"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "12.4.1",
+      "onFail": "download"
+    }
+  },
+  "packageManager": "pnpm@12.4.1",
+  "type": "module",
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.63.0",
+    "eslint": "^10.10.0",
+    "globals": "^17.12.0",
+    "prettier": "^3.9.6",
+    "typescript-eslint": "^8.70.0"
+  }
+}
