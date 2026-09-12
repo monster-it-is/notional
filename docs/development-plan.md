@@ -6,7 +6,17 @@ Status: COMPLETE
 
 ## Phase 1 — Database Foundation
 
-Status: NOT STARTED
+Status: IN PROGRESS
+
+Goals:
+
+- PostgreSQL connection
+- Drizzle ORM setup
+- migration infrastructure
+- database integration testing
+- database health check
+
+Do not create domain tables yet.
 
 ## Phase 2 — Authentication
 
@@ -40,4 +50,38 @@ Status: NOT STARTED
 
 Status: NOT STARTED
 
-...
+## Phase 10 — Executions
+
+Status: NOT STARTED
+
+## Phase 11 — Positions
+
+Status: NOT STARTED
+
+## Phase 12 — Margin and Leverage
+
+Status: NOT STARTED
+
+## Phase 13 — Order / Position Integration
+
+Status: NOT STARTED
+
+## Phase 14 — Liquidation
+
+Status: NOT STARTED
+
+## Phase 15 — Funding
+
+Status: NOT STARTED
+
+## Phase 16 — WebSockets
+
+Status: NOT STARTED
+
+## Phase 17 — React Trading Interface
+
+Status: NOT STARTED
+
+## Phase 18 — Testing, Hardening, and Deployment
+
+Status: NOT STARTED

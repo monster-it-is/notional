@@ -14,7 +14,10 @@
     "docker:up": "docker compose up -d",
     "docker:down": "docker compose down",
     "docker:logs": "docker compose logs -f",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "db:generate": "pnpm --filter @notional/db db:generate",
+    "db:migrate": "pnpm --filter @notional/db db:migrate",
+    "db:studio": "pnpm --filter @notional/db db:studio"
   },
   "keywords": [],
   "author": "",

@@ -1,3 +1,4 @@
+import { checkDatabaseHealth } from "@notional/db";
 import Fastify from "fastify";
 
 const app = Fastify({
@@ -5,10 +6,12 @@ const app = Fastify({
 });
 
 app.get("/health", async () => {
+  await checkDatabaseHealth();
   return {
     status: "ok",
   };
 });
+
 
 const start = async () => {
   try {
