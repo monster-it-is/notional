@@ -6,21 +6,11 @@ Status: COMPLETE
 
 ## Phase 1 — Database Foundation
 
-Status: IN PROGRESS
-
-Goals:
-
-- PostgreSQL connection
-- Drizzle ORM setup
-- migration infrastructure
-- database integration testing
-- database health check
-
-Do not create domain tables yet.
+Status: COMPLETE
 
 ## Phase 2 — Authentication
 
-Status: NOT STARTED
+Status: COMPLETE
 
 ## Phase 3 — Paper Account
 

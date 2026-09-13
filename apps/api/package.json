@@ -9,7 +9,7 @@
     "build": "tsc",
     "start": "tsx --env-file=../../.env src/server.ts",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "node --env-file=../../.env ./node_modules/vitest/vitest.mjs run",
     "lint": "eslint src"
   },
   "keywords": [],
@@ -17,7 +17,10 @@
   "license": "ISC",
   "type": "module",
   "dependencies": {
+    "@fastify/cors": "^11.3.0",
+    "@notional/contracts": "workspace:*",
     "@notional/db": "workspace:*",
+    "better-auth": "^1.7.4",
     "fastify": "^5.12.4",
     "zod": "^4.6.2"
   },
