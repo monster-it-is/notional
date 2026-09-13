@@ -1,8 +1,43 @@
-import type { AccountResponse, AccountStatus } from "@notional/contracts";
-import { db, ensurePaperAccount } from "@notional/db";
+import type {
+  AccountNotInitializedError,
+  AccountResponse,
+  AccountStatus,
+} from "@notional/contracts";
+import {
+  db,
+  findPaperAccountByUserId,
+  findSignupAllocationFundingEvent,
+} from "@notional/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import { provisionSignupAllocation } from "./services/signup-allocation.js";
+
 export async function getAccount(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<AccountResponse | AccountNotInitializedError | { error: string }> {
+  const session = request.auth;
+
+  if (!session) {
+    return reply.status(401).send({ error: "Unauthorized" });
+  }
+
+  const account = await findPaperAccountByUserId(db, session.user.id);
+
+  if (!account) {
+    return reply.status(409).send({ error: "ACCOUNT_NOT_INITIALIZED" });
+  }
+
+  const allocation = await findSignupAllocationFundingEvent(db, account.id);
+
+  if (!allocation) {
+    return reply.status(409).send({ error: "ACCOUNT_NOT_INITIALIZED" });
+  }
+
+  return toAccountResponse(account);
+}
+
+export async function initializeAccount(
   request: FastifyRequest,
   reply: FastifyReply,
 ): Promise<AccountResponse | { error: string }> {
@@ -12,7 +47,7 @@ export async function getAccount(
     return reply.status(401).send({ error: "Unauthorized" });
   }
 
-  const account = await ensurePaperAccount(db, session.user.id);
+  const account = await provisionSignupAllocation(session.user.id);
 
   return toAccountResponse(account);
 }

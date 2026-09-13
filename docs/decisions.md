@@ -99,10 +99,75 @@ Phase 3 guarantees:
 
 Phase 3 does not guarantee that every auth user already has a paper account before ensure runs.
 
+Authenticated `GET /api/account` no longer calls `ensurePaperAccount`. Phase 4 moved financial initialization to `POST /api/account/initialize` (ADR-010).
+
 ### Phase 4 boundary
 
-Phase 4 can make paper-account provisioning, signup allocation, ledger, funding event, and balance projection atomic with each other inside one financial transaction.
+Paper-account provisioning, signup allocation, ledger, funding event, and balance projection are atomic with each other inside one financial transaction owned by the API service layer.
 
-Atomicity between Better Auth's already-committed user creation and that financial transaction is an unresolved architecture decision. It is not solved in Phase 3 and is not assumed to be solved automatically in Phase 4.
+Better Auth user creation remains a prior committed fact. That gap is accepted and repaired by idempotent `POST /api/account/initialize`. See ADR-010.
+
+## ADR-010 — Signup allocation ledger and initialization boundary
+
+Status: Accepted
+
+The first financial credit is a simulator signup allocation of exactly 1,000 USDT. It is not real money.
+
+### Better Auth remains outside the financial transaction
+
+Better Auth 1.7.4 commits the `user` row before application financial work begins. Email/password user creation does not wrap application tables. `databaseHooks.user.create.after` runs after the user insert (and after any Better Auth adapter transaction commit). The Drizzle transaction used by Better Auth is not exposed to application code.
+
+Phase 4 does not add Better Auth after-hooks, custom signup wrappers, or a `PENDING_PROVISIONING` status.
+
+A Better Auth user may therefore exist with no paper account and no allocation. That is recoverable, not silent.
+
+### Initialization boundary
+
+The API service `provisionSignupAllocation(userId)` in `apps/api/src/services/signup-allocation.ts` owns `db.transaction(...)`.
+
+Low-level helpers in `@notional/db` accept that executor and must not commit on their own.
+
+`POST /api/account/initialize`:
+
+- requires an authenticated session
+- accepts no amount and no userId
+- is idempotent
+- returns `AccountResponse`
+
+`GET /api/account` is a pure read. If the user has no `SIGNUP_ALLOCATION` funding event, it returns `409 { error: "ACCOUNT_NOT_INITIALIZED" }` and creates nothing.
+
+### Ledger
+
+Tables: `ledger_account`, `ledger_transaction`, `ledger_entry`, `funding_event`.
+
+Phase 4 kinds: `USER_CASH` (exactly one per paper account) and global `SYSTEM_VIRTUAL_FUNDING` (no paper account).
+
+Signed-entry convention (permanent):
+
+- USER_CASH: `+1000`
+- SYSTEM_VIRTUAL_FUNDING: `-1000`
+- `SUM(ledger_entry.amount) = 0` for a posted transaction
+
+No debit/credit fields. Ledger transactions, entries, and funding events are immutable financial history. Production code has no update/delete helpers for them.
+
+`paper_account.balance` is a cash projection updated only inside the financial transaction.
+
+### Idempotency and locking
+
+Logical identity: `signup-allocation:<userId>`.
+
+Database uniqueness:
+
+- `ledger_transaction.idempotency_key`
+- `funding_event.idempotency_key`
+- one `SIGNUP_ALLOCATION` funding event per paper account
+
+Eligibility is missing signup-allocation history, never `balance === 0`.
+
+Concurrency uses READ COMMITTED plus `SELECT ... FOR UPDATE` on the paper account. Unique constraints are the duplicate-prevention backstop.
+
+### Decimal arithmetic
+
+Financial arithmetic uses an isolated `decimal.js` clone (`precision: 50`) in `@notional/db`. The allocation originates from the decimal string `"1000"`. Values whose fractional scale exceeds 18 are rejected. Database and API balances remain strings.
 
 

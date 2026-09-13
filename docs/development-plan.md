@@ -16,13 +16,15 @@ Status: COMPLETE
 
 Status: COMPLETE
 
-## Phase 4 — Signup Allocation
+## Phase 4 — Signup Allocation + Ledger Foundation
+
+Status: COMPLETE
+
+## Phase 5 — Faucet
 
 Status: NOT STARTED
 
-## Phase 5 — Ledger + Faucet
-
-Status: NOT STARTED
+Ledger tables, signed posting, and the 1,000 USDT signup allocation were introduced in Phase 4. Phase 5 adds faucet claims, the 24-hour cooldown, and a funding-history API.
 
 ## Phase 6 — Instruments
 

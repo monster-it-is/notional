@@ -15,6 +15,13 @@
       "when": 1789300271804,
       "tag": "0001_paper_account",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789303490403,
+      "tag": "0002_useful_blade",
+      "breakpoints": true
     }
   ]
 }

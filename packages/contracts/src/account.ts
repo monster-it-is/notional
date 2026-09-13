@@ -11,3 +11,7 @@ export type AccountResponse = {
   lastFaucetClaimAt: string | null;
   createdAt: string;
 };
+
+export type AccountNotInitializedError = {
+  error: "ACCOUNT_NOT_INITIALIZED";
+};

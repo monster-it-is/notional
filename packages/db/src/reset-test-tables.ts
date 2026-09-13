@@ -4,7 +4,17 @@ import { db, pool } from "./client.js";
 
 export async function resetTestTables(): Promise<void> {
   await db.execute(
-    sql`truncate table "session", "account", "verification", "paper_account", "user" cascade`,
+    sql`truncate table
+      "ledger_entry",
+      "funding_event",
+      "ledger_transaction",
+      "ledger_account",
+      "session",
+      "account",
+      "verification",
+      "paper_account",
+      "user"
+      cascade`,
   );
 }
 

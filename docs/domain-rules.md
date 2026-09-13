@@ -25,19 +25,27 @@ Database invariant:
 
 ## Signup Allocation
 
-Every new user receives exactly 1,000 USDT of virtual balance when the paper account is created.
+Every eligible user receives exactly 1,000 USDT of virtual simulator credit exactly once.
 
-The creation of:
+Better Auth user creation commits first and is not part of the financial transaction.
 
-- user
+The following financial effects are atomic with each other:
+
 - paper account
-- ledger account
-- funding event
-- ledger transaction
-- ledger entries
-- balance projection
+- USER_CASH ledger account
+- SYSTEM_VIRTUAL_FUNDING ledger account
+- SIGNUP_ALLOCATION funding event
+- SIGNUP_ALLOCATION ledger transaction
+- two balanced ledger entries
+- paper-account balance projection
 
-must eventually be atomic when this feature is implemented.
+Retries and concurrent initialization must not create a second credit.
+
+Eligibility is the absence of SIGNUP_ALLOCATION history, never the current balance.
+
+`POST /api/account/initialize` is the recoverable initialization boundary.
+
+`GET /api/account` is read-only and must not create financial state.
 
 ## Faucet
 
@@ -177,6 +185,8 @@ Risk must be re-checked after acquiring required database locks.
 
 The ledger is the immutable explanation of financial changes.
 
+Signed amounts are the permanent convention. For a posted ledger transaction, the signed entry amounts sum to zero.
+
 The paper-account balance is a current projection for fast reads.
 
 Do not model financial correctness as only:
@@ -202,6 +212,7 @@ Critical financial state transitions must use PostgreSQL transactions and approp
 
 Important race conditions include:
 
+- simultaneous signup-allocation initialization
 - simultaneous faucet claims
 - concurrent orders using the same available margin
 - simultaneous mutation of the same position

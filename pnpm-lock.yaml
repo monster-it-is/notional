@@ -296,9 +296,12 @@ importers:
 
   packages/db:
     dependencies:
+      decimal.js:
+        specifier: ^10.6.0
+        version: 10.6.0
       drizzle-orm:
         specifier: ^0.45.2
-        version: 0.45.2(@types/pg@8.23.1)(pg@8.23.0)
+        version: 0.45.2(@types/pg@8.23.1)(kysely@0.29.5)(pg@8.23.0)
       pg:
         specifier: ^8.23.0
         version: 8.23.0
@@ -1599,6 +1602,9 @@ packages:
     peerDependenciesMeta:
       supports-color:
         optional: true
+
+  decimal.js@10.6.0:
+    resolution: {integrity: sha512-YpgQiITW3JXGntzdUmyUR1V812Hn8T1YVXhCu+wO3OpS4eU9l4YdD3qjyiKdV6mvV29zapkMeD390UVEf2lkUg==}
 
   deep-is@0.1.4:
     resolution: {integrity: sha512-oIPzksmTg4/MriiaYGO+okXDT7ztn/w3Eptv/+gSIdMdKsJo0u4CfYNFJPy+4SKMuCqGw2wxnA+URMg3t8a/bQ==}
@@ -3274,6 +3280,8 @@ snapshots:
     dependencies:
       ms: 2.1.3
 
+  decimal.js@10.6.0: {}
+
   deep-is@0.1.4: {}
 
   defu@6.1.7: {}
@@ -3295,11 +3303,6 @@ snapshots:
     optionalDependencies:
       '@types/pg': 8.23.1
       kysely: 0.29.5
-      pg: 8.23.0
-
-  drizzle-orm@0.45.2(@types/pg@8.23.1)(pg@8.23.0):
-    optionalDependencies:
-      '@types/pg': 8.23.1
       pg: 8.23.0
 
   es-module-lexer@2.3.2: {}

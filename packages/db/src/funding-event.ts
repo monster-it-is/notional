@@ -1,0 +1,59 @@
+import { and, eq } from "drizzle-orm";
+
+import type { FinancialExecutor, FinancialTransaction } from "./executor.js";
+import { type MoneyDecimal, toDbDecimal } from "./money.js";
+import { fundingEvent } from "./schema/funding.js";
+
+export type FundingEvent = typeof fundingEvent.$inferSelect;
+
+export type InsertFundingEventInput = {
+  paperAccountId: string;
+  eventType: "SIGNUP_ALLOCATION";
+  amount: MoneyDecimal;
+  idempotencyKey: string;
+  ledgerTransactionId: string;
+};
+
+export async function findSignupAllocationFundingEvent(
+  executor: Pick<FinancialExecutor, "select">,
+  paperAccountId: string,
+): Promise<FundingEvent | null> {
+  const [existing] = await executor
+    .select()
+    .from(fundingEvent)
+    .where(
+      and(
+        eq(fundingEvent.paperAccountId, paperAccountId),
+        eq(fundingEvent.eventType, "SIGNUP_ALLOCATION"),
+      ),
+    );
+
+  return existing ?? null;
+}
+
+export async function insertFundingEvent(
+  executor: FinancialTransaction,
+  input: InsertFundingEventInput,
+): Promise<FundingEvent> {
+  if (!input.amount.isPositive()) {
+    throw new Error("funding event amount must be positive");
+  }
+
+  const [created] = await executor
+    .insert(fundingEvent)
+    .values({
+      paperAccountId: input.paperAccountId,
+      eventType: input.eventType,
+      amount: toDbDecimal(input.amount),
+      currency: "USDT",
+      idempotencyKey: input.idempotencyKey,
+      ledgerTransactionId: input.ledgerTransactionId,
+    })
+    .returning();
+
+  if (!created) {
+    throw new Error("funding_event insert failed");
+  }
+
+  return created;
+}

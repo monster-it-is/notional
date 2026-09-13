@@ -1,6 +1,8 @@
 import { eq } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
+import type { FinancialTransaction } from "./executor.js";
+import { type MoneyDecimal, toDbDecimal } from "./money.js";
 import { paperAccount } from "./schema/paper-account.js";
 
 export type PaperAccount = typeof paperAccount.$inferSelect;
@@ -26,14 +28,60 @@ export async function ensurePaperAccount(
     return inserted;
   }
 
-  const [existing] = await executor
-    .select()
-    .from(paperAccount)
-    .where(eq(paperAccount.userId, userId));
+  const existing = await findPaperAccountByUserId(executor, userId);
 
   if (!existing) {
     throw new Error("paper_account missing after ensure");
   }
 
   return existing;
+}
+
+export async function findPaperAccountByUserId(
+  executor: Pick<NodePgDatabase, "select">,
+  userId: string,
+): Promise<PaperAccount | null> {
+  const [existing] = await executor
+    .select()
+    .from(paperAccount)
+    .where(eq(paperAccount.userId, userId));
+
+  return existing ?? null;
+}
+
+export async function lockPaperAccountByUserId(
+  executor: Pick<NodePgDatabase, "select">,
+  userId: string,
+): Promise<PaperAccount> {
+  const [account] = await executor
+    .select()
+    .from(paperAccount)
+    .where(eq(paperAccount.userId, userId))
+    .for("update");
+
+  if (!account) {
+    throw new Error("paper_account missing after lock");
+  }
+
+  return account;
+}
+
+export async function updatePaperAccountBalance(
+  executor: FinancialTransaction,
+  paperAccountId: string,
+  balance: MoneyDecimal,
+): Promise<PaperAccount> {
+  const [updated] = await executor
+    .update(paperAccount)
+    .set({
+      balance: toDbDecimal(balance),
+    })
+    .where(eq(paperAccount.id, paperAccountId))
+    .returning();
+
+  if (!updated) {
+    throw new Error("paper_account missing after balance update");
+  }
+
+  return updated;
 }
