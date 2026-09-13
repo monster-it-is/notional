@@ -28,6 +28,17 @@ export {
   toDbDecimal,
 } from "./money.js";
 export {
+  findInstrumentById,
+  findInstrumentBySymbol,
+  listActiveInstruments,
+  upsertInstrumentBySymbol,
+} from "./instrument.js";
+export type {
+  Instrument,
+  InstrumentStatus,
+  UpsertInstrumentInput,
+} from "./instrument.js";
+export {
   applyFaucetClaim,
   ensurePaperAccount,
   findPaperAccountByUserId,

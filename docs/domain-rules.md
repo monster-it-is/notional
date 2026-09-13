@@ -270,4 +270,25 @@ Stale market data must not be used to:
 - trigger limit orders
 - trigger liquidation
 
-If market data is stale, trading should pause
+If market data is stale, trading should pause.
+
+## Instruments
+
+The instrument catalog is the set of Binance USD-M linear perpetual contracts Notional allows users to paper-trade. Settlement and margin are USDT only.
+
+Identity:
+
+- `instrument.id` is the stable internal UUID
+- later orders, executions, and positions reference `instrument.id`
+- unique `symbol` is the canonical external identity and equals the Binance USD-M futures symbol
+
+The catalog does not include a second `binance_symbol` column.
+
+PostgreSQL stores static metadata (assets, status, exact price/quantity/notional filters). It does not store live prices, books, funding rates, or 24h statistics.
+
+`ACTIVE` instruments may later accept new orders. `INACTIVE` instruments must not accept new orders, but rows remain because positions and history may still refer to them. Do not delete instrument rows.
+
+PRICE_FILTER values of `0` mean a disabled Binance sub-rule and must be persisted as `0`. Quantity lot-size filters remain positive. Minimum notional is a positive USDT decimal string.
+
+Phase 7 must ingest only `contractType === "PERPETUAL"` with both `quoteAsset === "USDT"` and `marginAsset === "USDT"`.
+

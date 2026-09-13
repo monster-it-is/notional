@@ -11,6 +11,7 @@ import {
 } from "./account.js";
 import { registerAuth, requireAuth } from "./auth-plugin.js";
 import { env } from "./env.js";
+import { getInstrumentBySymbol, getInstruments } from "./instruments.js";
 
 export async function buildApp() {
   const app = Fastify({
@@ -37,6 +38,8 @@ export async function buildApp() {
   app.post("/api/account/initialize", { preHandler: requireAuth }, initializeAccount);
   app.post("/api/account/faucet", { preHandler: requireAuth }, claimAccountFaucet);
   app.get("/api/account/funding", { preHandler: requireAuth }, getFundingHistory);
+  app.get("/api/instruments", { preHandler: requireAuth }, getInstruments);
+  app.get("/api/instruments/:symbol", { preHandler: requireAuth }, getInstrumentBySymbol);
 
   app.get("/api/me", { preHandler: requireAuth }, async (request, reply): Promise<MeResponse | { error: string }> => {
     const session = request.auth;

@@ -226,4 +226,92 @@ After eligibility succeeds, the service generates `faucet:<paperAccountId>:<uuid
 
 Simultaneous claims: one success, one `FAUCET_CLAIM` funding event, one ledger transaction, two entries, one balance increment, one `last_faucet_claim_at` update.
 
+## ADR-012 — Instrument identity
+
+Status: Accepted
+
+The tradable contract catalog is `instrument`.
+
+Internal identity:
+
+- `instrument.id` is a PostgreSQL-generated UUID (`pg_catalog.gen_random_uuid()`)
+- later `order`, `execution`, and `position` rows will foreign-key this UUID with `ON DELETE RESTRICT`
+- metadata refresh must never change `id`
+
+Canonical external identity:
+
+- unique `symbol` (for example `BTCUSDT`)
+- for MVP, Notional's symbol **is** the Binance USD-M futures `symbol`
+- there is no `binance_symbol` column; a second identical identifier is not a mapping
+
+`symbol` is unique and uppercase (`CHECK (symbol = upper(symbol))`). Upsert and Phase 7 sync look up by `symbol`. If Binance retires or renames a contract, mark the existing row `INACTIVE` and insert a new row for the new symbol. Do not rewrite `symbol` on an existing id.
+
+## ADR-013 — Instrument metadata vs live market data
+
+Status: Accepted
+
+PostgreSQL `instrument` stores catalog metadata only:
+
+- identity and assets
+- contract type and status
+- PRICE_FILTER, LOT_SIZE, MARKET_LOT_SIZE, MIN_NOTIONAL
+
+It must not store live market state:
+
+- mark price, index price, last trade price
+- bid, ask, order book
+- funding rate, open interest, 24h statistics
+
+Those belong to Phase 7+ market-data infrastructure (and Redis remains non-authoritative for financial state). Stale or missing live data must not be invented by reading this table.
+
+## ADR-014 — Exact instrument filters and USDT-margined perpetuals
+
+Status: Accepted
+
+MVP instruments are Binance crypto linear perpetual futures settled/margined in USDT. The catalog only contains rows that already satisfy that invariant.
+
+PostgreSQL enforces:
+
+- `quote_asset = 'USDT'`
+- `contract_type = 'PERPETUAL'`
+- `status in ('ACTIVE', 'INACTIVE')`
+
+There is no `margin_asset` column. Phase 7 `exchangeInfo` ingestion must still require **both** `quoteAsset === "USDT"` and `marginAsset === "USDT"` before upserting, then persist quote as USDT. Spot, delivery, options, and inverse/coin-margined contracts are skipped, not stored.
+
+Filter columns are `NUMERIC(38,18)` strings. Helpers persist them through `fromDbDecimal` / `toDbDecimal` as a NUMERIC boundary only. Quantity is not money; Phase 6 does not add `PriceDecimal` / `QuantityDecimal` and does not rename `MoneyDecimal`.
+
+Authoritative filters (not precision integers):
+
+- PRICE_FILTER: `min_price`, `max_price`, `tick_size`
+- LOT_SIZE: `min_qty`, `max_qty`, `step_size`
+- MARKET_LOT_SIZE: `market_min_qty`, `market_max_qty`, `market_step_size`
+- MIN_NOTIONAL: `min_notional` (`CHECK (min_notional > 0)`)
+
+Do not persist `pricePrecision` / `quantityPrecision` as order-validation authority.
+
+PRICE_FILTER zeros mean a disabled sub-rule on Binance. Persist them exactly. CHECKs are `tick_size >= 0`, `min_price >= 0`, `max_price >= 0`. There is no `max_price >= min_price` CHECK; later order validation interprets zeros. LOT_SIZE and MARKET_LOT_SIZE step/min/max remain strictly positive, with `max >= min`.
+
+## ADR-015 — Instrument lifecycle and Phase 7 upsert
+
+Status: Accepted
+
+Status is only `ACTIVE` or `INACTIVE`.
+
+- `ACTIVE`: eligible for future new orders
+- `INACTIVE`: no new orders later; existing rows and future trading history remain
+
+Never physically delete instrument rows. There is no delete helper or delete API.
+
+`upsertInstrumentBySymbol` is a real `INSERT ... ON CONFLICT (symbol) DO UPDATE`. Concurrent syncs of the same symbol must not fail with a duplicate-key race. On conflict: preserve `id`, `symbol`, and `created_at`; update mutable metadata/filters/status and `updated_at`; return the row.
+
+The table stays empty until Phase 7 sync. Migrations do not seed Binance exchange metadata. Tests insert their own rows.
+
+Authenticated reads:
+
+- `GET /api/instruments` — ACTIVE only, `symbol ASC`, no pagination
+- `GET /api/instruments/:symbol` — any status; missing → `404 { error: "INSTRUMENT_NOT_FOUND" }`
+
+Decimal API fields are strings. `createdAt` / `updatedAt` are not exposed.
+
+
 

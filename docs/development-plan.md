@@ -28,11 +28,16 @@ Phase 5 added `POST /api/account/faucet`, a 24-hour cooldown evaluated with Post
 
 ## Phase 6 — Instruments
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 6 added the PostgreSQL `instrument` catalog: UUID identity, canonical Binance USD-M `symbol`, exact PRICE_FILTER / LOT_SIZE / MARKET_LOT_SIZE / MIN_NOTIONAL decimals, `ACTIVE`/`INACTIVE` lifecycle, `upsertInstrumentBySymbol` (`INSERT ... ON CONFLICT (symbol)`), and authenticated `GET /api/instruments` plus `GET /api/instruments/:symbol`. The table is empty until Phase 7 sync. Live market data is not stored here.
 
 ## Phase 7 — Binance Market Data
 
 Status: NOT STARTED
+
+Phase 7 will fetch Binance USD-M `exchangeInfo`, keep only perpetual contracts with `quoteAsset === "USDT"` and `marginAsset === "USDT"`, map filters into `upsertInstrumentBySymbol`, and mark missing/non-tradable known symbols `INACTIVE`. Live prices, books, and funding feeds stay off the `instrument` table.
+
 
 ## Phase 8 — Trading Mathematics
 

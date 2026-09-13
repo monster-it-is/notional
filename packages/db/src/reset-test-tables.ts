@@ -13,6 +13,7 @@ export async function resetTestTables(): Promise<void> {
       "account",
       "verification",
       "paper_account",
+      "instrument",
       "user"
       cascade`,
   );

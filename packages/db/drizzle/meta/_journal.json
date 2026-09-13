@@ -29,6 +29,13 @@
       "when": 1789323504213,
       "tag": "0003_oval_deathbird",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789326253944,
+      "tag": "0004_clammy_hannibal_king",
+      "breakpoints": true
     }
   ]
 }

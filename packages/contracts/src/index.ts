@@ -10,3 +10,11 @@ export type {
   FundingHistoryResponse,
 } from "./account.js";
 export type { MeResponse, MeUser } from "./auth.js";
+export type {
+  InstrumentContractType,
+  InstrumentListResponse,
+  InstrumentNotFoundError,
+  InstrumentQuoteAsset,
+  InstrumentResponse,
+  InstrumentStatus,
+} from "./instrument.js";
