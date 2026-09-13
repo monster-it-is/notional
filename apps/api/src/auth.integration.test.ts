@@ -1,4 +1,5 @@
-import { account, db, pool, resetAuthTables, session, user } from "@notional/db";
+import { account, db, session, user } from "@notional/db";
+import { endTestPool, resetTestTables } from "@notional/db/test";
 import type { MeResponse } from "@notional/contracts";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -19,11 +20,11 @@ describe("authentication", () => {
 
   afterAll(async () => {
     await app.close();
-    await pool.end();
+    await endTestPool();
   });
 
   beforeEach(async () => {
-    await resetAuthTables();
+    await resetTestTables();
   });
 
   it("reports database health", async () => {

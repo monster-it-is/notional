@@ -1,11 +1,12 @@
 import { sql } from "drizzle-orm";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { checkDatabaseHealth, db, pool } from "./index.js";
+import { checkDatabaseHealth, db } from "./index.js";
+import { endTestPool } from "./test.js";
 
 describe("database connection", () => {
   afterAll(async () => {
-    await pool.end();
+    await endTestPool();
   });
 
   it("connects to PostgreSQL through Drizzle", async () => {

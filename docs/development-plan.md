@@ -14,7 +14,7 @@ Status: COMPLETE
 
 ## Phase 3 — Paper Account
 
-Status: NOT STARTED
+Status: COMPLETE
 
 ## Phase 4 — Signup Allocation
 

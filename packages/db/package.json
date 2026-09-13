@@ -9,6 +9,11 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts",
       "default": "./src/index.ts"
+    },
+    "./test": {
+      "types": "./src/test.ts",
+      "import": "./src/test.ts",
+      "default": "./src/test.ts"
     }
   },
   "main": "./src/index.ts",
