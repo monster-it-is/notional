@@ -7,6 +7,8 @@ import {
   fromDbDecimal,
   instrument,
   listActiveInstruments,
+  listInstrumentSymbols,
+  markInstrumentsInactiveExcept,
   upsertInstrumentBySymbol,
   type UpsertInstrumentInput,
 } from "./index.js";
@@ -255,6 +257,50 @@ describe("instrument", () => {
     expect(second.updatedAt.getTime()).toBeGreaterThanOrEqual(
       first.updatedAt.getTime(),
     );
+  });
+
+  it("marks instruments inactive when they are absent from a keep-set", async () => {
+    await upsertInstrumentBySymbol(db, btc());
+    await upsertInstrumentBySymbol(db, eth());
+    await upsertInstrumentBySymbol(db, sol());
+
+    const inactivated = await markInstrumentsInactiveExcept(db, ["BTCUSDT", "ETHUSDT"]);
+
+    expect(inactivated).toBe(1);
+    expect((await findInstrumentBySymbol(db, "BTCUSDT"))?.status).toBe("ACTIVE");
+    expect((await findInstrumentBySymbol(db, "ETHUSDT"))?.status).toBe("ACTIVE");
+    expect((await findInstrumentBySymbol(db, "SOLUSDT"))?.status).toBe("INACTIVE");
+  });
+
+  it("does not rewrite symbols that are already inactive", async () => {
+    await upsertInstrumentBySymbol(db, sol({ status: "INACTIVE" }));
+    const before = await findInstrumentBySymbol(db, "SOLUSDT");
+
+    const inactivated = await markInstrumentsInactiveExcept(db, ["BTCUSDT"]);
+
+    expect(inactivated).toBe(0);
+    const after = await findInstrumentBySymbol(db, "SOLUSDT");
+    expect(after?.status).toBe("INACTIVE");
+    expect(after?.updatedAt.getTime()).toBe(before?.updatedAt.getTime());
+  });
+
+  it("lists every instrument symbol regardless of status", async () => {
+    await upsertInstrumentBySymbol(db, btc());
+    await upsertInstrumentBySymbol(db, sol({ status: "INACTIVE" }));
+
+    const symbols = await listInstrumentSymbols(db);
+
+    expect(symbols.sort()).toEqual(["BTCUSDT", "SOLUSDT"]);
+  });
+
+  it("refuses an empty keep-set so a parser regression cannot mass-inactivate", async () => {
+    await upsertInstrumentBySymbol(db, btc());
+
+    await expect(markInstrumentsInactiveExcept(db, [])).rejects.toThrow(
+      "refusing to inactivate entire catalog: empty keep-set",
+    );
+
+    expect((await findInstrumentBySymbol(db, "BTCUSDT"))?.status).toBe("ACTIVE");
   });
 
   it("does not fail concurrent same-symbol upserts with a duplicate-key race", async () => {

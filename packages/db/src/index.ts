@@ -31,6 +31,8 @@ export {
   findInstrumentById,
   findInstrumentBySymbol,
   listActiveInstruments,
+  listInstrumentSymbols,
+  markInstrumentsInactiveExcept,
   upsertInstrumentBySymbol,
 } from "./instrument.js";
 export type {

@@ -313,5 +313,104 @@ Authenticated reads:
 
 Decimal API fields are strings. `createdAt` / `updatedAt` are not exposed.
 
+## ADR-016 — Public Binance USD-M market data only
+
+Status: Accepted
+
+Notional does not trade on Binance and does not hold a user Binance account.
+
+Phase 7 uses unsigned public USD-M REST and public WebSocket market streams only:
+
+- REST base `https://fapi.binance.com`
+- market streams `wss://fstream.binance.com/market`
+- public/high-frequency streams `wss://fstream.binance.com/public`
+
+No API key, API secret, signed request, listenKey, or `/private` user-data stream.
+
+## ADR-017 — Price-source roles
+
+Status: Accepted
+
+There is no generic authoritative market `price`.
+
+Permanent roles:
+
+- paper MARKET BUY → fresh best ask
+- paper MARKET SELL → fresh best bid
+- unrealized PnL, liquidation, and margin/risk → fresh mark price
+- funding settlement → Binance funding rate and next funding time, with mark semantics
+- index price → reference only
+
+Phase 7 records these sources in the in-memory store. It does not execute orders or compute PnL.
+
+## ADR-018 — Ephemeral in-process market state
+
+Status: Accepted
+
+PostgreSQL `instrument` remains catalog metadata only (ADR-013). Live mark, index, BBO, and funding fields are never persisted.
+
+Phase 7 keeps market state in one API process. Redis is not introduced. Redis may later fan out to multiple processes (Phase 16). Binance remains the external market authority. Losing the API process loses live cache and is recovered from REST bootstrap plus WebSocket.
+
+## ADR-019 — Fail-closed freshness and event ordering
+
+Status: Accepted
+
+Mark and BBO freshness are independent. Public `GET /api/market-data/:symbol` requires both to be present and fresh (`503 MARKET_DATA_UNAVAILABLE` otherwise). Internal readers must be able to ask for fresh mark or fresh BBO separately.
+
+Local freshness is `now - receivedAt <= threshold`. Exchange timestamps are not the ageing clock.
+
+Mark replace rule: accept the first snapshot; afterwards accept only `incomingMarkEventTime > storedMarkEventTime`. Equal or older events are ignored and must not refresh `markReceivedAt`.
+
+BBO replace rule: accept the first snapshot; afterwards accept only `incomingBookUpdateId > storedBookUpdateId`. REST uses `lastUpdateId`; WebSocket uses `u`. Event times `E`/`T` are observability only. This prevents a late REST bootstrap from overwriting a newer WebSocket BBO, including when timestamps are equal.
+
+After disconnect, snapshots may remain in memory but age stale.
+
+## ADR-020 — Atomic catalog snapshot sync
+
+Status: Accepted
+
+`GET /fapi/v1/exchangeInfo` is the catalog source. After top-level validation, every symbol matching the Notional eligibility classification is mapped. If any eligible candidate lacks valid PRICE_FILTER, LOT_SIZE, MARKET_LOT_SIZE, or MIN_NOTIONAL (`notional` → `minNotional`), the cycle aborts and PostgreSQL is unchanged.
+
+An empty mapped set also aborts (parser/eligibility regression must not mass-inactivate).
+
+A successful mapping commits one transaction: `upsertInstrumentBySymbol` for every supported symbol, then `markInstrumentsInactiveExcept`. No deletes. UUIDs and canonical symbols are preserved.
+
+Eligible `TRADING` → `ACTIVE`. Other Binance statuses → `INACTIVE`.
+
+Initial sync failure does not block API startup and does not rewrite the catalog.
+
+## ADR-021 — Crypto-only exchangeInfo filter
+
+Status: Accepted
+
+USDT suffix is not crypto. Live USD-M `exchangeInfo` includes `TRADIFI_PERPETUAL` equities/commodities/pre-market products and `INDEX` underlyings.
+
+Supported candidates must satisfy:
+
+- `contractType === "PERPETUAL"`
+- `quoteAsset === "USDT"`
+- `marginAsset === "USDT"`
+- `underlyingType === "COIN"`
+
+`underlyingType` is parsed as an external string, not a closed enum. Unknown types do not qualify.
+
+## ADR-022 — USD-M WebSocket routing and BBO stream choice
+
+Status: Accepted
+
+Legacy `wss://fstream.binance.com/ws` was retired 2026-04-23. Streams require `/market` or `/public` plus `/ws` or `/stream`.
+
+Phase 7 connections:
+
+- one market connection: `wss://fstream.binance.com/market/stream?streams=!markPrice@arr@1s`
+- one or more public connections: `wss://fstream.binance.com/public/ws` with per-symbol `<symbol>@bookTicker` for ACTIVE instruments
+
+All-market `!bookTicker` was not chosen. Official USD-M connector documentation lists that stream at a 5-second update speed while individual `@bookTicker` is real-time. Future MARKET execution must not sit on a known ~5s BBO feed. Mark remains one all-market stream, so public stream count is about N active instruments, not 2N.
+
+Subscribe/unsubscribe as ACTIVE membership changes. Control messages are chunked. Connections stay under 200 streams each. Protocol ping/pong is handled by Node's WebSocket implementation; Phase 7 does not send application heartbeats.
+
+Reconnect uses exponential backoff, jitter, a max delay, generation protection, proactive rotation before the 24-hour server lifetime, and shutdown cancellation.
+
+
 
 

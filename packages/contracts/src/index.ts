@@ -18,3 +18,8 @@ export type {
   InstrumentResponse,
   InstrumentStatus,
 } from "./instrument.js";
+export type {
+  MarketDataResponse,
+  MarketDataStatusResponse,
+  MarketDataUnavailableError,
+} from "./market-data.js";

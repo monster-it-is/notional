@@ -1,8 +1,18 @@
 import { buildApp } from "./app.js";
 import { env } from "./env.js";
+import { createMarketDataRuntime } from "./market-data/coordinator.js";
 
 const start = async () => {
-  const app = await buildApp();
+  const marketData = createMarketDataRuntime({ env });
+  const app = await buildApp({ marketData });
+
+  app.addHook("onReady", async () => {
+    await marketData.start();
+  });
+
+  app.addHook("onClose", async () => {
+    await marketData.stop();
+  });
 
   try {
     await app.listen({

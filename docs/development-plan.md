@@ -34,9 +34,9 @@ Phase 6 added the PostgreSQL `instrument` catalog: UUID identity, canonical Bina
 
 ## Phase 7 — Binance Market Data
 
-Status: NOT STARTED
+Status: COMPLETE
 
-Phase 7 will fetch Binance USD-M `exchangeInfo`, keep only perpetual contracts with `quoteAsset === "USDT"` and `marginAsset === "USDT"`, map filters into `upsertInstrumentBySymbol`, and mark missing/non-tradable known symbols `INACTIVE`. Live prices, books, and funding feeds stay off the `instrument` table.
+Phase 7 synchronizes the instrument catalog from public Binance USD-M `exchangeInfo` (COIN USDT perpetuals only) in one PostgreSQL transaction, and keeps live mark/index/funding plus BBO in an in-process store. REST bootstrap uses `/fapi/v1/premiumIndex` and `/fapi/v1/ticker/bookTicker`. WebSockets use `/market` `!markPrice@arr@1s` and per-symbol `/public` `@bookTicker`. Authenticated `GET /api/market-data/:symbol` and `GET /api/market-data/status` expose Notional snapshots. Live prices are not stored in PostgreSQL. `/health` remains process+database liveness only.
 
 
 ## Phase 8 — Trading Mathematics

@@ -38,4 +38,27 @@ describe("parseEnv", () => {
       parseEnv({ ...process.env, FAUCET_AMOUNT: `1${"0".repeat(20)}` }),
     ).toThrow("financial value exceeds NUMERIC(38,18) precision");
   });
+
+  it("applies Binance market-data defaults", () => {
+    const source = { ...process.env };
+    delete source.BINANCE_FAPI_REST_BASE_URL;
+    delete source.BINANCE_FAPI_MARKET_WS_BASE_URL;
+    delete source.BINANCE_FAPI_PUBLIC_WS_BASE_URL;
+    delete source.MARKET_DATA_MARK_STALE_MS;
+    delete source.MARKET_DATA_BOOK_STALE_MS;
+
+    const parsed = parseEnv(source);
+
+    expect(parsed.BINANCE_FAPI_REST_BASE_URL).toBe("https://fapi.binance.com");
+    expect(parsed.BINANCE_FAPI_MARKET_WS_BASE_URL).toBe("wss://fstream.binance.com/market");
+    expect(parsed.BINANCE_FAPI_PUBLIC_WS_BASE_URL).toBe("wss://fstream.binance.com/public");
+    expect(parsed.MARKET_DATA_MARK_STALE_MS).toBe(10_000);
+    expect(parsed.MARKET_DATA_BOOK_STALE_MS).toBe(10_000);
+  });
+
+  it("rejects invalid Binance URLs", () => {
+    expect(() =>
+      parseEnv({ ...process.env, BINANCE_FAPI_REST_BASE_URL: "not-a-url" }),
+    ).toThrow();
+  });
 });

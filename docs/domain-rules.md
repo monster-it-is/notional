@@ -272,6 +272,26 @@ Stale market data must not be used to:
 
 If market data is stale, trading should pause.
 
+Price sources are not interchangeable:
+
+- a future paper MARKET BUY uses a fresh best ask
+- a future paper MARKET SELL uses a fresh best bid
+- unrealized PnL, liquidation, and margin/risk use a fresh mark price
+- funding uses Binance funding rate / next funding time plus mark semantics
+- index price is reference only and is never an execution price
+
+There is no generic authoritative `price`.
+
+Live market state is ephemeral and process-local. PostgreSQL must not store mark, index, bid/ask, funding rate, or other live prices. Redis is not used for market data in Phase 7.
+
+Mark freshness and BBO freshness are independent. Stale BBO must not internally invalidate a fresh mark. A future execution request may require fresh BBO while a risk request requires fresh mark.
+
+Local freshness uses receive time against a stale threshold, never the exchange event timestamp as the ageing clock. A duplicate mark event with the same event time must not refresh local freshness. BBO is ordered by Binance book update identity (`lastUpdateId` / `u`), not by event timestamps.
+
+If the public market feed disconnects, cached snapshots may remain in memory but must age stale and fail closed.
+
+Notional consumes public Binance USD-M market data only. No Binance API key, secret, signed request, or user-data stream.
+
 ## Instruments
 
 The instrument catalog is the set of Binance USD-M linear perpetual contracts Notional allows users to paper-trade. Settlement and margin are USDT only.
@@ -290,5 +310,16 @@ PostgreSQL stores static metadata (assets, status, exact price/quantity/notional
 
 PRICE_FILTER values of `0` mean a disabled Binance sub-rule and must be persisted as `0`. Quantity lot-size filters remain positive. Minimum notional is a positive USDT decimal string.
 
-Phase 7 must ingest only `contractType === "PERPETUAL"` with both `quoteAsset === "USDT"` and `marginAsset === "USDT"`.
+Phase 7 ingests only contracts that satisfy all of:
+
+- `contractType === "PERPETUAL"`
+- `quoteAsset === "USDT"`
+- `marginAsset === "USDT"`
+- `underlyingType === "COIN"`
+
+`underlyingType` is an external string. Unknown values do not qualify. TradFi (`TRADIFI_PERPETUAL`, equity, commodity, pre-market) and index underlyings are not Notional instruments.
+
+Eligible + Binance `TRADING` maps to `ACTIVE`. Any other Binance status maps to `INACTIVE`. Never delete rows.
+
+Catalog synchronization must use a fully validated eligible snapshot. If any eligible candidate is missing or has malformed PRICE_FILTER, LOT_SIZE, MARKET_LOT_SIZE, or MIN_NOTIONAL (`notional`), abort the cycle and leave PostgreSQL unchanged. An empty mapped catalog also aborts. Only then may upserts and mass-inactivation run in one transaction.
 

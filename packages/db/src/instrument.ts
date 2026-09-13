@@ -1,4 +1,4 @@
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, ne, notInArray } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import { fromDbDecimal, toDbDecimal } from "./money.js";
@@ -24,7 +24,7 @@ export type UpsertInstrumentInput = {
   minNotional: string;
 };
 
-export type InstrumentExecutor = Pick<NodePgDatabase, "insert" | "select">;
+export type InstrumentExecutor = Pick<NodePgDatabase, "insert" | "select" | "update">;
 
 export async function findInstrumentById(
   executor: Pick<NodePgDatabase, "select">,
@@ -60,6 +60,35 @@ export async function listActiveInstruments(
     .orderBy(asc(instrument.symbol));
 
   return rows.map(fromPersistedInstrument);
+}
+
+export async function listInstrumentSymbols(
+  executor: Pick<NodePgDatabase, "select">,
+): Promise<string[]> {
+  const rows = await executor.select({ symbol: instrument.symbol }).from(instrument);
+  return rows.map((row) => row.symbol);
+}
+
+export async function markInstrumentsInactiveExcept(
+  executor: Pick<NodePgDatabase, "update">,
+  symbols: string[],
+): Promise<number> {
+  if (symbols.length === 0) {
+    throw new Error("refusing to inactivate entire catalog: empty keep-set");
+  }
+
+  const rows = await executor
+    .update(instrument)
+    .set({
+      status: "INACTIVE",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(ne(instrument.status, "INACTIVE"), notInArray(instrument.symbol, symbols)),
+    )
+    .returning({ id: instrument.id });
+
+  return rows.length;
 }
 
 export async function upsertInstrumentBySymbol(

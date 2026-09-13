@@ -12,11 +12,21 @@ import {
 import { registerAuth, requireAuth } from "./auth-plugin.js";
 import { env } from "./env.js";
 import { getInstrumentBySymbol, getInstruments } from "./instruments.js";
+import { getMarketDataBySymbol, getMarketDataStatus } from "./market-data.js";
+import {
+  unavailableMarketDataAccess,
+  type MarketDataAccess,
+} from "./market-data/coordinator.js";
 
-export async function buildApp() {
+export type BuildAppOptions = {
+  marketData?: MarketDataAccess;
+};
+
+export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify({
     logger: process.env.NODE_ENV !== "test",
   });
+  const marketData = options.marketData ?? unavailableMarketDataAccess();
 
   await app.register(cors, {
     origin: env.WEB_ORIGIN,
@@ -40,6 +50,12 @@ export async function buildApp() {
   app.get("/api/account/funding", { preHandler: requireAuth }, getFundingHistory);
   app.get("/api/instruments", { preHandler: requireAuth }, getInstruments);
   app.get("/api/instruments/:symbol", { preHandler: requireAuth }, getInstrumentBySymbol);
+  app.get("/api/market-data/status", { preHandler: requireAuth }, (request, reply) =>
+    getMarketDataStatus(request, reply, marketData),
+  );
+  app.get("/api/market-data/:symbol", { preHandler: requireAuth }, (request, reply) =>
+    getMarketDataBySymbol(request, reply, marketData),
+  );
 
   app.get("/api/me", { preHandler: requireAuth }, async (request, reply): Promise<MeResponse | { error: string }> => {
     const session = request.auth;
