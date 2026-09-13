@@ -15,3 +15,26 @@ export type AccountResponse = {
 export type AccountNotInitializedError = {
   error: "ACCOUNT_NOT_INITIALIZED";
 };
+
+export type AccountSuspendedError = {
+  error: "ACCOUNT_SUSPENDED";
+};
+
+export type FaucetCooldownError = {
+  error: "FAUCET_COOLDOWN";
+  nextClaimAt: string;
+};
+
+export type FundingEventType = "SIGNUP_ALLOCATION" | "FAUCET_CLAIM";
+
+export type FundingEventResponse = {
+  id: string;
+  type: FundingEventType;
+  amount: string;
+  currency: AccountCurrency;
+  createdAt: string;
+};
+
+export type FundingHistoryResponse = {
+  events: FundingEventResponse[];
+};

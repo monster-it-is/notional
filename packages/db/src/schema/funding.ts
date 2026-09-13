@@ -1,6 +1,7 @@
 import { relations, sql } from "drizzle-orm";
 import {
   check,
+  index,
   numeric,
   pgTable,
   text,
@@ -34,13 +35,17 @@ export const fundingEvent = pgTable(
   (table) => [
     check(
       "funding_event_type_valid",
-      sql`${table.eventType} = 'SIGNUP_ALLOCATION'`,
+      sql`${table.eventType} in ('SIGNUP_ALLOCATION', 'FAUCET_CLAIM')`,
     ),
     check("funding_event_amount_positive", sql`${table.amount} > 0`),
     check("funding_event_currency_usdt", sql`${table.currency} = 'USDT'`),
     uniqueIndex("funding_event_signup_allocation_unique")
       .on(table.paperAccountId)
       .where(sql`${table.eventType} = 'SIGNUP_ALLOCATION'`),
+    index("funding_event_paper_account_created_at_idx").on(
+      table.paperAccountId,
+      table.createdAt,
+    ),
   ],
 );
 

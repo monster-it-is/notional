@@ -54,3 +54,27 @@ export function assertFitsNumeric3818(value: MoneyDecimal): void {
 export function signupAllocationIdempotencyKey(userId: string): string {
   return `signup-allocation:${userId}`;
 }
+
+export function faucetClaimIdempotencyKey(
+  paperAccountId: string,
+  claimId: string,
+): string {
+  return `faucet:${paperAccountId}:${claimId}`;
+}
+
+const PLAIN_DECIMAL = /^\d+(\.\d+)?$/;
+
+export function parseConfiguredMoney(value: string): MoneyDecimal {
+  if (typeof value !== "string" || !PLAIN_DECIMAL.test(value)) {
+    throw new Error("configured money must be a plain decimal string");
+  }
+
+  const parsed = new MoneyDecimal(value);
+
+  if (!parsed.isFinite() || parsed.lte(0)) {
+    throw new Error("configured money must be a positive decimal");
+  }
+
+  assertFitsNumeric3818(parsed);
+  return parsed;
+}

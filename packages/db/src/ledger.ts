@@ -10,8 +10,10 @@ export type LedgerPostingEntry = {
   amount: MoneyDecimal;
 };
 
+export type FinancialEventType = "SIGNUP_ALLOCATION" | "FAUCET_CLAIM";
+
 export type PostLedgerTransactionInput = {
-  eventType: "SIGNUP_ALLOCATION";
+  eventType: FinancialEventType;
   idempotencyKey: string;
   entries: LedgerPostingEntry[];
 };

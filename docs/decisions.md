@@ -170,4 +170,60 @@ Concurrency uses READ COMMITTED plus `SELECT ... FOR UPDATE` on the paper accoun
 
 Financial arithmetic uses an isolated `decimal.js` clone (`precision: 50`) in `@notional/db`. The allocation originates from the decimal string `"1000"`. Values whose fractional scale exceeds 18 are rejected. Database and API balances remain strings.
 
+## ADR-011 — Virtual faucet and funding history
+
+Status: Accepted
+
+The faucet is a virtual paper-USDT credit. It is not a deposit, withdrawal, or admin funding workflow.
+
+### API
+
+`POST /api/account/faucet` requires an authenticated session, accepts no body, and returns `AccountResponse`. The server uses `FAUCET_AMOUNT` from process environment.
+
+Errors:
+
+- `401 { error: "Unauthorized" }`
+- `409 { error: "ACCOUNT_NOT_INITIALIZED" }`
+- `409 { error: "ACCOUNT_SUSPENDED" }`
+- `409 { error: "FAUCET_COOLDOWN", nextClaimAt }`
+
+`GET /api/account` remains a pure read. `GET /api/account/funding` lists `SIGNUP_ALLOCATION` and `FAUCET_CLAIM` business history newest first, without ledger IDs or idempotency keys.
+
+### Configuration
+
+`FAUCET_AMOUNT` is required. It is parsed as a plain decimal string through `MoneyDecimal` / `parseConfiguredMoney`. Scientific notation, non-positive values, scale above 18, and `NUMERIC(38,18)` overflow are rejected at startup. Signup allocation stays the domain constant `"1000"`. The 24-hour cooldown is a domain invariant, not an env var.
+
+### Cooldown authority and time
+
+`paper_account.last_faucet_claim_at` is authoritative for eligibility. `funding_event` is immutable audit. Both are updated in one financial transaction owned by `claimFaucet` in `apps/api/src/services/faucet.ts`.
+
+Do not use PostgreSQL `CURRENT_TIMESTAMP` / `now()` for faucet eligibility. Those values are fixed at transaction start, and this transaction may wait on `SELECT ... FOR UPDATE`.
+
+After the paper-account row lock is held, evaluate:
+
+`last_faucet_claim_at IS NULL OR clock_timestamp() >= last_faucet_claim_at + interval '24 hours'`
+
+Equality at exactly 24 hours is allowed. The successful `last_faucet_claim_at` is the same PostgreSQL wall-clock instant used for that eligibility check. Client time and Node `Date.now()` are never used.
+
+Timestamp columns remain `timestamp` without time zone.
+
+### Ledger
+
+Reuse Phase 4 accounts. Do not add a second system account.
+
+- USER_CASH: `+FAUCET_AMOUNT`
+- SYSTEM_VIRTUAL_FUNDING: `-FAUCET_AMOUNT`
+- `event_type = FAUCET_CLAIM`
+- signed entries sum to zero
+
+Event-type CHECKs on `ledger_transaction` and `funding_event` were widened by a new migration. Existing `SIGNUP_ALLOCATION` rows remain valid. Multiple faucet claims per account are allowed; there is no unique constraint that would make faucet once-only.
+
+### Idempotency and concurrency
+
+There is no client `Idempotency-Key`. Duplicate credits are prevented by READ COMMITTED plus `FOR UPDATE` and the cooldown column.
+
+After eligibility succeeds, the service generates `faucet:<paperAccountId>:<uuid>` for the required unique ledger/funding idempotency keys. A lost success response followed by an immediate retry may return `FAUCET_COOLDOWN`; it must not credit again.
+
+Simultaneous claims: one success, one `FAUCET_CLAIM` funding event, one ledger transaction, two entries, one balance increment, one `last_faucet_claim_at` update.
+
 

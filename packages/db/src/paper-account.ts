@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type { FinancialTransaction } from "./executor.js";
@@ -81,6 +81,30 @@ export async function updatePaperAccountBalance(
 
   if (!updated) {
     throw new Error("paper_account missing after balance update");
+  }
+
+  return updated;
+}
+
+export async function applyFaucetClaim(
+  executor: FinancialTransaction,
+  input: {
+    paperAccountId: string;
+    balance: MoneyDecimal;
+    claimedAtUtc: string;
+  },
+): Promise<PaperAccount> {
+  const [updated] = await executor
+    .update(paperAccount)
+    .set({
+      balance: toDbDecimal(input.balance),
+      lastFaucetClaimAt: sql`${input.claimedAtUtc}::timestamp`,
+    })
+    .where(eq(paperAccount.id, input.paperAccountId))
+    .returning();
+
+  if (!updated) {
+    throw new Error("paper_account missing after faucet claim");
   }
 
   return updated;

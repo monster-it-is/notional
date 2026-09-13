@@ -61,7 +61,7 @@ export const ledgerTransaction = pgTable(
   (table) => [
     check(
       "ledger_transaction_event_type_valid",
-      sql`${table.eventType} = 'SIGNUP_ALLOCATION'`,
+      sql`${table.eventType} in ('SIGNUP_ALLOCATION', 'FAUCET_CLAIM')`,
     ),
   ],
 );

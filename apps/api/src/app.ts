@@ -3,7 +3,12 @@ import type { MeResponse } from "@notional/contracts";
 import { checkDatabaseHealth } from "@notional/db";
 import Fastify from "fastify";
 
-import { getAccount, initializeAccount } from "./account.js";
+import {
+  claimAccountFaucet,
+  getAccount,
+  getFundingHistory,
+  initializeAccount,
+} from "./account.js";
 import { registerAuth, requireAuth } from "./auth-plugin.js";
 import { env } from "./env.js";
 
@@ -30,6 +35,8 @@ export async function buildApp() {
 
   app.get("/api/account", { preHandler: requireAuth }, getAccount);
   app.post("/api/account/initialize", { preHandler: requireAuth }, initializeAccount);
+  app.post("/api/account/faucet", { preHandler: requireAuth }, claimAccountFaucet);
+  app.get("/api/account/funding", { preHandler: requireAuth }, getFundingHistory);
 
   app.get("/api/me", { preHandler: requireAuth }, async (request, reply): Promise<MeResponse | { error: string }> => {
     const session = request.auth;

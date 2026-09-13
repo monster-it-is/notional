@@ -51,14 +51,30 @@ Eligibility is the absence of SIGNUP_ALLOCATION history, never the current balan
 
 Users can claim virtual USDT through a faucet.
 
-Rules:
+`POST /api/account/faucet` is authenticated, takes no amount, and credits only an initialized `ACTIVE` paper account.
 
-- one successful claim per 24 hours
-- faucet amount is application configuration
-- each successful claim must be persisted
-- rejected cooldown attempts must not create financial credits
-- concurrent requests must never produce duplicate credits
-- retrying the same logical request must not create another financial effect
+The faucet amount is process configuration (`FAUCET_AMOUNT`), parsed as a positive `NUMERIC(38,18)` decimal string. Signup allocation remains exactly 1,000 USDT and is not configurable.
+
+Eligibility uses PostgreSQL wall-clock time (`clock_timestamp()`) after the paper-account row lock is acquired, never transaction-start time, client time, or Node `Date.now()`.
+
+Eligible when:
+
+- `last_faucet_claim_at IS NULL`, or
+- `clock_timestamp() >= last_faucet_claim_at + interval '24 hours'`
+
+Equality at exactly 24 hours is allowed. `paper_account.last_faucet_claim_at` is authoritative for cooldown. Funding history is immutable audit. Both are written in the same financial transaction.
+
+Rejected cooldown attempts return `409 { error: "FAUCET_COOLDOWN", nextClaimAt }` and create no financial rows. `SUSPENDED` accounts cannot claim (`409 ACCOUNT_SUSPENDED`). Uninitialized users must call `POST /api/account/initialize` first.
+
+Accounting for each successful claim:
+
+- USER_CASH: `+FAUCET_AMOUNT`
+- SYSTEM_VIRTUAL_FUNDING: `-FAUCET_AMOUNT`
+- one `FAUCET_CLAIM` funding event and ledger transaction
+
+Concurrent claims serialize on `SELECT ... FOR UPDATE`. A lost success response followed by an immediate retry may return cooldown; it must never credit twice.
+
+`GET /api/account/funding` is a pure read of business funding history for an initialized account.
 
 ## Financial Authority
 

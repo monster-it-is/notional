@@ -131,6 +131,46 @@ describe("ledger and funding primitives", () => {
     expect(sum.isZero()).toBe(true);
   });
 
+  it("posts a balanced FAUCET_CLAIM transaction", async () => {
+    const createdUser = await insertUser("ada@example.com");
+    const account = await ensurePaperAccount(db, createdUser.id);
+    const userCash = await ensureUserCashLedgerAccount(db, account.id);
+    const systemFunding = await ensureSystemVirtualFundingAccount(db);
+    const faucetAmount = new MoneyDecimal("100");
+
+    const posted = await db.transaction((tx) =>
+      postLedgerTransaction(tx, {
+        eventType: "FAUCET_CLAIM",
+        idempotencyKey: "faucet:balanced",
+        entries: [
+          {
+            ledgerAccountId: userCash.id,
+            amount: faucetAmount,
+          },
+          {
+            ledgerAccountId: systemFunding.id,
+            amount: faucetAmount.negated(),
+          },
+        ],
+      }),
+    );
+
+    expect(posted.eventType).toBe("FAUCET_CLAIM");
+
+    const entries = await db
+      .select()
+      .from(ledgerEntry)
+      .where(eq(ledgerEntry.ledgerTransactionId, posted.id));
+
+    expect(entries).toHaveLength(2);
+
+    const sum = entries.reduce(
+      (total, entry) => total.plus(new MoneyDecimal(entry.amount)),
+      new MoneyDecimal("0"),
+    );
+    expect(sum.isZero()).toBe(true);
+  });
+
   it("rejects a zero-amount ledger entry at the database", async () => {
     const createdUser = await insertUser("ada@example.com");
     const account = await ensurePaperAccount(db, createdUser.id);
@@ -295,6 +335,59 @@ describe("ledger and funding primitives", () => {
       }),
       "funding_event_signup_allocation_unique",
     );
+  });
+
+  it("allows multiple FAUCET_CLAIM funding events for one account", async () => {
+    const createdUser = await insertUser("faucet-history@example.com");
+    const account = await ensurePaperAccount(db, createdUser.id);
+    const userCash = await ensureUserCashLedgerAccount(db, account.id);
+    const systemFunding = await ensureSystemVirtualFundingAccount(db);
+    const faucetAmount = new MoneyDecimal("100");
+
+    const first = await db.transaction((tx) =>
+      postLedgerTransaction(tx, {
+        eventType: "FAUCET_CLAIM",
+        idempotencyKey: "faucet:history-1",
+        entries: [
+          { ledgerAccountId: userCash.id, amount: faucetAmount },
+          { ledgerAccountId: systemFunding.id, amount: faucetAmount.negated() },
+        ],
+      }),
+    );
+    const second = await db.transaction((tx) =>
+      postLedgerTransaction(tx, {
+        eventType: "FAUCET_CLAIM",
+        idempotencyKey: "faucet:history-2",
+        entries: [
+          { ledgerAccountId: userCash.id, amount: faucetAmount },
+          { ledgerAccountId: systemFunding.id, amount: faucetAmount.negated() },
+        ],
+      }),
+    );
+
+    await db.insert(fundingEvent).values({
+      paperAccountId: account.id,
+      eventType: "FAUCET_CLAIM",
+      amount: "100",
+      currency: "USDT",
+      idempotencyKey: "faucet:history-1",
+      ledgerTransactionId: first.id,
+    });
+    await db.insert(fundingEvent).values({
+      paperAccountId: account.id,
+      eventType: "FAUCET_CLAIM",
+      amount: "100",
+      currency: "USDT",
+      idempotencyKey: "faucet:history-2",
+      ledgerTransactionId: second.id,
+    });
+
+    const events = await db
+      .select()
+      .from(fundingEvent)
+      .where(eq(fundingEvent.paperAccountId, account.id));
+
+    expect(events).toHaveLength(2);
   });
 
   it("rejects a non-USDT funding currency", async () => {

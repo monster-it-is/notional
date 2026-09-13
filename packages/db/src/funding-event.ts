@@ -1,6 +1,7 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 
 import type { FinancialExecutor, FinancialTransaction } from "./executor.js";
+import type { FinancialEventType } from "./ledger.js";
 import { type MoneyDecimal, toDbDecimal } from "./money.js";
 import { fundingEvent } from "./schema/funding.js";
 
@@ -8,7 +9,7 @@ export type FundingEvent = typeof fundingEvent.$inferSelect;
 
 export type InsertFundingEventInput = {
   paperAccountId: string;
-  eventType: "SIGNUP_ALLOCATION";
+  eventType: FinancialEventType;
   amount: MoneyDecimal;
   idempotencyKey: string;
   ledgerTransactionId: string;
@@ -56,4 +57,18 @@ export async function insertFundingEvent(
   }
 
   return created;
+}
+
+export async function listFundingEventsByPaperAccountId(
+  executor: Pick<FinancialExecutor, "select">,
+  paperAccountId: string,
+  pagination: { limit: number; offset: number },
+): Promise<FundingEvent[]> {
+  return executor
+    .select()
+    .from(fundingEvent)
+    .where(eq(fundingEvent.paperAccountId, paperAccountId))
+    .orderBy(desc(fundingEvent.createdAt), desc(fundingEvent.id))
+    .limit(pagination.limit)
+    .offset(pagination.offset);
 }

@@ -22,9 +22,9 @@ Status: COMPLETE
 
 ## Phase 5 — Faucet
 
-Status: NOT STARTED
+Status: COMPLETE
 
-Ledger tables, signed posting, and the 1,000 USDT signup allocation were introduced in Phase 4. Phase 5 adds faucet claims, the 24-hour cooldown, and a funding-history API.
+Phase 5 added `POST /api/account/faucet`, a 24-hour cooldown evaluated with PostgreSQL `clock_timestamp()` after row lock, configurable `FAUCET_AMOUNT`, `FAUCET_CLAIM` ledger/funding history, and `GET /api/account/funding`.
 
 ## Phase 6 — Instruments
 
