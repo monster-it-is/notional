@@ -17,6 +17,7 @@ import {
   unavailableMarketDataAccess,
   type MarketDataAccess,
 } from "./market-data/coordinator.js";
+import { getOrderById, getOrders } from "./orders.js";
 
 export type BuildAppOptions = {
   marketData?: MarketDataAccess;
@@ -56,6 +57,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.get("/api/market-data/:symbol", { preHandler: requireAuth }, (request, reply) =>
     getMarketDataBySymbol(request, reply, marketData),
   );
+  app.get("/api/orders", { preHandler: requireAuth }, getOrders);
+  app.get("/api/orders/:id", { preHandler: requireAuth }, getOrderById);
 
   app.get("/api/me", { preHandler: requireAuth }, async (request, reply): Promise<MeResponse | { error: string }> => {
     const session = request.auth;

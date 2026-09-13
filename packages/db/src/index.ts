@@ -41,6 +41,27 @@ export type {
   UpsertInstrumentInput,
 } from "./instrument.js";
 export {
+  cancelOpenLimitOrder,
+  findAccountOrderById,
+  findOrderById,
+  findOrderByIdempotencyKey,
+  insertOrder,
+  listOrdersByPaperAccountId,
+  lockOrderById,
+  OrderMutationError,
+} from "./order.js";
+export type {
+  CreateOrderInput,
+  InsertOrderResult,
+  ListOrdersFilters,
+  ListOrdersPagination,
+  Order,
+  OrderSide,
+  OrderStatus,
+  OrderType,
+  OrderWithSymbol,
+} from "./order.js";
+export {
   applyFaucetClaim,
   ensurePaperAccount,
   findPaperAccountByUserId,

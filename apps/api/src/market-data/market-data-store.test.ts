@@ -49,10 +49,14 @@ describe("MarketDataStore", () => {
 
     expect(store.isMarkFresh("BTCUSDT", 10, 10)).toBe(true);
     expect(store.isBookFresh("BTCUSDT", 5, 10)).toBe(false);
+    expect(store.getFreshMark("BTCUSDT", 10, 10)?.markPrice).toBe("1.0");
+    expect(store.getFreshBook("BTCUSDT", 5, 10)).toBeNull();
     expect(store.getReadySnapshot("BTCUSDT", 10, 5, 10)).toBeNull();
 
     expect(store.isMarkFresh("BTCUSDT", 5, 10)).toBe(false);
     expect(store.isBookFresh("BTCUSDT", 20, 10)).toBe(true);
+    expect(store.getFreshMark("BTCUSDT", 5, 10)).toBeNull();
+    expect(store.getFreshBook("BTCUSDT", 20, 10)?.bestAskPrice).toBe("2");
     expect(store.getReadySnapshot("BTCUSDT", 5, 20, 10)).toBeNull();
 
     expect(store.getReadySnapshot("BTCUSDT", 10, 20, 10)).not.toBeNull();

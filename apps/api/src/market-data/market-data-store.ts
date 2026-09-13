@@ -3,12 +3,25 @@ import type { MarketDataResponse } from "@notional/contracts";
 import type { BookTick, Clock, MarkTick, SymbolMarketState } from "./types.js";
 import { systemClock } from "./types.js";
 
+export type FreshMark = {
+  symbol: string;
+  markPrice: string;
+};
+
+export type FreshBook = {
+  symbol: string;
+  bestBidPrice: string;
+  bestAskPrice: string;
+};
+
 export type MarketDataStore = {
   applyMark(tick: MarkTick, receivedAt?: number): boolean;
   applyBook(tick: BookTick, receivedAt?: number): boolean;
   getState(symbol: string): SymbolMarketState | undefined;
   isMarkFresh(symbol: string, staleMs: number, now?: number): boolean;
   isBookFresh(symbol: string, staleMs: number, now?: number): boolean;
+  getFreshMark(symbol: string, staleMs: number, now?: number): FreshMark | null;
+  getFreshBook(symbol: string, staleMs: number, now?: number): FreshBook | null;
   getReadySnapshot(
     symbol: string,
     markStaleMs: number,
@@ -74,6 +87,33 @@ export function createMarketDataStore(clock: Clock = systemClock): MarketDataSto
     isBookFresh(symbol, staleMs, now = clock.now()) {
       const book = states.get(symbol)?.book;
       return book !== undefined && now - book.bookReceivedAt <= staleMs;
+    },
+
+    getFreshMark(symbol, staleMs, now = clock.now()) {
+      const mark = states.get(symbol)?.mark;
+
+      if (!mark || now - mark.markReceivedAt > staleMs) {
+        return null;
+      }
+
+      return {
+        symbol,
+        markPrice: mark.markPrice,
+      };
+    },
+
+    getFreshBook(symbol, staleMs, now = clock.now()) {
+      const book = states.get(symbol)?.book;
+
+      if (!book || now - book.bookReceivedAt > staleMs) {
+        return null;
+      }
+
+      return {
+        symbol,
+        bestBidPrice: book.bestBidPrice,
+        bestAskPrice: book.bestAskPrice,
+      };
     },
 
     getReadySnapshot(symbol, markStaleMs, bookStaleMs, now = clock.now()) {

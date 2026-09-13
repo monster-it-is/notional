@@ -3,3 +3,4 @@ export * from "./paper-account.js";
 export * from "./ledger.js";
 export * from "./funding.js";
 export * from "./instrument.js";
+export * from "./order.js";

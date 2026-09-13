@@ -238,6 +238,9 @@ importers:
       '@notional/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@notional/trading':
+        specifier: workspace:*
+        version: link:../../packages/trading
       better-auth:
         specifier: ^1.7.4
         version: 1.7.4(drizzle-kit@0.31.10)(drizzle-orm@0.45.2(@types/pg@8.23.1)(kysely@0.29.5)(pg@8.23.0))(pg@8.23.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)(vitest@5.0.0(@types/node@22.20.2)(vite@8.3.0(@types/node@22.20.2)(esbuild@0.28.2)(tsx@4.23.13)))

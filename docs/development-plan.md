@@ -47,7 +47,9 @@ Phase 8 added `@notional/trading`: pure deterministic exact-decimal math for lin
 
 ## Phase 9 — Orders
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 9 added PostgreSQL `trade_order`: UUID identity, paper-account and instrument RESTRICT FKs, MARKET/LIMIT with CHECK-enforced price and status rules, `reduce_only`, per-account idempotency, history and OPEN-LIMIT matcher indexes, and no physical deletes. The production create helper inserts MARKET `FILLED` and LIMIT `OPEN`/`FILLED` only; `CANCELLED` is reached through `cancelOpenLimitOrder` with `SELECT ... FOR UPDATE`. Public HTTP is read-only (`GET /api/orders`, `GET /api/orders/:id`). There is no public POST or cancel, no MARKET queue, no matching, no executions, no positions, and no margin. API validation uses `@notional/trading` filters: LIMIT MIN_NOTIONAL uses the limit price without market data; executable MARKET validation requires a fresh mark for MIN_NOTIONAL and a fresh BBO for the future fill path. Phase 13 owns atomic public placement.
 
 ## Phase 10 — Executions
 

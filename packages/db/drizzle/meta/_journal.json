@@ -36,6 +36,13 @@
       "when": 1789326253944,
       "tag": "0004_clammy_hannibal_king",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1789334489223,
+      "tag": "0005_light_stellaris",
+      "breakpoints": true
     }
   ]
 }

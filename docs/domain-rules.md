@@ -200,20 +200,53 @@ Do not implement hedge mode in MVP.
 
 ## Orders
 
-Initial order types:
+Persisted paper orders live in PostgreSQL `trade_order`. Notional never places orders on Binance.
 
-- Market
-- Limit
+Identity:
 
-The schema may support multiple executions per order, but MVP does not implement true partial fills.
+- `trade_order.id` is the stable internal UUID
+- later executions reference `trade_order.id`
+- `paper_account_id` and `instrument_id` are RESTRICT foreign keys
+- placement retries use `idempotency_key`, which is unique per paper account and is not the order id
+- there is no clientOrderId and no Binance order id
 
-Do not implement a matching engine.
+Types:
 
-Orders may support `reduceOnly`.
+- MARKET
+- LIMIT
 
-A reduce-only order must never increase exposure or cross through zero into a new opposite-side position.
+Side is `BUY` or `SELL`. Quantity is a positive absolute requested size. Direction is not stored as a signed quantity.
 
-Phase 9 may use `classifyPositionTransition` for reduce-only **placement** prevalidation. Placement validation is not authoritative forever. At actual execution, reduce-only **must** be re-evaluated against the then-current locked position, because the position can change while an order is resting.
+MARKET:
+
+- `limit_price` is NULL
+- the only legal persisted status is `FILLED`
+- a MARKET order is never `OPEN` or `CANCELLED`
+- a MARKET order is never queued for later execution
+
+LIMIT:
+
+- `limit_price` is required and positive
+- status is `OPEN`, `FILLED`, or `CANCELLED`
+- LIMIT is implicitly GTC; there is no `time_in_force` column
+
+Statuses are only:
+
+- `OPEN` — resting LIMIT
+- `FILLED` — completely filled
+- `CANCELLED` — previously OPEN LIMIT that was cancelled
+
+There is no `PENDING`, `ACCEPTED`, `REJECTED`, or `PARTIALLY_FILLED`. Failed placements that never insert a row do not consume the idempotency key.
+
+MVP does not implement true partial fills. Do not persist filled/remaining quantity on the order. The schema may later support multiple execution rows per order; the initial engine produces one complete fill.
+
+Public HTTP in Phase 9 is read-only (`GET /api/orders`, `GET /api/orders/:id`). Public placement and cancel wait until order, execution, position, and margin can run atomically (Phase 13). Cancellation is an internal `OPEN → CANCELLED` transition on a locked LIMIT row. MARKET is not cancellable. Terminal FILLED/CANCELLED cannot be cancelled except that a second cancel of an already CANCELLED order is idempotent success.
+
+Creation helpers may insert MARKET `FILLED` and LIMIT `OPEN` or `FILLED`. They must not create `CANCELLED` directly.
+
+Reduce-only is a persisted boolean defaulting to false. Phase 9 does not have a position table and must not fabricate one. Placement may persist the flag. Actual execution must re-classify against the then-current locked position with `classifyPositionTransition`. Only `REDUCE` and `CLOSE` may execute. `OPEN`, `INCREASE`, and `REVERSE` must fail.
+
+New orders require an initialized `ACTIVE` paper account and an `ACTIVE` instrument. Uninitialized accounts return `ACCOUNT_NOT_INITIALIZED`. Suspended accounts cannot place orders. Historical order rows are never deleted. Instrument inactivity does not delete or auto-cancel existing orders in Phase 9.
 
 PRICE_FILTER / LOT_SIZE / MARKET_LOT_SIZE / MIN_NOTIONAL checks are exact Decimal arithmetic in `@notional/trading`. PRICE_FILTER zeros disable the corresponding sub-rule (`minPrice`, `maxPrice`, `tickSize`). When tick alignment is enabled:
 
@@ -229,12 +262,24 @@ MIN_NOTIONAL:
 
 without rounding before comparison. `satisfiesMinNotional({ quantity, price, minNotional })` is generic and does not fetch market data. The caller supplies `price`.
 
-Phase 9 Binance USD-M filter validation:
+Binance USD-M filter validation:
 
 - LIMIT MIN_NOTIONAL uses the order's LIMIT price
 - MARKET MIN_NOTIONAL uses a fresh **mark price**
 
-Do not use best bid/ask for MARKET MIN_NOTIONAL. Execution price is separate (MARKET BUY executes at best ask, MARKET SELL at best bid).
+Do not use best bid/ask for MARKET MIN_NOTIONAL. Execution price is separate (MARKET BUY executes at best ask, MARKET SELL at best bid). LIMIT static-filter validation does not require live market data. Executable MARKET validation requires both a fresh mark and a fresh BBO. Freshness is independent. Placement validation never authorizes a later fill; execution must re-read required market state and fail closed if stale.
+
+Do not copy instrument filter snapshots onto order rows. Placement uses filters current at placement. An already accepted OPEN LIMIT is not retroactively invalid solely because catalog filters later change. Phase 13 may finalize execution policy if Binance metadata changes or an instrument becomes INACTIVE while orders rest.
+
+Idempotency:
+
+- unique `(paper_account_id, idempotency_key)`
+- fingerprint is instrument, side, type, canonical quantity, canonical limit price or null, and reduce-only
+- fingerprint excludes status and timestamps so a retry after FILLED/CANCELLED still returns the same order
+- concurrent identical inserts use `INSERT ... ON CONFLICT DO NOTHING` then SELECT
+- when public POST exists, a matching existing key must return the existing order without re-running mutable placement validation
+
+Never physically delete normal order records. Test cleanup may truncate.
 
 ## Margin
 

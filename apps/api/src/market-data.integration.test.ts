@@ -37,6 +37,20 @@ describe("market-data api", () => {
       getReadySnapshot(symbol) {
         return snapshots.get(symbol) ?? null;
       },
+      getFreshMark(symbol) {
+        const snapshot = snapshots.get(symbol);
+        return snapshot ? { symbol, markPrice: snapshot.markPrice } : null;
+      },
+      getFreshBook(symbol) {
+        const snapshot = snapshots.get(symbol);
+        return snapshot
+          ? {
+              symbol,
+              bestBidPrice: snapshot.bestBidPrice,
+              bestAskPrice: snapshot.bestAskPrice,
+            }
+          : null;
+      },
       getStatus(): MarketDataStatusResponse {
         return {
           catalogSyncOk: true,

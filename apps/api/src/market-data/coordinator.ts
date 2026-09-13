@@ -8,7 +8,12 @@ import {
 import type { ApiEnv } from "../env.js";
 import { createBookTickerFeed, type BookTickerFeed } from "./book-ticker-feed.js";
 import { syncInstrumentCatalog } from "./instrument-sync.js";
-import { createMarketDataStore, type MarketDataStore } from "./market-data-store.js";
+import {
+  createMarketDataStore,
+  type FreshBook,
+  type FreshMark,
+  type MarketDataStore,
+} from "./market-data-store.js";
 import {
   parseBookTickerTicks,
   parseJsonPayload,
@@ -28,6 +33,8 @@ import { createNodeWsTransport, type WsTransport } from "./ws-transport.js";
 
 export type MarketDataAccess = {
   getReadySnapshot(symbol: string): MarketDataResponse | null;
+  getFreshMark(symbol: string): FreshMark | null;
+  getFreshBook(symbol: string): FreshBook | null;
   getStatus(): MarketDataStatusResponse;
 };
 
@@ -40,6 +47,12 @@ export type MarketDataRuntime = MarketDataAccess & {
 export function unavailableMarketDataAccess(): MarketDataAccess {
   return {
     getReadySnapshot() {
+      return null;
+    },
+    getFreshMark() {
+      return null;
+    },
+    getFreshBook() {
       return null;
     },
     getStatus() {
@@ -92,6 +105,14 @@ export function createMarketDataRuntime(options: {
       env.MARKET_DATA_MARK_STALE_MS,
       env.MARKET_DATA_BOOK_STALE_MS,
     );
+  }
+
+  function getFreshMark(symbol: string): FreshMark | null {
+    return store.getFreshMark(symbol, env.MARKET_DATA_MARK_STALE_MS);
+  }
+
+  function getFreshBook(symbol: string): FreshBook | null {
+    return store.getFreshBook(symbol, env.MARKET_DATA_BOOK_STALE_MS);
   }
 
   async function refreshCatalogSymbols() {
@@ -171,6 +192,8 @@ export function createMarketDataRuntime(options: {
   return {
     store,
     getReadySnapshot,
+    getFreshMark,
+    getFreshBook,
     getStatus() {
       return {
         catalogSyncOk,

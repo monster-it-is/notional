@@ -23,3 +23,20 @@ export type {
   MarketDataStatusResponse,
   MarketDataUnavailableError,
 } from "./market-data.js";
+export type {
+  CreateOrderRequest,
+  IdempotencyKeyInvalidError,
+  IdempotencyKeyRequiredError,
+  IdempotencyKeyReusedError,
+  InstrumentInactiveError,
+  InvalidOrderError,
+  InvalidOrderReason,
+  InvalidQueryError,
+  OrderListResponse,
+  OrderNotCancellableError,
+  OrderNotFoundError,
+  OrderResponse,
+  OrderSide,
+  OrderStatus,
+  OrderType,
+} from "./order.js";

@@ -494,6 +494,80 @@ Phase 9 Binance USD-M filter validation:
 
 That filter price is not the execution price. MARKET BUY still executes at best ask and MARKET SELL at best bid (ADR-017).
 
+## ADR-026 — Paper order identity, schema, and lifecycle
+
+Status: Accepted
+
+Paper orders are stored in PostgreSQL `trade_order` (not `"order"`, which is a SQL keyword).
+
+Identity:
+
+- `id` is a PostgreSQL UUID (`pg_catalog.gen_random_uuid()`)
+- `paper_account_id` and `instrument_id` are `ON DELETE RESTRICT` foreign keys
+- `idempotency_key` is request-retry identity, unique per paper account, never the resource id
+- later executions reference `trade_order.id`
+- no Binance order id and no third `clientOrderId`
+
+Quantity is a positive `NUMERIC(38,18)` string. Direction is `side`. MARKET `limit_price` is NULL. LIMIT `limit_price` is required and `> 0`. Execution price is not stored on the order row.
+
+Statuses are only `OPEN`, `FILLED`, and `CANCELLED`. MARKET rows may only be `FILLED`. LIMIT rows may be `OPEN`, `FILLED`, or `CANCELLED`. There is no PENDING, ACCEPTED, REJECTED, PARTIALLY_FILLED, filled-qty, remaining-qty, or `time_in_force` (LIMIT is implicit GTC).
+
+The production create helper may insert MARKET `FILLED` and LIMIT `OPEN` or `FILLED`. It must not create `CANCELLED`. Cancellation is the only production path to `CANCELLED`.
+
+`reduce_only` is `boolean NOT NULL DEFAULT false`. Instrument filters are not snapshotted onto the order. Orders are trading history and are never physically deleted in production.
+
+## ADR-027 — Order idempotency
+
+Status: Accepted
+
+Users may intentionally submit identical orders, so payload identity alone cannot identify retries. Eventual `POST /api/orders` requires `Idempotency-Key` matching `^[!-~]{1,128}$` (printable non-whitespace ASCII). The PostgreSQL check remains a broader 1..128 `btrim` backstop. Uniqueness is `(paper_account_id, idempotency_key)`.
+
+The immutable fingerprint is:
+
+- instrument id
+- side
+- order type
+- canonical quantity
+- canonical limit price or null
+- reduce-only
+
+It excludes status, timestamps, and lifecycle. Canonical decimal equality treats `"1"`, `"1.0"`, and `"1.00"` as the same request. No hash column.
+
+Insert uses `INSERT ... ON CONFLICT DO NOTHING RETURNING`. If no row is returned, SELECT the existing row and compare the fingerprint: match → replay; mismatch → `IDEMPOTENCY_KEY_REUSED`. Unique violations are not leaked to the API.
+
+Failed placements that create no row do not consume the key.
+
+When public placement exists, a matching existing key must return the existing order **without** re-running mutable validations (account status, instrument status, filters, market freshness, reduce-only, margin), even if the account is later SUSPENDED, the instrument is INACTIVE, market data is stale, filters changed, or the order is already FILLED/CANCELLED. Only a missing key proceeds to current placement validation. The INSERT helper still handles the concurrent race after that pre-check.
+
+HTTP (Phase 13): first insert `201`; replay `200`.
+
+## ADR-028 — Order validation price sources
+
+Status: Accepted
+
+LIMIT placement validates LOT_SIZE, PRICE_FILTER, and MIN_NOTIONAL against the limit price. It does not require live mark or BBO. PERCENT_PRICE remains deferred.
+
+MARKET quantity uses MARKET_LOT_SIZE. MARKET MIN_NOTIONAL uses a fresh mark. An executable MARKET path also requires a fresh BBO (BUY observes ask, SELL observes bid). Mark is never the fill price. BBO is never the MIN_NOTIONAL price.
+
+Mark freshness and BBO freshness stay independent. Latest fresh mark plus latest fresh BBO is sufficient; there is no event-time join. Stale or missing required data fails closed (`MARKET_DATA_UNAVAILABLE`). Placement validation never authorizes a later fill. Execution must re-read required market state.
+
+Internal market-data access exposes `getFreshMark` and `getFreshBook` separately from the public snapshot that requires both.
+
+Math lives in `@notional/trading`. Account/instrument/market orchestration lives in the API. `@notional/db` does not import market data. Reduce-only is re-evaluated at execution against the locked current position; only REDUCE and CLOSE may execute.
+
+## ADR-029 — Phase 9 public API is read-only
+
+Status: Accepted
+
+Phase 9 does not expose `POST /api/orders` or cancel HTTP. Public routes are authenticated `GET /api/orders` and `GET /api/orders/:id`, user-scoped through the session paper account. A MARKET order must not be stored now to execute later at a different price. LIMIT cannot truthfully become a public `OPEN` intent until margin and position integration exist.
+
+Phase 13 owns public mutating placement once order, execution, position, and margin run atomically in one request. Phase 9 provides schema, CHECKs, idempotent insert, list/find, `SELECT ... FOR UPDATE` lock, internal `cancelOpenLimitOrder`, and reusable validation. `cancelOpenLimitOrder` locks only the order row and must not lock the paper account. Future financial cancel follows `account → position → order`.
+
+List pagination matches funding history: default limit 50, max 100, offset 0, newest first. Optional exact `status` and canonical uppercase `symbol` filters. Unknown symbol → empty list. Foreign or unknown id → `404 ORDER_NOT_FOUND`.
+
+Filter-change and instrument-inactivity policy for resting OPEN limits is recorded as unresolved for Phase 13. Phase 9 does not auto-cancel or delete those rows.
+
+
 
 
 
