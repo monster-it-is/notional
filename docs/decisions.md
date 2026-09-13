@@ -411,6 +411,90 @@ Subscribe/unsubscribe as ACTIVE membership changes. Control messages are chunked
 
 Reconnect uses exponential backoff, jitter, a max delay, generation protection, proactive rotation before the 24-hour server lifetime, and shutdown cancellation.
 
+## ADR-023 — `@notional/trading` exact decimal architecture
+
+Status: Accepted
+
+Trading-domain math is a pure workspace package `@notional/trading`. It depends only on `decimal.js`. It must not import `@notional/db`, Fastify, PostgreSQL, Redis, Binance clients, environment variables, or current time.
+
+`MoneyDecimal` in `@notional/db` remains the ledger/config/PostgreSQL boundary (`precision: 50`, reject scale above 18). It is not the trading calculation engine.
+
+`TradingDecimal` is an isolated `decimal.js` clone:
+
+- `precision: 80`
+- `rounding: ROUND_HALF_EVEN`
+
+Do not mutate global `Decimal` configuration.
+
+Precision 80 is the bound for **one transition** whose authoritative inputs already fit `NUMERIC(38,18)` (at most 20 integer digits and 18 fractional digits). A product of two such values needs up to 76 significant digits; a sum of two products a digit more. Precision 50 would round that intermediate. Precision 80 is not a promise that unbounded chaining of unquantized results stays exact.
+
+Public math functions accept and return decimal strings, not JavaScript `Number` and not Decimal objects.
+
+Input syntax is plain decimal only. Canonical output uses `toFixed(decimalPlaces())` after mapping mathematical zero to `"0"` (never `"-0"`, never scientific notation, no unnecessary trailing zeros).
+
+Two persistence helpers live in `@notional/trading`, independent of db:
+
+- `assertFitsNumeric3818` — reject extra scale or integer overflow; never round
+- `quantizeToNumeric3818` — `ROUND_HALF_EVEN` to 18 decimal places, then reject integer overflow (rounding may carry into an extra integer digit)
+
+Quantities and executed/validated prices must already fit the domain. `applyFillToPosition` does not quantize. Callers quantize derived average entry and realized PnL at persist time. After commit, the stored entry price is the only cost basis for the next fill.
+
+`NUMERIC_PRECISION = 38` and `NUMERIC_SCALE = 18` are duplicated in `@notional/trading` so the math package does not import db. They must stay aligned with `packages/db/src/money.ts`.
+
+## ADR-024 — Signed net position, fill application, and PnL
+
+Status: Accepted
+
+One net position per `(account_id, instrument_id)`. Direction is the sign of quantity:
+
+- positive = LONG
+- negative = SHORT
+- zero = FLAT, `entryPrice = null`
+
+Fill quantity is strictly positive. BUY adds `+fillQty`. SELL adds `-fillQty`. `nextQty = currentQty + signedFillQty` for every transition.
+
+`applyFillToPosition` is the only fill-application implementation. `classifyPositionTransition` is the shared classifier (OPEN / INCREASE / REDUCE / CLOSE / REVERSE). Phase 9 may use the classifier for reduce-only placement prevalidation. Execution must re-classify against the locked current position; resting orders can see a different position than placement.
+
+INCREASE uses quantity-weighted average entry and realizes `0`. REDUCE does not change entry. CLOSE yields `qty = 0` and `entry = null`. REVERSE closes the old quantity at the fill price, then opens the residual at that same fill price without blending the old entry.
+
+Realized PnL:
+
+`closedQty × (exitPrice - entryPrice) × sign(currentQty)`
+
+Public `calculateRealizedPnl` requires `closedQty > 0`, `currentQty != 0`, and `closedQty <= abs(currentQty)`. Over-close is `INVALID_ARGUMENT`. `applyFillToPosition` remains the fill transition and does not use that public helper as its quantity-split authority.
+
+Unrealized PnL:
+
+`positionQty × (markPrice - entryPrice)` (flat → `0`)
+
+Fees and funding are not part of these formulas.
+
+## ADR-025 — Exact instrument filter arithmetic
+
+Status: Accepted
+
+Order validation helpers are pure functions in `@notional/trading`. They do not fetch market data and do not implement the order service.
+
+PRICE_FILTER zeros disable sub-rules. Enabled tick alignment is:
+
+`(price - minPrice) mod tickSize == 0`
+
+using Decimal modulo, not JavaScript `%`, not decimal-place counting, and not an epsilon.
+
+LOT_SIZE and MARKET_LOT_SIZE share one helper. The caller passes the matching field set. Enabled quantity alignment is:
+
+`(quantity - minQty) mod stepSize == 0`
+
+MIN_NOTIONAL compares unrounded `abs(quantity) × price` to `minNotional`. The helper does not fetch market data; the caller supplies `price`.
+
+Phase 9 Binance USD-M filter validation:
+
+- LIMIT MIN_NOTIONAL → order LIMIT price
+- MARKET MIN_NOTIONAL → fresh mark price
+
+That filter price is not the execution price. MARKET BUY still executes at best ask and MARKET SELL at best bid (ADR-017).
+
+
 
 
 

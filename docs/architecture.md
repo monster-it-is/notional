@@ -56,4 +56,10 @@ api -> contracts
 
 api -> db
 
+api -> trading
+
+`@notional/trading` has no dependencies on api, db, contracts, or web.
+
 Frontend must never import database models.
+
+Frontend must never import `@notional/trading`. Trading math is backend domain logic; display values come from the API.

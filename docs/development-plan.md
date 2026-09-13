@@ -41,7 +41,9 @@ Phase 7 synchronizes the instrument catalog from public Binance USD-M `exchangeI
 
 ## Phase 8 — Trading Mathematics
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 8 added `@notional/trading`: pure deterministic exact-decimal math for linear USDT perpetuals. It owns signed net-position fill application, realized/unrealized PnL, notional, tick/step/min-notional filter checks, and explicit `NUMERIC(38,18)` quantization. Precision 80 covers one transition from bounded committed `NUMERIC(38,18)` inputs. Quantities and execution prices are never rounded to fit. Derived average entry and realized PnL are quantized only at persistence with `ROUND_HALF_EVEN`. The generic min-notional helper does not fetch prices: Phase 9 LIMIT MIN_NOTIONAL uses the limit price, MARKET MIN_NOTIONAL uses fresh mark; MARKET execution remains best ask (BUY) / best bid (SELL). No PostgreSQL, API routes, environment variables, or market I/O.
 
 ## Phase 9 — Orders
 

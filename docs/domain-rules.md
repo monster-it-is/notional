@@ -97,9 +97,9 @@ If Redis is lost, financial correctness must remain intact.
 
 Never use JavaScript `Number` as the canonical representation for financial values.
 
-Use exact decimal arithmetic, such as `decimal.js`.
+Use exact decimal arithmetic. Trading-domain math lives in `@notional/trading` (`TradingDecimal`, `decimal.js` clone, precision 80, `ROUND_HALF_EVEN`). Ledger/config persistence in `@notional/db` continues to use `MoneyDecimal` (precision 50) as a PostgreSQL boundary and does not implement trading formulas.
 
-Persist financial values using PostgreSQL `NUMERIC`.
+Persist financial values using PostgreSQL `NUMERIC(38,18)`.
 
 This applies to:
 
@@ -114,6 +114,30 @@ This applies to:
 
 Avoid unnecessary intermediate rounding.
 
+Trading-domain input strings are plain decimal notation only (`0`, `1`, `0.001`, `-0.0001`). Reject scientific notation, whitespace, a leading `+`, `NaN`, `Infinity`, and malformed leading zeros. Canonical math output never uses scientific notation, never emits negative zero (`-0` becomes `0`), and does not pad trailing zeros.
+
+### Calculation vs persistence
+
+Precision 80 is justified for **one transition** whose authoritative inputs already fit `NUMERIC(38,18)`. It is not a claim that arbitrary chaining of unquantized intermediates stays exact forever.
+
+Committed/quantized PostgreSQL state
+→ one `applyFillToPosition` calculation
+→ explicit persistence quantization where required (`quantizeToNumeric3818`)
+→ the resulting committed row is the authority for the next transition.
+
+Quantities (`fillQty`, `currentQty`, `nextQty`) and externally constrained execution prices are never rounded to fit the column. If they do not fit `NUMERIC(38,18)`, the math layer throws `OVERFLOW`.
+
+Derived values may have more than 18 fractional digits during calculation:
+
+- weighted average entry price
+- realized PnL
+- notional (especially before MIN_NOTIONAL comparison)
+- initial margin (`notional / leverage`)
+
+Those derived values use explicit `ROUND_HALF_EVEN` quantization only when persisted. MIN_NOTIONAL comparison and tick/step grid checks must not round first.
+
+Once `nextEntryPrice` is quantized and committed, that persisted entry is the authoritative cost basis. Future realized PnL uses the persisted entry. Do not keep a hidden higher-precision historical entry; financial state must be reproducible from PostgreSQL.
+
 ## Position Model
 
 For MVP, use one net position per account and instrument.
@@ -122,11 +146,55 @@ Database invariant:
 
 - unique `(account_id, instrument_id)`
 
-Use signed quantity:
+Use signed quantity only. Do not store a separate LONG/SHORT direction.
 
-- positive = long
-- negative = short
-- zero = flat
+- `qty > 0` → LONG
+- `qty < 0` → SHORT
+- `qty = 0` → FLAT
+
+Fill quantity is always positive. Convert side to signed fill quantity:
+
+- BUY → `+fillQty`
+- SELL → `-fillQty`
+
+Then:
+
+`nextQty = currentQty + signedFillQty`
+
+Flat and open state are exclusive:
+
+- flat: `qty == 0` and `entryPrice == null`
+- open: `qty != 0` and `entryPrice != null` and `entryPrice > 0`
+
+Zero is not a legitimate entry price.
+
+`applyFillToPosition` is the single fill-application function. Transitions:
+
+- OPEN: previous flat; `entry = fillPrice`; realized PnL `0`
+- INCREASE: same direction; quantity-weighted average entry; realized PnL `0`
+- REDUCE: opposing fill smaller than position; entry unchanged; realize closed quantity only
+- CLOSE: opposing fill equal to position; `qty = 0`; `entry = null`
+- REVERSE: opposing fill larger than position; close the old quantity first and realize it; residual opens at `fillPrice` (do not blend the old entry)
+
+Weighted average entry (INCREASE):
+
+```
+newEntry =
+(
+  abs(oldQty) × oldEntry
+  +
+  abs(fillQty) × fillPrice
+)
+/
+abs(newQty)
+```
+
+This is symmetric for long and short.
+
+Closed/opened quantity during a fill:
+
+- same direction: `closedQty = 0`, `openedQty = fillQty`
+- opposing: `closedQty = min(abs(currentQty), fillQty)`, `openedQty = max(fillQty - abs(currentQty), 0)`
 
 Do not implement hedge mode in MVP.
 
@@ -144,6 +212,29 @@ Do not implement a matching engine.
 Orders may support `reduceOnly`.
 
 A reduce-only order must never increase exposure or cross through zero into a new opposite-side position.
+
+Phase 9 may use `classifyPositionTransition` for reduce-only **placement** prevalidation. Placement validation is not authoritative forever. At actual execution, reduce-only **must** be re-evaluated against the then-current locked position, because the position can change while an order is resting.
+
+PRICE_FILTER / LOT_SIZE / MARKET_LOT_SIZE / MIN_NOTIONAL checks are exact Decimal arithmetic in `@notional/trading`. PRICE_FILTER zeros disable the corresponding sub-rule (`minPrice`, `maxPrice`, `tickSize`). When tick alignment is enabled:
+
+`(price - minPrice) mod tickSize == 0`
+
+Quantity filters are caller-selected: limit orders use LOT_SIZE fields, market orders use MARKET_LOT_SIZE fields. Do not mix them. When the quantity step is enabled:
+
+`(quantity - minQty) mod stepSize == 0`
+
+MIN_NOTIONAL:
+
+`abs(quantity) × relevantPrice >= minNotional`
+
+without rounding before comparison. `satisfiesMinNotional({ quantity, price, minNotional })` is generic and does not fetch market data. The caller supplies `price`.
+
+Phase 9 Binance USD-M filter validation:
+
+- LIMIT MIN_NOTIONAL uses the order's LIMIT price
+- MARKET MIN_NOTIONAL uses a fresh **mark price**
+
+Do not use best bid/ask for MARKET MIN_NOTIONAL. Execution price is separate (MARKET BUY executes at best ask, MARKET SELL at best bid).
 
 ## Margin
 
@@ -167,19 +258,31 @@ Use one deterministic configurable risk model.
 
 ## PnL
 
-For linear USDT-margined perpetuals:
+For linear USDT-margined perpetuals only (multiplier 1). No inverse, coin-margined, or options formulas.
 
 Notional:
 
-`abs(position quantity) * reference price`
+`abs(position or order quantity) * reference price`
 
-Initial margin:
+Notional is never negative. The caller supplies the price appropriate to the context. Do not default to mark inside a generic notional function.
+
+Initial margin primitive:
 
 `notional / leverage`
+
+`leverage` is a positive integer. Phase 8 does not cap max leverage, reserve margin, or model isolated/cross/maintenance/liquidation.
 
 Using signed quantity:
 
 `unrealized PnL = signed quantity * (mark price - entry price)`
+
+Flat unrealized PnL is exactly `0`.
+
+Realized PnL for a closing quantity, fees excluded:
+
+`realizedPnl = closedQty × (exitPrice - entryPrice) × sign(currentQty)`
+
+`closedQty > 0`. Positive means profit to the user. Negative means loss. Do not mix trading fees into realized trading PnL.
 
 Mark price is used for:
 
