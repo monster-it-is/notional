@@ -5,3 +5,4 @@ export * from "./funding.js";
 export * from "./instrument.js";
 export * from "./order.js";
 export * from "./execution.js";
+export * from "./position.js";

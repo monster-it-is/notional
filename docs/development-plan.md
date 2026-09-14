@@ -55,11 +55,13 @@ Phase 9 added PostgreSQL `trade_order`: UUID identity, paper-account and instrum
 
 Status: COMPLETE
 
-Phase 10 added PostgreSQL `execution`: UUID identity, unique `order_id` (one complete fill per order), positive quantity/price, and UTC-naive `executed_at` sampled with `clock_timestamp()`. Production FILLED creation is `insertFilledOrderWithExecution` (MARKET and marketable LIMIT) or `completeOpenLimitOrder` (resting OPEN LIMIT). `insertOpenLimitOrder` creates LIMIT `OPEN` only. `@notional/trading` owns MARKET ask/bid and LIMIT BBO marketability/price-improvement helpers. Authenticated read-only `GET /api/executions` and `GET /api/executions/:id` are account-scoped. There is no public fill mutation, matcher, position, margin, or ledger trading effect. Internal fill helpers do not make the product tradable. Positions, margin, and accounting remain Phases 11–13.
+Phase 10 added PostgreSQL `execution`: UUID identity, unique `order_id` (one complete fill per order), positive quantity/price, and UTC-naive `executed_at` sampled with `clock_timestamp()`. Production FILLED creation is `insertFilledOrderWithExecution` (MARKET and marketable LIMIT) or `completeOpenLimitOrder` (resting OPEN LIMIT). `insertOpenLimitOrder` creates LIMIT `OPEN` only. `@notional/trading` owns MARKET ask/bid and LIMIT BBO marketability/price-improvement helpers. Authenticated read-only `GET /api/executions` and `GET /api/executions/:id` are account-scoped. There is no public fill mutation, matcher, margin, or ledger trading effect. Internal fill helpers do not make the product tradable. Positions, margin, and accounting remained Phases 11–13.
 
 ## Phase 11 — Positions
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 11 added PostgreSQL `trading_position`: one persistent row per paper account and instrument, signed quantity, canonical flat `quantity = 0` / `entry_price` NULL, and cumulative lifetime `realized_pnl`. Flat rows are never deleted. `@notional/trading` quantizes derived entry and realized delta at persist (`toPersistedFillState` / `addNumeric3818Exact`); quantity is never rounded. Fill application uses `execution.price` inside one `FinancialTransaction` after `paper_account → trading_position → trade_order` locks. Only `created_filled` applies position effects; `replayed_filled` does not. `OPEN` plus a pre-existing execution is `EXECUTION_CONFLICT`, not a heal. Authenticated read-only `GET /api/positions` and `GET /api/positions/:symbol` expose open positions (`cumulativeRealizedPnl`, no unrealized PnL, no mutation routes). Phase 11 does **not** make trading financially complete: margin, account-balance realized PnL, and ledger integration remain Phase 12/13.
 
 ## Phase 12 — Margin and Leverage
 

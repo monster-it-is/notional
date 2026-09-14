@@ -164,3 +164,19 @@ export function quantizeValue(value: TradingDecimal): string {
 export function quantizeToNumeric3818(value: string): string {
   return quantizeValue(parsePlainDecimal(value));
 }
+
+export function addNumeric3818Exact(left: string, right: string): string {
+  const sum = parseCommittedDecimal(left, "left").plus(parseCommittedDecimal(right, "right"));
+
+  try {
+    assertFitsValue(sum);
+  } catch (error) {
+    if (error instanceof TradingMathError && error.code === "OVERFLOW") {
+      throw new TradingMathError("OVERFLOW", "sum exceeds NUMERIC(38,18)");
+    }
+
+    throw error;
+  }
+
+  return toCanonicalFromDecimal(sum);
+}

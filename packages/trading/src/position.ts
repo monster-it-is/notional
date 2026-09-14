@@ -1,8 +1,11 @@
 import {
   type TradingDecimal,
+  addNumeric3818Exact,
+  assertFitsNumeric3818,
   assertFitsValue,
   parseCommittedDecimal,
   parseCommittedPositive,
+  quantizeToNumeric3818,
   toCanonicalFromDecimal,
 } from "./decimal.js";
 import { TradingMathError } from "./errors.js";
@@ -211,5 +214,56 @@ export function applyFillToPosition(input: ApplyFillInput): ApplyFillResult {
     openedQty: toCanonicalFromDecimal(fillQty.minus(currentQty.abs())),
     realizedPnl: toCanonicalFromDecimal(realized),
     transition,
+  };
+}
+
+export type PersistedFillState = {
+  quantity: string;
+  entryPrice: string | null;
+  realizedPnlDelta: string;
+  realizedPnl: string;
+  transition: PositionTransition;
+  previousQty: string;
+  previousEntryPrice: string | null;
+};
+
+export function toPersistedFillState(
+  fill: ApplyFillResult,
+  currentRealizedPnl: string,
+): PersistedFillState {
+  assertFitsNumeric3818(fill.nextQty);
+
+  const entryPrice =
+    fill.nextEntryPrice === null ? null : quantizeToNumeric3818(fill.nextEntryPrice);
+
+  if (fill.nextQty === "0") {
+    if (entryPrice !== null) {
+      throw new TradingMathError(
+        "INVARIANT_VIOLATION",
+        "flat position requires entryPrice null",
+      );
+    }
+  } else if (entryPrice === null) {
+    throw new TradingMathError("INVARIANT_VIOLATION", "open position requires entryPrice");
+  } else {
+    const persistedEntry = parseCommittedDecimal(entryPrice, "entryPrice");
+    if (persistedEntry.lte(0)) {
+      throw new TradingMathError(
+        "INVARIANT_VIOLATION",
+        "open position requires entryPrice > 0",
+      );
+    }
+  }
+
+  const realizedPnlDelta = quantizeToNumeric3818(fill.realizedPnl);
+
+  return {
+    quantity: fill.nextQty,
+    entryPrice,
+    realizedPnlDelta,
+    realizedPnl: addNumeric3818Exact(currentRealizedPnl, realizedPnlDelta),
+    transition: fill.transition,
+    previousQty: fill.previousQty,
+    previousEntryPrice: fill.previousEntryPrice,
   };
 }

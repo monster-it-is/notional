@@ -19,6 +19,7 @@ import {
   type MarketDataAccess,
 } from "./market-data/coordinator.js";
 import { getOrderById, getOrders } from "./orders.js";
+import { getPositionBySymbol, getPositions } from "./positions.js";
 
 export type BuildAppOptions = {
   marketData?: MarketDataAccess;
@@ -62,6 +63,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.get("/api/orders/:id", { preHandler: requireAuth }, getOrderById);
   app.get("/api/executions", { preHandler: requireAuth }, getExecutions);
   app.get("/api/executions/:id", { preHandler: requireAuth }, getExecutionById);
+  app.get("/api/positions", { preHandler: requireAuth }, getPositions);
+  app.get("/api/positions/:symbol", { preHandler: requireAuth }, getPositionBySymbol);
 
   app.get("/api/me", { preHandler: requireAuth }, async (request, reply): Promise<MeResponse | { error: string }> => {
     const session = request.auth;

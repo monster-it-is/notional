@@ -61,10 +61,9 @@ export type InsertFilledOrderResult =
   | { kind: "replayed_order"; order: Order }
   | { kind: "key_reused"; existing: Order };
 
-export type CompleteOrderFillResult = {
-  order: Order;
-  execution: Execution;
-};
+export type CompleteOrderFillResult =
+  | { kind: "created_filled"; order: Order; execution: Execution }
+  | { kind: "replayed_filled"; order: Order; execution: Execution };
 
 export type ListExecutionsPagination = {
   limit: number;
@@ -149,7 +148,12 @@ export async function insertFilledOrderWithExecution(
   }
 
   const fill = await insertExecutionForOrder(executor, inserted.order, executionPrice);
-  return { kind: "created_filled", order: fill.order, execution: fill.execution };
+
+  if (fill.kind !== "created_filled") {
+    throw new ExecutionMutationError("EXECUTION_CONFLICT");
+  }
+
+  return fill;
 }
 
 export async function completeOpenLimitOrder(
@@ -171,6 +175,7 @@ export async function completeOpenLimitOrder(
   if (locked.status === "FILLED") {
     return replayFilledLockedOrder(executor, locked);
   }
+
 
   if (locked.orderType !== "LIMIT" || locked.status !== "OPEN") {
     throw new ExecutionMutationError("ORDER_NOT_EXECUTABLE");
@@ -293,7 +298,7 @@ async function replayFilledLockedOrder(
     throw new ExecutionMutationError("EXECUTION_CONFLICT");
   }
 
-  return { order, execution: existing };
+  return { kind: "replayed_filled", order, execution: existing };
 }
 
 async function insertExecutionForOrder(
@@ -310,23 +315,12 @@ async function insertExecutionForOrder(
     wallClock,
   );
 
-  if (inserted) {
-    const filled = await markOrderFilled(executor, order, wallClock);
-    return { order: filled, execution: inserted };
-  }
-
-  const existing = await findExecutionByOrderId(executor, order.id);
-
-  if (!existing) {
-    throw new Error("execution missing after insert conflict");
-  }
-
-  if (order.status === "FILLED") {
-    return { order, execution: existing };
+  if (!inserted) {
+    throw new ExecutionMutationError("EXECUTION_CONFLICT");
   }
 
   const filled = await markOrderFilled(executor, order, wallClock);
-  return { order: filled, execution: existing };
+  return { kind: "created_filled", order: filled, execution: inserted };
 }
 
 async function insertExecutionRow(

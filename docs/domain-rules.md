@@ -142,9 +142,7 @@ Once `nextEntryPrice` is quantized and committed, that persisted entry is the au
 
 For MVP, use one net position per account and instrument.
 
-Database invariant:
-
-- unique `(account_id, instrument_id)`
+Persisted paper positions live in PostgreSQL `trading_position`. Identity is unique `(paper_account_id, instrument_id)`. The application type is `Position`. The row is created lazily on the first fill for that pair and is never deleted merely because it becomes flat. Reopen reuses the same row.
 
 Use signed quantity only. Do not store a separate LONG/SHORT direction.
 
@@ -166,14 +164,18 @@ Flat and open state are exclusive:
 - flat: `qty == 0` and `entryPrice == null`
 - open: `qty != 0` and `entryPrice != null` and `entryPrice > 0`
 
-Zero is not a legitimate entry price.
+Zero is not a legitimate entry price. PostgreSQL CHECK `trading_position_qty_entry_invariant` enforces the shape.
 
-`applyFillToPosition` is the single fill-application function. Transitions:
+`realized_pnl` on the row is cumulative lifetime realized trading PnL for that persistent account/instrument identity. It is not reset on CLOSE or reopen. OPEN/INCREASE add a quantized delta of `0`. REDUCE/CLOSE/REVERSE add the quantized per-fill `realizedPnlDelta`. Public reads expose this as `cumulativeRealizedPnl`. Unrealized PnL is not stored; it depends on a fresh mark.
+
+`applyFillToPosition` is the single fill-application function. Persistence then uses `toPersistedFillState`: quantity is never rounded; derived entry and realized delta are quantized with `ROUND_HALF_EVEN` scale 18; cumulative realized PnL is exact `NUMERIC(38,18)` addition of the quantized delta. The persisted quantized entry is the next fill’s cost basis.
+
+Transitions:
 
 - OPEN: previous flat; `entry = fillPrice`; realized PnL `0`
 - INCREASE: same direction; quantity-weighted average entry; realized PnL `0`
 - REDUCE: opposing fill smaller than position; entry unchanged; realize closed quantity only
-- CLOSE: opposing fill equal to position; `qty = 0`; `entry = null`
+- CLOSE: opposing fill equal to position; `qty = 0`; `entry = null`; the row remains
 - REVERSE: opposing fill larger than position; close the old quantity first and realize it; residual opens at `fillPrice` (do not blend the old entry)
 
 Weighted average entry (INCREASE):
@@ -197,6 +199,14 @@ Closed/opened quantity during a fill:
 - opposing: `closedQty = min(abs(currentQty), fillQty)`, `openedQty = max(fillQty - abs(currentQty), 0)`
 
 Do not implement hedge mode in MVP.
+
+Only `created_filled` execution results may apply position (and later margin/ledger) effects. `replayed_filled` returns committed facts and must not reapply them. `OPEN` plus a pre-existing execution is `EXECUTION_CONFLICT`, not a heal-to-FILLED replay.
+
+Position mutation uses `execution.price`. Never BBO, mark, or limit after the execution exists. Reduce-only is classified against the locked current position before execution creation, not inside position persistence.
+
+Lock order is `paper_account → trading_position → trade_order`. There is no public position mutation HTTP. Authenticated reads are `GET /api/positions` (open rows only) and `GET /api/positions/:symbol` (absent or flat → `POSITION_NOT_FOUND`). An existing nonzero position remains if the instrument later becomes `INACTIVE`; entry price is historical cost basis and is never rewritten because filters or status changed.
+
+Phase 11 persists position state only. It does not mutate `paper_account.balance` or post trading ledger entries. Margin and accounting remain Phase 12/13.
 
 ## Orders
 
@@ -240,15 +250,15 @@ There is no `PENDING`, `ACCEPTED`, `REJECTED`, or `PARTIALLY_FILLED`. Failed pla
 
 MVP does not implement true partial fills. Do not persist filled/remaining quantity on the order. One `FILLED` order has exactly one `execution` row (`UNIQUE(order_id)`). `execution.quantity` is the full persisted order quantity. Partial fills would require a deliberate migration of that unique constraint.
 
-Public HTTP in Phase 9–10 is read-only for orders (`GET /api/orders`, `GET /api/orders/:id`) and executions (`GET /api/executions`, `GET /api/executions/:id`). Public placement and cancel wait until order, execution, position, and margin can run atomically (Phase 13). There is no `POST /api/executions`; fills are system-generated. Cancellation is an internal `OPEN → CANCELLED` transition on a locked LIMIT row. MARKET is not cancellable. Terminal FILLED/CANCELLED cannot be cancelled except that a second cancel of an already CANCELLED order is idempotent success.
+Public HTTP in Phase 9–11 is read-only for orders (`GET /api/orders`, `GET /api/orders/:id`), executions (`GET /api/executions`, `GET /api/executions/:id`), and positions (`GET /api/positions`, `GET /api/positions/:symbol`). Public placement and cancel wait until order, execution, position, and margin can run atomically (Phase 13). There is no `POST /api/executions` or `POST /api/positions`; fills are system-generated and positions are derived. Cancellation is an internal `OPEN → CANCELLED` transition on a locked LIMIT row. MARKET is not cancellable. Terminal FILLED/CANCELLED cannot be cancelled except that a second cancel of an already CANCELLED order is idempotent success.
 
 `insertOpenLimitOrder` inserts LIMIT `OPEN` only. FILLED MARKET and immediately filled LIMIT rows are created only through `insertFilledOrderWithExecution` (order + execution in one transaction). Resting LIMIT completion uses `completeOpenLimitOrder` (`OPEN → FILLED` + execution). Production helpers must not create `CANCELLED` directly or create a `FILLED` order without its execution.
 
-A `FILLED` order conceptually has exactly one execution. `OPEN` and `CANCELLED` orders have none. Cancel and fill both `SELECT ... FOR UPDATE` the same `trade_order` row: if fill commits first, cancel returns `ORDER_NOT_CANCELLABLE`; if cancel commits first, fill returns `ORDER_ALREADY_CANCELLED` and inserts no execution. A second fill of an already executed order returns the original execution and must not re-price it.
+A `FILLED` order conceptually has exactly one execution. `OPEN` and `CANCELLED` orders have none. Cancel and fill both `SELECT ... FOR UPDATE` the same `trade_order` row: if fill commits first, cancel returns `ORDER_NOT_CANCELLABLE`; if cancel commits first, fill returns `ORDER_ALREADY_CANCELLED` and inserts no execution. A second fill of an already `FILLED` order returns `replayed_filled` with the original execution and must not re-price it. `OPEN` plus a pre-existing execution is `EXECUTION_CONFLICT` and must not be healed to `FILLED`.
 
 Execution rows are immutable historical facts (`quantity`, `price`, `executed_at`). `executed_at` is a UTC-naive PostgreSQL timestamp sampled once with `clock_timestamp() AT TIME ZONE 'UTC'` at the fill. Reads interpret that column as UTC before the API boundary. Later fees and realized PnL reference the execution; they must not mutate it.
 
-Reduce-only is a persisted boolean defaulting to false. Phase 9 does not have a position table and must not fabricate one. Placement may persist the flag. Actual execution must re-classify against the then-current locked position with `classifyPositionTransition`. Only `REDUCE` and `CLOSE` may execute. `OPEN`, `INCREASE`, and `REVERSE` must fail.
+Reduce-only is a persisted boolean defaulting to false. Placement may persist the flag. Actual execution must re-classify against the then-current locked position with `classifyPositionTransition`. Only `REDUCE` and `CLOSE` may execute. `OPEN`, `INCREASE`, and `REVERSE` must fail. Position persistence itself does not enforce reduce-only.
 
 New orders require an initialized `ACTIVE` paper account and an `ACTIVE` instrument. Uninitialized accounts return `ACCOUNT_NOT_INITIALIZED`. Suspended accounts cannot place orders. Historical order rows are never deleted. Instrument inactivity does not delete or auto-cancel existing orders in Phase 9.
 

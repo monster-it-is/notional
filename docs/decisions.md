@@ -632,6 +632,81 @@ Phase 10 does not wire live execution. Phase 13 must obtain a fresh BBO after fi
 
 Authenticated `GET /api/executions` and `GET /api/executions/:id` are account-scoped reads. There is no `POST /api/executions` and there must never be a client-specified fill-price mutation endpoint. Phase 10 still does not make the product tradable: public placement waits for atomic order + execution + position + margin in Phase 13.
 
+`completeOpenLimitOrder` returns the same created/replayed discrimination as a successful fill path:
+
+- `created_filled` — this transaction inserted the execution
+- `replayed_filled` — the locked order was already `FILLED` with an existing execution
+
+`OPEN` plus a pre-existing execution is not a replay. It is `EXECUTION_CONFLICT`. Do not mark the order `FILLED`, do not return `replayed_filled`, and do not repair position. A fresh `insertFilledOrderWithExecution` whose execution insert conflicts is also `EXECUTION_CONFLICT`.
+
+## ADR-031 — Persistent net positions
+
+Status: Accepted
+
+Paper net positions live in PostgreSQL `trading_position` (not `"position"`, a SQL keyword). The application type is `Position`.
+
+### Identity and lifecycle
+
+One persistent row per `(paper_account_id, instrument_id)`, unique. The row is created lazily with `ensurePosition` on the first financial fill for that pair. It is never deleted merely because the position becomes flat. Reopen reuses the same row.
+
+Direction is only the sign of `quantity`. There is no `side` column.
+
+Canonical FLAT:
+
+- `quantity = 0`
+- `entry_price` NULL
+
+Open rows require `quantity <> 0`, `entry_price IS NOT NULL`, and `entry_price > 0`. PostgreSQL CHECK `trading_position_qty_entry_invariant` enforces this. `realized_pnl` may be negative, zero, or positive.
+
+### Cumulative realized PnL
+
+`realized_pnl` is **cumulative lifetime realized trading PnL** for that persistent account/instrument row. OPEN/INCREASE add quantized `0`. REDUCE/CLOSE/REVERSE add the quantized per-fill delta. CLOSE does not reset the column. Reopen does not erase it.
+
+Public HTTP names the field `cumulativeRealizedPnl`. Application mutation output names the per-execution amount `realizedPnlDelta`. Phase 13 must post that same quantized delta to the ledger in the same transaction.
+
+Unrealized PnL is not persisted and is not on the Phase 11 API. It requires a fresh mark.
+
+### Quantization
+
+`applyFillToPosition` remains unquantized. Persistence uses `toPersistedFillState`:
+
+- `quantity` is exact `nextQty`; never rounded; overflow throws
+- `entryPrice` is NULL when flat, otherwise `quantizeToNumeric3818` HALF_EVEN scale 18
+- `realizedPnlDelta` is `quantizeToNumeric3818` of the fill’s realized delta, once
+- cumulative `realizedPnl` is `addNumeric3818Exact(current, delta)`
+
+The persisted quantized entry is the authoritative cost basis for the next fill. Do not rely on PostgreSQL implicit rounding. `@notional/db` does not import `@notional/trading`.
+
+### Lock order
+
+Permanent: `paper_account` → `trading_position` → `trade_order`.
+
+`lockPaperAccountById` and position mutation helpers require `FinancialTransaction`. Position helpers must not lock the paper account. `ensurePosition` is `INSERT ... ON CONFLICT DO NOTHING` then SELECT. `lockPositionByAccountAndInstrument` is `SELECT ... FOR UPDATE` and throws if missing. Callers lock the account first, then ensure, then lock the position. `UNIQUE(paper_account_id, instrument_id)` is the first-row backstop. No Redis/advisory locks.
+
+`updated_at` is `clock_timestamp() AT TIME ZONE 'UTC'`. Reads project `updated_at AT TIME ZONE 'UTC'` before ISO serialization.
+
+### Exactly-once effects
+
+No execution-effect marker table. Exactly-once holds because execution creation, position update, and later margin/ledger run in one PostgreSQL transaction, and only `created_filled` applies effects.
+
+`applyPositionForFillResult`:
+
+- `created_filled` → `applyCreatedExecutionToPosition` → persist
+- `replayed_filled` → `{ kind: "replayed", position }` with no `updatePositionState`
+
+A replayed execution is a read of committed facts, never a repair trigger. Impossible states fail loudly.
+
+Reduce-only is not enforced inside position persistence. Phase 13 classifies against the locked position before creating the execution.
+
+### Public API
+
+Authenticated `GET /api/positions` (open rows only, `symbol` ASC, no pagination) and `GET /api/positions/:symbol` (canonical uppercase; open → 200; absent or flat → `404 POSITION_NOT_FOUND`). DTO fields: `symbol`, signed `quantity`, `entryPrice`, `cumulativeRealizedPnl`, `updatedAt`. No row/account/instrument ids, mark, unrealized PnL, leverage, margin, or liquidation.
+
+There is no `POST`/`PUT`/`DELETE /api/positions` and there must never be. Positions are derived from executions. Clients create orders, not positions.
+
+Phase 11 does not mutate `paper_account.balance` and does not post trading ledger entries. Position persistence is not financially complete; margin and accounting remain Phase 12/13.
+
+
 
 
 

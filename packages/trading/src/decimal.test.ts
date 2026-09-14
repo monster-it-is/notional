@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  addNumeric3818Exact,
   assertFitsNumeric3818,
   parseDecimalString,
   parseNonNegativeDecimalString,
@@ -112,5 +113,25 @@ describe("quantizeToNumeric3818", () => {
   it("does not pad trailing zeros", () => {
     expect(quantizeToNumeric3818("0.1")).toBe("0.1");
     expect(fractionalDigitCount(quantizeToNumeric3818("0.1"))).toBe(1);
+  });
+});
+
+describe("addNumeric3818Exact", () => {
+  it("adds committed NUMERIC(38,18) values without rounding", () => {
+    expect(addNumeric3818Exact("30", "20")).toBe("50");
+    expect(addNumeric3818Exact("50", "-10")).toBe("40");
+    expect(addNumeric3818Exact("0", "0")).toBe("0");
+    expect(addNumeric3818Exact("-0.000000000000000001", "0.000000000000000001")).toBe("0");
+  });
+
+  it("rejects extra scale rather than rounding the summands", () => {
+    expectTradingCode(
+      () => addNumeric3818Exact("1.1234567890123456789", "0"),
+      "OVERFLOW",
+    );
+  });
+
+  it("detects overflow of the exact sum before PostgreSQL", () => {
+    expectTradingCode(() => addNumeric3818Exact("9".repeat(20), "1"), "OVERFLOW");
   });
 });

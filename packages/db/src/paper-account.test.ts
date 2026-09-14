@@ -4,6 +4,7 @@ import { afterAll, beforeEach, describe, expect, it } from "vitest";
 import {
   db,
   ensurePaperAccount,
+  lockPaperAccountById,
   paperAccount,
   user,
 } from "./index.js";
@@ -126,6 +127,24 @@ describe("paper_account", () => {
       }),
       "paper_account_user_id_user_id_fk",
     );
+  });
+
+  it("locks a paper account by id", async () => {
+    const createdUser = await insertUser("lock-by-id@example.com");
+    const account = await ensurePaperAccount(db, createdUser.id);
+
+    const locked = await db.transaction((tx) => lockPaperAccountById(tx, account.id));
+
+    expect(locked.id).toBe(account.id);
+    expect(locked.userId).toBe(createdUser.id);
+  });
+
+  it("throws when locking a missing paper account by id", async () => {
+    await expect(
+      db.transaction((tx) =>
+        lockPaperAccountById(tx, "00000000-0000-4000-8000-000000000001"),
+      ),
+    ).rejects.toThrow("paper_account missing after lock");
   });
 });
 

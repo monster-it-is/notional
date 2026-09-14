@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { assertFitsNumeric3818, quantizeToNumeric3818 } from "./decimal.js";
 import { satisfiesMinNotional } from "./filters.js";
-import { applyFillToPosition } from "./position.js";
+import { applyFillToPosition, toPersistedFillState } from "./position.js";
 import { expectTradingCode, fractionalDigitCount } from "./test-helpers.js";
 
 describe("persistence and quantization rules", () => {
@@ -186,5 +186,37 @@ describe("persistence and quantization rules", () => {
     expect(closed.nextQty).toBe("0");
     expect(closed.realizedPnl).toBe("0");
     expect(quantizeToNumeric3818("-0.0000000000000000004")).toBe("0");
+  });
+
+  it("quantizes derived entry and realized delta once before exact cumulative addition", () => {
+    const increased = applyFillToPosition({
+      currentQty: "0.5",
+      currentEntryPrice: "100.5",
+      fillSide: "BUY",
+      fillQty: "0.25",
+      fillPrice: "99.5",
+    });
+    expect(fractionalDigitCount(increased.nextEntryPrice!)).toBeGreaterThan(18);
+
+    const persisted = toPersistedFillState(increased, "0");
+    expect(persisted.quantity).toBe("0.75");
+    expect(persisted.entryPrice).toBe("100.166666666666666667");
+    expect(persisted.realizedPnlDelta).toBe("0");
+    expect(persisted.realizedPnl).toBe("0");
+
+    const closed = applyFillToPosition({
+      currentQty: "0.000000000000000003",
+      currentEntryPrice: "1.000000000000000003",
+      fillSide: "SELL",
+      fillQty: "0.000000000000000003",
+      fillPrice: "1.000000000000000001",
+    });
+    expect(fractionalDigitCount(closed.realizedPnl)).toBeGreaterThan(18);
+
+    const closedPersist = toPersistedFillState(closed, "30");
+    expect(closedPersist.realizedPnlDelta).toBe("0");
+    expect(closedPersist.realizedPnl).toBe("30");
+    expect(closedPersist.quantity).toBe("0");
+    expect(closedPersist.entryPrice).toBeNull();
   });
 });

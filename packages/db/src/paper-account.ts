@@ -66,6 +66,23 @@ export async function lockPaperAccountByUserId(
   return account;
 }
 
+export async function lockPaperAccountById(
+  executor: FinancialTransaction,
+  paperAccountId: string,
+): Promise<PaperAccount> {
+  const [account] = await executor
+    .select()
+    .from(paperAccount)
+    .where(eq(paperAccount.id, paperAccountId))
+    .for("update");
+
+  if (!account) {
+    throw new Error("paper_account missing after lock");
+  }
+
+  return account;
+}
+
 export async function updatePaperAccountBalance(
   executor: FinancialTransaction,
   paperAccountId: string,

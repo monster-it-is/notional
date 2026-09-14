@@ -9,6 +9,8 @@ describe("public package boundary", () => {
     expect(typeof trading.calculateRealizedPnl).toBe("function");
     expect(typeof trading.calculateUnrealizedPnl).toBe("function");
     expect(typeof trading.applyFillToPosition).toBe("function");
+    expect(typeof trading.toPersistedFillState).toBe("function");
+    expect(typeof trading.addNumeric3818Exact).toBe("function");
     expect(typeof trading.classifyPositionTransition).toBe("function");
     expect(typeof trading.satisfiesMinNotional).toBe("function");
     expect(typeof trading.calculateInitialMargin).toBe("function");

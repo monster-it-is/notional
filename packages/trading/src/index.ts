@@ -1,4 +1,5 @@
 export {
+  addNumeric3818Exact,
   assertFitsNumeric3818,
   NUMERIC_INTEGER_DIGITS,
   NUMERIC_PRECISION,
@@ -38,11 +39,13 @@ export {
   classifyPositionTransition,
   positionSide,
   signedFillQuantity,
+  toPersistedFillState,
 } from "./position.js";
 export type {
   ApplyFillInput,
   ApplyFillResult,
   OrderSide,
+  PersistedFillState,
   PositionSide,
   PositionTransition,
 } from "./position.js";

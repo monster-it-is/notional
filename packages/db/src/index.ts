@@ -62,6 +62,16 @@ export type {
   OrderWithSymbol,
 } from "./order.js";
 export {
+  applyFaucetClaim,
+  ensurePaperAccount,
+  findPaperAccountByUserId,
+  lockPaperAccountById,
+  lockPaperAccountByUserId,
+  updatePaperAccountBalance,
+} from "./paper-account.js";
+export type { PaperAccount } from "./paper-account.js";
+export * from "./schema/index.js";
+export {
   completeOpenLimitOrder,
   ExecutionMutationError,
   findAccountExecutionById,
@@ -80,11 +90,15 @@ export type {
   ListExecutionsPagination,
 } from "./execution.js";
 export {
-  applyFaucetClaim,
-  ensurePaperAccount,
-  findPaperAccountByUserId,
-  lockPaperAccountByUserId,
-  updatePaperAccountBalance,
-} from "./paper-account.js";
-export type { PaperAccount } from "./paper-account.js";
-export * from "./schema/index.js";
+  ensurePosition,
+  findOpenPositionByAccountAndSymbol,
+  findPositionByAccountAndInstrument,
+  listOpenPositionsByPaperAccountId,
+  lockPositionByAccountAndInstrument,
+  updatePositionState,
+} from "./position.js";
+export type {
+  Position,
+  PositionWithSymbol,
+  UpdatePositionStateInput,
+} from "./position.js";

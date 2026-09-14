@@ -45,3 +45,8 @@ export type {
   ExecutionNotFoundError,
   ExecutionResponse,
 } from "./execution.js";
+export type {
+  PositionListResponse,
+  PositionNotFoundError,
+  PositionResponse,
+} from "./position.js";

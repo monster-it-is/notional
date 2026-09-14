@@ -98,6 +98,7 @@ describe("execution", () => {
       completeOpenLimitOrder(tx, account.id, created.order.id, "99.1"),
     );
 
+    expect(filled.kind).toBe("created_filled");
     expect(filled.order.status).toBe("FILLED");
     expect(filled.execution.quantity).toBe("0.5");
     expect(filled.execution.quantity).toBe(filled.order.quantity);
@@ -299,6 +300,8 @@ describe("execution", () => {
       completeOpenLimitOrder(tx, account.id, created.order.id, "105"),
     );
 
+    expect(second.kind).toBe("replayed_filled");
+    expect(first.kind).toBe("created_filled");
     expect(second.execution.id).toBe(first.execution.id);
     expect(second.execution.price).toBe("100");
     expect(await db.select().from(execution)).toHaveLength(1);
@@ -517,6 +520,8 @@ describe("execution", () => {
     );
 
     expect(new Set(results.map((row) => row.execution.id)).size).toBe(1);
+    expect(results.filter((row) => row.kind === "created_filled")).toHaveLength(1);
+    expect(results.filter((row) => row.kind === "replayed_filled")).toHaveLength(7);
     expect(results.every((row) => row.execution.price === results[0]?.execution.price)).toBe(
       true,
     );
@@ -524,7 +529,7 @@ describe("execution", () => {
     expect((await db.select().from(tradeOrder))[0]?.status).toBe("FILLED");
   });
 
-  it("uses ON CONFLICT DO NOTHING so a duplicate execution insert does not abort the transaction", async () => {
+  it("treats OPEN plus a pre-existing execution as EXECUTION_CONFLICT and does not heal to FILLED", async () => {
     const { account, btcId } = await seed();
     const created = await insertOpenLimitOrder(db, openLimitInput(account.id, btcId));
     expect(created.kind).toBe("created");
@@ -532,27 +537,27 @@ describe("execution", () => {
       return;
     }
 
-    const filled = await db.transaction(async (tx) => {
-      await tx.execute(sql`
-        INSERT INTO execution (order_id, quantity, price, executed_at)
-        VALUES (
-          ${created.order.id}::uuid,
-          ${created.order.quantity}::numeric,
-          ${"98"}::numeric,
-          TIMESTAMP '2024-06-15 12:30:00'
-        )
-      `);
+    await db.execute(sql`
+      INSERT INTO execution (order_id, quantity, price, executed_at)
+      VALUES (
+        ${created.order.id}::uuid,
+        ${created.order.quantity}::numeric,
+        ${"98"}::numeric,
+        TIMESTAMP '2024-06-15 12:30:00'
+      )
+    `);
 
-      const completed = await completeOpenLimitOrder(tx, account.id, created.order.id, "99");
-      const stillReadable = await findExecutionByOrderId(tx, created.order.id);
+    await expect(
+      db.transaction((tx) => completeOpenLimitOrder(tx, account.id, created.order.id, "99")),
+    ).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof ExecutionMutationError && error.code === "EXECUTION_CONFLICT",
+    );
 
-      expect(stillReadable?.id).toBe(completed.execution.id);
-      expect(await tx.select().from(execution)).toHaveLength(1);
-      return completed;
-    });
-
-    expect(filled.execution.price).toBe("98");
-    expect(filled.order.status).toBe("FILLED");
+    const [order] = await db.select().from(tradeOrder).where(eq(tradeOrder.id, created.order.id));
+    expect(order?.status).toBe("OPEN");
+    const existing = await findExecutionByOrderId(db, created.order.id);
+    expect(existing?.price).toBe("98");
     expect(await db.select().from(execution)).toHaveLength(1);
   });
 
