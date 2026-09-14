@@ -1,7 +1,9 @@
 import {
+  isDecimalLte,
   parseCommittedDecimal,
   parseNonNegativeValue,
   parsePlainDecimal,
+  quantizeCollateralRequirementToNumeric3818,
   toCanonicalFromDecimal,
   TradingDecimal,
 } from "./decimal.js";
@@ -15,6 +17,7 @@ export const MIN_LEVERAGE = 1;
 export const MAX_LEVERAGE = 100;
 export const DEFAULT_LEVERAGE = 1;
 export const DEFAULT_MARGIN_MODE = "CROSS" as const;
+export const MAINTENANCE_MARGIN_RATE = "0.005";
 
 export type MarginMode = "CROSS" | "ISOLATED";
 
@@ -109,6 +112,23 @@ export function calculateRequiredIsolatedMargin(params: {
     }),
     leverage: params.leverage,
   });
+}
+
+export function calculatePersistedIsolatedMargin(params: {
+  positionQty: string;
+  entryPrice: string | null;
+  leverage: string;
+}): string {
+  return quantizeCollateralRequirementToNumeric3818(calculateRequiredIsolatedMargin(params));
+}
+
+export function isMaintenanceBreached(params: {
+  equity: string;
+  maintenanceMargin: string;
+}): boolean {
+  parseNonNegativeValue(params.maintenanceMargin, "maintenanceMargin");
+  parsePlainDecimal(params.equity);
+  return isDecimalLte(params.equity, params.maintenanceMargin);
 }
 
 function parsePositiveIntegerLeverage(leverage: string): TradingDecimal {

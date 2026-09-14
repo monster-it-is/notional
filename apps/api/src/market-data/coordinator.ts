@@ -1,9 +1,5 @@
 import type { MarketDataResponse, MarketDataStatusResponse } from "@notional/contracts";
-import {
-  db,
-  listActiveInstruments,
-  listInstrumentSymbols,
-} from "@notional/db";
+import { db, listInstrumentSymbols } from "@notional/db";
 
 import type { ApiEnv } from "../env.js";
 import { createBookTickerFeed, type BookTickerFeed } from "./book-ticker-feed.js";
@@ -137,10 +133,8 @@ export function createMarketDataRuntime(options: {
         }
       }
 
-      const active = new Set((await listActiveInstruments(db)).map((row) => row.symbol));
-
       for (const tick of parseBookTickerTicks(books)) {
-        if (active.has(tick.symbol) && store.applyBook(tick)) {
+        if (catalogSymbols.has(tick.symbol) && store.applyBook(tick)) {
           options.onAcceptedBook?.(tick.symbol);
         }
       }
@@ -172,8 +166,7 @@ export function createMarketDataRuntime(options: {
       catalogSyncOk = true;
       catalogSyncedAt = scheduler.now();
       await refreshCatalogSymbols();
-      const active = (await listActiveInstruments(db)).map((row) => row.symbol);
-      bookFeed?.setSymbols(active);
+      bookFeed?.setSymbols([...catalogSymbols]);
       await bootstrapRest();
     } finally {
       syncing = false;

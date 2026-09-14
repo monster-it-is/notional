@@ -14,6 +14,10 @@ export function realizedPnlLedgerIdempotencyKey(executionId: string): string {
   return `realized-pnl:${executionId}`;
 }
 
+export function liquidationRealizedLedgerIdempotencyKey(liquidationEventId: string): string {
+  return `liquidation-realized:${liquidationEventId}`;
+}
+
 export async function settleCreatedFillRealizedPnlInTx(
   tx: FinancialTransaction,
   params: {
@@ -21,12 +25,32 @@ export async function settleCreatedFillRealizedPnlInTx(
     walletBalance: string;
     executionId: string;
     realizedPnlDelta: string;
+    protectedBalance: string;
+  },
+): Promise<string> {
+  return settleRealizedPnlInTx(tx, {
+    paperAccountId: params.paperAccountId,
+    walletBalance: params.walletBalance,
+    realizedPnlDelta: params.realizedPnlDelta,
+    protectedBalance: params.protectedBalance,
+    idempotencyKey: realizedPnlLedgerIdempotencyKey(params.executionId),
+  });
+}
+
+export async function settleRealizedPnlInTx(
+  tx: FinancialTransaction,
+  params: {
+    paperAccountId: string;
+    walletBalance: string;
+    realizedPnlDelta: string;
+    protectedBalance: string;
+    idempotencyKey: string;
   },
 ): Promise<string> {
   const settlement = calculateWalletRealizedSettlement({
     walletBalance: params.walletBalance,
     realizedPnlDelta: params.realizedPnlDelta,
-    protectedBalance: "0",
+    protectedBalance: params.protectedBalance,
   });
 
   if (params.realizedPnlDelta === "0" || fromDbDecimal(params.realizedPnlDelta).isZero()) {
@@ -60,7 +84,7 @@ export async function settleCreatedFillRealizedPnlInTx(
 
   await postLedgerTransaction(tx, {
     eventType: "REALIZED_PNL",
-    idempotencyKey: realizedPnlLedgerIdempotencyKey(params.executionId),
+    idempotencyKey: params.idempotencyKey,
     entries,
   });
 

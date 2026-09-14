@@ -138,6 +138,7 @@ describe("order api", () => {
       limitPrice: null,
       reduceOnly: false,
       status: "FILLED",
+      origin: "USER",
       createdAt: expect.stringMatching(ISO_PATTERN),
       updatedAt: expect.stringMatching(ISO_PATTERN),
     } satisfies OrderResponse);
@@ -211,6 +212,8 @@ describe("order api", () => {
     const body = response.json() as OrderResponse;
     expect(body.id).toBe(created.order.id);
     expect(body.symbol).toBe("BTCUSDT");
+    expect(body.origin).toBe("USER");
+    expect(body).not.toHaveProperty("liquidationEventId");
     expect(body.id).toMatch(UUID_PATTERN);
     expect(body).not.toHaveProperty("idempotencyKey");
   });

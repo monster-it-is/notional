@@ -18,6 +18,7 @@ import {
 import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { silentLogger, type Logger } from "../market-data/types.js";
 import { reduceOnlyAllows } from "../orders/validate-order.js";
+import { ISOLATED_TRADING_ENABLED } from "./isolated-trading.js";
 import { completeMatcherFillInTx, OrderPlacementError } from "./order-placement.js";
 
 const MATCHER_RETRY_CODES = new Set(["INSUFFICIENT_MARGIN", "MARKET_DATA_UNAVAILABLE"]);
@@ -117,7 +118,7 @@ async function matchCandidateInTx(
   const account = await lockPaperAccountById(tx, candidate.order.paperAccountId);
   const instrument = await lockInstrumentByIdForTrading(tx, candidate.order.instrumentId);
 
-  if (!instrument || instrument.status !== "ACTIVE") {
+  if (!instrument) {
     return;
   }
 
@@ -129,7 +130,25 @@ async function matchCandidateInTx(
     return;
   }
 
-  if (position.marginMode !== "CROSS") {
+  if (!ISOLATED_TRADING_ENABLED && position.marginMode !== "CROSS") {
+    return;
+  }
+
+  if (instrument.status !== "ACTIVE" && !locked.reduceOnly) {
+    return;
+  }
+
+  const transition = classifyPositionTransition({
+    currentQty: position.quantity,
+    fillSide: locked.side as "BUY" | "SELL",
+    fillQty: locked.quantity,
+  });
+
+  if (position.marginMode === "ISOLATED" && transition === "REVERSE") {
+    return;
+  }
+
+  if (instrument.status !== "ACTIVE" && !reduceOnlyAllows(transition)) {
     return;
   }
 
@@ -165,16 +184,8 @@ async function matchCandidateInTx(
     return;
   }
 
-  if (locked.reduceOnly) {
-    const transition = classifyPositionTransition({
-      currentQty: position.quantity,
-      fillSide: locked.side as "BUY" | "SELL",
-      fillQty: locked.quantity,
-    });
-
-    if (!reduceOnlyAllows(transition)) {
-      return;
-    }
+  if (locked.reduceOnly && !reduceOnlyAllows(transition)) {
+    return;
   }
 
   await completeMatcherFillInTx(tx, {

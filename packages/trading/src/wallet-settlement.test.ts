@@ -4,10 +4,14 @@ import { calculateInitialMargin } from "./margin.js";
 import { fractionalDigitCount, expectTradingCode } from "./test-helpers.js";
 import {
   isDecimalGte,
+  isDecimalLte,
   quantizeCollateralRequirementToNumeric3818,
   sumDecimalValues,
 } from "./decimal.js";
-import { calculateWalletRealizedSettlement } from "./wallet-settlement.js";
+import {
+  calculateIsolatedReduceProtectedBalance,
+  calculateWalletRealizedSettlement,
+} from "./wallet-settlement.js";
 
 describe("quantizeCollateralRequirementToNumeric3818", () => {
   it("rounds a repeating initial margin UP and never below the exact requirement", () => {
@@ -44,6 +48,15 @@ describe("isDecimalGte", () => {
     expect(isDecimalGte("1.0", "1")).toBe(true);
     expect(isDecimalGte("0.9", "1")).toBe(false);
     expect(isDecimalGte("-1", "-2")).toBe(true);
+  });
+});
+
+describe("isDecimalLte", () => {
+  it("compares canonical decimal strings", () => {
+    expect(isDecimalLte("1", "1")).toBe(true);
+    expect(isDecimalLte("1.0", "1")).toBe(true);
+    expect(isDecimalLte("1.1", "1")).toBe(false);
+    expect(isDecimalLte("-2", "-1")).toBe(true);
   });
 });
 
@@ -177,6 +190,81 @@ describe("calculateWalletRealizedSettlement", () => {
         }),
       "INVALID_ARGUMENT",
     );
+  });
+
+  it("computes isolated reduce loss capacity without leaking free wallet", () => {
+    expect(
+      calculateIsolatedReduceProtectedBalance({
+        walletBalance: "1000",
+        currentIsolatedMargin: "100",
+        nextIsolatedMargin: "80",
+      }),
+    ).toEqual({
+      lossCapacity: "20",
+      protectedBalance: "980",
+    });
+    expect(
+      calculateWalletRealizedSettlement({
+        walletBalance: "1000",
+        realizedPnlDelta: "-50",
+        protectedBalance: "980",
+      }),
+    ).toEqual({
+      nextWalletBalance: "980",
+      userWalletDelta: "-20",
+      insuranceAbsorption: "30",
+    });
+  });
+
+  it("caps isolated close loss to the full former allocation", () => {
+    expect(
+      calculateIsolatedReduceProtectedBalance({
+        walletBalance: "1000",
+        currentIsolatedMargin: "100",
+        nextIsolatedMargin: "0",
+      }),
+    ).toEqual({
+      lossCapacity: "100",
+      protectedBalance: "900",
+    });
+    expect(
+      calculateWalletRealizedSettlement({
+        walletBalance: "1000",
+        realizedPnlDelta: "-150",
+        protectedBalance: "900",
+      }),
+    ).toEqual({
+      nextWalletBalance: "900",
+      userWalletDelta: "-100",
+      insuranceAbsorption: "50",
+    });
+  });
+
+  it("sums CROSS liquidation deltas independently of order", () => {
+    expect(sumDecimalValues(["-150", "100"])).toBe("-50");
+    expect(sumDecimalValues(["100", "-150"])).toBe("-50");
+    expect(
+      calculateWalletRealizedSettlement({
+        walletBalance: "100",
+        realizedPnlDelta: "-50",
+        protectedBalance: "0",
+      }),
+    ).toEqual({
+      nextWalletBalance: "50",
+      userWalletDelta: "-50",
+      insuranceAbsorption: "0",
+    });
+    expect(
+      calculateWalletRealizedSettlement({
+        walletBalance: "100",
+        realizedPnlDelta: sumDecimalValues(["-250", "100"]),
+        protectedBalance: "0",
+      }),
+    ).toEqual({
+      nextWalletBalance: "0",
+      userWalletDelta: "-100",
+      insuranceAbsorption: "50",
+    });
   });
 
   it("does not use Number for settlement math", () => {

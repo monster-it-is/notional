@@ -223,6 +223,33 @@ describe("in-process LIMIT matcher", () => {
     expect(row?.reservedMargin).toBe("9");
   });
 
+  it("fills an INACTIVE reduceOnly REDUCE/CLOSE LIMIT with a fresh BBO", async () => {
+    const { cookies, accountId } = await initializeUser(app, "inactive-ro-match@example.com");
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    const opened = await postOrder(app, cookies, "open", {
+      type: "MARKET",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.1",
+    });
+    expect(opened.statusCode).toBe(201);
+    const resting = await postOrder(app, cookies, "exit-limit", {
+      type: "LIMIT",
+      symbol: "BTCUSDT",
+      side: "SELL",
+      quantity: "0.1",
+      limitPrice: "110",
+      reduceOnly: true,
+    });
+    expect((resting.json() as OrderResponse).status).toBe("OPEN");
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC", { status: "INACTIVE" }));
+    seedQuote(store, "BTCUSDT", { mark: "100", bid: "110", ask: "111", id: 2 });
+    await createLimitOrderMatcher({ marketData }).processSymbol("BTCUSDT");
+    const row = await findOrderById(db, accountId, (resting.json() as OrderResponse).id);
+    expect(row?.status).toBe("FILLED");
+    expect(row?.reservedMargin).toBe("0");
+  });
+
   it("serializes cancel versus matcher to one terminal outcome", async () => {
     const { cookies, accountId } = await initializeUser(app, "cancel-race@example.com");
     await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));

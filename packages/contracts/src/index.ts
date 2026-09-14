@@ -33,16 +33,22 @@ export type {
   InvalidOrderError,
   InvalidOrderReason,
   InvalidQueryError,
+  IsolatedReverseNotSupportedError,
   IsolatedTradingNotAvailableError,
   OrderListResponse,
   OrderNotCancellableError,
   OrderNotFoundError,
+  OrderOrigin,
   OrderResponse,
   OrderSide,
   OrderStatus,
   OrderType,
   ReduceOnlyViolationError,
 } from "./order.js";
+export type {
+  LiquidationListResponse,
+  LiquidationResponse,
+} from "./liquidation.js";
 export type {
   ExecutionListResponse,
   ExecutionNotFoundError,

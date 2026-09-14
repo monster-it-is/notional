@@ -3,6 +3,7 @@ import type {
   InvalidQueryError,
   OrderListResponse,
   OrderNotFoundError,
+  OrderOrigin,
   OrderResponse,
   OrderStatus,
 } from "@notional/contracts";
@@ -173,6 +174,7 @@ function toOrderResponse(row: {
   limitPrice: string | null;
   reduceOnly: boolean;
   status: string;
+  origin: string;
   createdAt: Date;
   updatedAt: Date;
 }): OrderResponse {
@@ -185,6 +187,7 @@ function toOrderResponse(row: {
     limitPrice: row.limitPrice === null ? null : toCanonicalDecimalString(row.limitPrice),
     reduceOnly: row.reduceOnly,
     status: asOrderStatus(row.status),
+    origin: asOrderOrigin(row.origin),
     createdAt: toIsoString(row.createdAt),
     updatedAt: toIsoString(row.updatedAt),
   };
@@ -212,6 +215,14 @@ function asOrderStatus(value: string): OrderStatus {
   }
 
   throw new Error(`invalid trade_order.status: ${value}`);
+}
+
+function asOrderOrigin(value: string): OrderOrigin {
+  if (value === "USER" || value === "LIQUIDATION") {
+    return value;
+  }
+
+  throw new Error(`invalid trade_order.origin: ${value}`);
 }
 
 function toIsoString(value: Date | string): string {

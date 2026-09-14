@@ -49,6 +49,18 @@ export async function findPaperAccountByUserId(
   return existing ?? null;
 }
 
+export async function findPaperAccountById(
+  executor: Pick<NodePgDatabase, "select">,
+  paperAccountId: string,
+): Promise<PaperAccount | null> {
+  const [existing] = await executor
+    .select()
+    .from(paperAccount)
+    .where(eq(paperAccount.id, paperAccountId));
+
+  return existing ?? null;
+}
+
 export async function lockPaperAccountByUserId(
   executor: Pick<NodePgDatabase, "select">,
   userId: string,

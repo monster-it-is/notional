@@ -677,6 +677,30 @@ describe("trading_position margin settings", () => {
       expect(row?.isolatedMargin).toBe("0");
     }
   });
+
+  it("persists isolated quantity, entry, realized pnl, and isolated margin in one update", async () => {
+    const { account, btcId } = await seed();
+    const created = await db.transaction((tx) => ensurePosition(tx, account.id, btcId));
+    await db.transaction((tx) =>
+      updateMarginSettingsForFlatPosition(tx, created.id, {
+        marginMode: "ISOLATED",
+        leverage: 5,
+      }),
+    );
+    const updated = await db.transaction((tx) =>
+      updatePositionState(tx, created.id, {
+        quantity: "2",
+        entryPrice: "100",
+        realizedPnl: "0",
+        isolatedMargin: "40",
+      }),
+    );
+    expect(updated.quantity).toBe("2");
+    expect(updated.entryPrice).toBe("100");
+    expect(updated.realizedPnl).toBe("0");
+    expect(updated.isolatedMargin).toBe("40");
+    expect(updated.marginMode).toBe("ISOLATED");
+  });
 });
 
 async function expectRejectedConstraint(

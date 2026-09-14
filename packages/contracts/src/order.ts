@@ -4,6 +4,8 @@ export type OrderType = "MARKET" | "LIMIT";
 
 export type OrderStatus = "OPEN" | "FILLED" | "CANCELLED";
 
+export type OrderOrigin = "USER" | "LIQUIDATION";
+
 export type OrderResponse = {
   id: string;
   symbol: string;
@@ -13,6 +15,7 @@ export type OrderResponse = {
   limitPrice: string | null;
   reduceOnly: boolean;
   status: OrderStatus;
+  origin: OrderOrigin;
   createdAt: string;
   updatedAt: string;
 };
@@ -83,4 +86,8 @@ export type InsufficientMarginError = {
 
 export type IsolatedTradingNotAvailableError = {
   error: "ISOLATED_TRADING_NOT_AVAILABLE";
+};
+
+export type IsolatedReverseNotSupportedError = {
+  error: "ISOLATED_REVERSE_NOT_SUPPORTED";
 };

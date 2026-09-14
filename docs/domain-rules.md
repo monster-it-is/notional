@@ -252,7 +252,7 @@ There is no `PENDING`, `ACCEPTED`, `REJECTED`, or `PARTIALLY_FILLED`. Failed pla
 
 MVP does not implement true partial fills. Do not persist filled/remaining quantity on the order. One `FILLED` order has exactly one `execution` row (`UNIQUE(order_id)`). `execution.quantity` is the full persisted order quantity. Partial fills would require a deliberate migration of that unique constraint.
 
-Public HTTP is authenticated and account-scoped for orders (`GET /api/orders`, `GET /api/orders/:id`, `POST /api/orders`, `POST /api/orders/:id/cancel`), executions (`GET /api/executions`, `GET /api/executions/:id`), and positions (`GET /api/positions`, `GET /api/positions/:symbol`). Authenticated `GET`/`PUT /api/margin-settings/:symbol` mutate settings only while FLAT and with no OPEN order for that account+instrument (`OPEN_ORDERS_EXIST`). There is no `POST /api/executions` or `POST /api/positions`; fills are system-generated and positions are derived. Cancellation is an `OPEN → CANCELLED` transition on a locked LIMIT row (`reserved_margin = 0`). MARKET is not cancellable. A second cancel of an already CANCELLED order is idempotent success. FILLED cannot be cancelled (`ORDER_NOT_CANCELLABLE`). Suspended accounts and INACTIVE instruments may cancel. Cancel locks only the order row.
+Public HTTP is authenticated and account-scoped for orders (`GET /api/orders`, `GET /api/orders/:id`, `POST /api/orders`, `POST /api/orders/:id/cancel`), executions (`GET /api/executions`, `GET /api/executions/:id`), positions (`GET /api/positions`, `GET /api/positions/:symbol`), and liquidations (`GET /api/liquidations`). Authenticated `GET`/`PUT /api/margin-settings/:symbol` mutate settings only while FLAT and with no OPEN order for that account+instrument (`OPEN_ORDERS_EXIST`). There is no `POST /api/executions`, `POST /api/positions`, or liquidation mutation endpoint; fills are system-generated and positions are derived. Cancellation is an `OPEN → CANCELLED` transition on a locked LIMIT row (`reserved_margin = 0`). MARKET is not cancellable. A second cancel of an already CANCELLED order is idempotent success. FILLED cannot be cancelled (`ORDER_NOT_CANCELLABLE`). Suspended accounts and INACTIVE instruments may cancel. Cancel locks only the order row.
 
 `insertOpenLimitOrder` inserts LIMIT `OPEN` only. FILLED MARKET and immediately filled LIMIT rows are created only through `insertFilledOrderWithExecution` (order + execution in one transaction). Resting LIMIT completion uses `completeOpenLimitOrder` (`OPEN → FILLED` + execution). Production helpers must not create `CANCELLED` directly or create a `FILLED` order without its execution.
 
@@ -264,7 +264,7 @@ Reduce-only is a persisted boolean defaulting to false. Placement persists the f
 
 **Reduce-only exit-safety is Notional policy, not a Binance exemption.** After account and position locks, canonicalize positive quantity, classify, enforce reduce-only, then choose validation. If `reduceOnly` and the transition is REDUCE or CLOSE: quantity must be positive, exact, and fit `NUMERIC(38,18)`; waive LOT_SIZE / MARKET_LOT_SIZE min/max/step and MIN_NOTIONAL; LIMIT still requires PRICE_FILTER and a fresh BBO (resting reservation `0`); MARKET still requires a fresh BBO (BUY ask / SELL bid) and does not require a mark solely for MIN_NOTIONAL. Do not run a full CROSS portfolio margin sweep for REDUCE/CLOSE. The matcher must re-classify reduce-only against the locked current position; if it is no longer REDUCE/CLOSE, leave OPEN.
 
-New orders require an initialized `ACTIVE` paper account and an `ACTIVE` CROSS instrument. Uninitialized accounts return `ACCOUNT_NOT_INITIALIZED`. Suspended accounts cannot place orders. ISOLATED settings reject trading (`ISOLATED_TRADING_NOT_AVAILABLE`). Historical order rows are never deleted. Instrument inactivity does not delete, auto-cancel, match, or silently release reservation on existing OPEN orders. Users may cancel those orders manually. New placement against INACTIVE returns `INSTRUMENT_INACTIVE`.
+New orders require an initialized `ACTIVE` paper account. Uninitialized accounts return `ACCOUNT_NOT_INITIALIZED`. Suspended accounts cannot place user orders. CROSS and ISOLATED settings may trade. Isolated REVERSE is unsupported (`ISOLATED_REVERSE_NOT_SUPPORTED`). Historical order rows are never deleted. Instrument inactivity does not delete, auto-cancel, or silently release reservation on existing OPEN orders. Users may cancel those orders manually. New OPEN/INCREASE/REVERSE against INACTIVE returns `INSTRUMENT_INACTIVE`. reduceOnly REDUCE/CLOSE against INACTIVE is allowed when the required BBO is fresh. Liquidation may close an INACTIVE position with a fresh BBO. Matcher: INACTIVE non-reduce orders do not fill; INACTIVE reduceOnly REDUCE/CLOSE may fill with a fresh BBO.
 
 PRICE_FILTER / LOT_SIZE / MARKET_LOT_SIZE / MIN_NOTIONAL checks are exact Decimal arithmetic in `@notional/trading`. PRICE_FILTER zeros disable the corresponding sub-rule (`minPrice`, `maxPrice`, `tickSize`). When tick alignment is enabled:
 
@@ -296,7 +296,7 @@ A marketable LIMIT therefore receives BBO price improvement versus always fillin
 
 LIMIT static-filter validation does not require live market data. Executable MARKET validation requires both a fresh mark and a fresh BBO. Freshness is independent. Placement validation never authorizes a later fill; execution must re-read required market state and fail closed if stale. Resting LIMIT execution uses persisted limit terms plus a fresh BBO and does not rerun MARKET min-notional.
 
-Do not copy instrument filter snapshots onto order rows. Placement uses filters current at placement. An already accepted OPEN LIMIT is not retroactively invalid solely because catalog filters later change. An INACTIVE instrument is not matched and is not auto-cancelled; reservation stays until the user cancels.
+Do not copy instrument filter snapshots onto order rows. Placement uses filters current at placement. An already accepted OPEN LIMIT is not retroactively invalid solely because catalog filters later change. An INACTIVE non-reduce OPEN order is not matched and is not auto-cancelled; reservation stays until the user cancels. INACTIVE reduceOnly REDUCE/CLOSE may rest and match.
 
 Idempotency:
 
@@ -332,7 +332,7 @@ One product-wide model: leverage integers `1..100` (default `1`, default mode `C
 
 **CROSS:** the position is supported by account-level cross collateral. `isolated_margin` is always `0`. Fresh-mark unrealized PnL contributes to cross collateral.
 
-**ISOLATED:** only that position’s `isolated_margin` plus its own unrealized PnL support it. Other account equity must not silently rescue it. `isolated_margin` is a reserved subset of wallet cash, not extra money. Isolated unrealized PnL must not increase cross available balance. Phase 12 may persist `ISOLATED` while flat as configuration only. Isolated fills stay disabled (`ISOLATED_FILL_NOT_IMPLEMENTED`) through Phase 13 and until Phase 14.
+**ISOLATED:** only that position’s `isolated_margin` plus its own unrealized PnL support it. Other account equity must not silently rescue it. `isolated_margin` is a reserved subset of wallet cash, not extra money. Isolated unrealized PnL must not increase cross available balance. Isolated OPEN/INCREASE allocate `ROUND_UP(abs(qty) × persistedEntry / leverage)` in the same position UPDATE as qty/entry/realized PnL. Isolated REVERSE is not supported.
 
 Formulas (exact decimal strings; do not clamp; no JavaScript `Number` for money/rates):
 
@@ -367,7 +367,7 @@ Reduce-only OPEN LIMIT reserves `0`. Do not re-reserve on market ticks. SELL LIM
 
 Collateral requirements round **up** to `NUMERIC(38,18)`. PnL, entry, and wallet accounting stay `ROUND_HALF_EVEN`.
 
-Isolated reserve uses persisted entry after the fill, not mark. Quantize with `ROUND_HALF_EVEN` to `NUMERIC(38,18)` only when persisting.
+Isolated reserve uses persisted entry after the fill, not mark. Persist isolated collateral with `quantizeCollateralRequirementToNumeric3818` (`ROUND_UP` to 18 decimals). Do not use HALF_EVEN for isolated collateral. Mark changes do not rewrite `isolated_margin`.
 
 Maintenance:
 
@@ -375,15 +375,15 @@ Maintenance:
 maintenanceMargin = notional × maintenanceMarginRate
 ```
 
-`0 < maintenanceMarginRate < 1`. The product rate is a Phase 14 domain constant, not env. Leverage does not change the maintenance rate. Margin ratio is deferred to Phase 14.
+`0 < maintenanceMarginRate < 1`. The product rate is `MAINTENANCE_MARGIN_RATE = "0.005"` in `@notional/trading`, not env. Leverage does not change the maintenance rate. Equality liquidates: `equity <= maintenanceMargin`.
 
 Unrealized PnL, cross initial margin, isolated equity, maintenance, and liquidation use a fresh mark. If any CROSS position required for account-level risk lacks a fresh mark, fail closed. Do not omit a losing position. Do not substitute entry, BBO, index, or last trade.
 
 Settings mutation is allowed only while FLAT and with no OPEN order for that account+instrument. Settings lock `paper_account FOR UPDATE` then `trading_position FOR UPDATE` and do not require instrument SHARE. Public HTTP: `GET`/`PUT /api/margin-settings/:symbol`. GET with no row returns defaults without insert. PUT body is exactly `{ marginMode, leverage }`. OPEN orders return `OPEN_ORDERS_EXIST`.
 
-**CROSS realized settlement:** `realizedPnlDelta` is the full trading result on the position. Wallet absorbs a loss only down to `0`. Insurance absorbs any residual. Wallet stays `>= 0`. Settlement preconditions: wallet and protected balance are non-negative and `protectedBalance <= walletBalance`. Phase 13 always uses `protectedBalance = 0`. Do not claim the wallet mutation always equals `realizedPnlDelta`. Ledger `REALIZED_PNL` entries are balanced and do not create `funding_event` rows.
+**CROSS realized settlement:** `realizedPnlDelta` is the full trading result on the position. Wallet absorbs a user/matcher CROSS loss only down to existing isolated reserved margin (`protectedBalance = sum(isolated_margin)`). If isolated reserve exceeds wallet, that is financial-state corruption and must fail loudly. Insurance absorbs any residual. Wallet stays `>= 0` and never below isolated reserved collateral. Do not claim the wallet mutation always equals `realizedPnlDelta`. Ledger `REALIZED_PNL` entries are balanced and do not create `funding_event` rows.
 
-**After isolated exposure exists (Phase 14):** CROSS bankruptcy must not consume isolated reserved cash. User CROSS-loss capacity is conceptually `max(walletBalance - isolatedReservedMargin, 0)`.
+**Isolated REDUCE/CLOSE settlement:** loss capacity is released isolated margin (`currentIsolatedMargin - nextIsolatedMargin`). User wallet may lose at most that amount. Insurance absorbs any remaining isolated gap. Isolated profit credits USER_CASH in full. Do not run a full CROSS affordability sweep on isolated REDUCE/CLOSE.
 
 ## PnL
 
@@ -399,7 +399,7 @@ Initial margin primitive:
 
 `notional / leverage`
 
-`leverage` is a positive integer. The `calculateInitialMargin` primitive does not cap max leverage. Product settings persist integers `1..100` (Phase 12). OPEN LIMIT reservation, CROSS portfolio checks, and realized settlement are Phase 13. Liquidation remains Phase 14.
+`leverage` is a positive integer. The `calculateInitialMargin` primitive does not cap max leverage. Product settings persist integers `1..100` (Phase 12). OPEN LIMIT reservation, CROSS portfolio checks, isolated allocation, realized settlement, and liquidation are implemented. Funding settlement remains Phase 15.
 
 Using signed quantity:
 
@@ -421,13 +421,28 @@ Mark price is used for:
 
 ## Liquidation
 
-Liquidation must use a deterministic documented model.
+Liquidation uses a deterministic documented Notional model. It does not reproduce Binance brackets, partial liquidation, ADL, or a liquidation fee.
 
-Do not claim to reproduce Binance's complete internal liquidation system.
+Trigger uses a fresh mark. Execution uses a fresh BBO (LONG SELL at bid, SHORT BUY at ask). Never trigger or fill from entry, index, last trade, or a synthetic liquidation price. Do not persist an authoritative liquidation price.
 
-Financial liquidation changes must eventually occur atomically inside a database transaction.
+```
+crossEquity = walletBalance - isolatedReservedMargin + crossUnrealizedPnl
+crossMaintenanceMargin = SUM(abs(CROSS qty) × freshMark × 0.005)
+isolatedEquity = isolatedMargin + unrealizedPnl(mark)
+isolatedMaintenanceMargin = abs(qty) × freshMark × 0.005
+```
 
-Risk must be re-checked after acquiring required database locks.
+`equity <= maintenanceMargin` liquidates, including equality. A CROSS book with no nonzero CROSS positions does not emit a CROSS liquidation event even if equity is `<= 0`. Every required mark and BBO must be fresh; missing one is skip/retry, never a partial CROSS close.
+
+CROSS liquidation is a full-account close of every nonzero CROSS position in one transaction and one `liquidation_event` (`instrument_id` NULL). Wallet/insurance settlement is aggregate: sum all position `realizedPnlDelta` values, then one `calculateWalletRealizedSettlement` against the pre-liquidation wallet with `protectedBalance = total isolated_margin`. One `REALIZED_PNL` ledger transaction uses idempotency `liquidation-realized:<eventId>`. Processing order must not change wallet, insurance, or trading-PnL.
+
+ISOLATED liquidation closes only the breached position. Next isolated margin is 0. Per-execution `REALIZED_PNL` uses `realized-pnl:<executionId>` with isolated loss containment. Other positions are untouched.
+
+Liquidation orders are `origin = LIQUIDATION`, `MARKET`, `FILLED`, `reduceOnly`, `reserved_margin = 0`, and skip LOT_SIZE / MARKET_LOT_SIZE / MIN_NOTIONAL / PRICE_FILTER. User orders remain `origin = USER`. `CreateOrderRequest` does not accept origin. There is no `LIQUIDATION` ledger event type.
+
+Financial liquidation, cancellations, orders, executions, positions, wallet, and ledger live in one PostgreSQL transaction. Any failure rolls back with no trace. Risk is re-checked after locks. The in-process scanner is a trigger only.
+
+SUSPENDED accounts remain liquidatable. HTTP user cancel stays order-row-only. Liquidation locks the paper account first. There is no live public risk endpoint.
 
 ## Ledger
 
@@ -540,7 +555,7 @@ The catalog does not include a second `binance_symbol` column.
 
 PostgreSQL stores static metadata (assets, status, exact price/quantity/notional filters). It does not store live prices, books, funding rates, or 24h statistics.
 
-`ACTIVE` instruments may later accept new orders. `INACTIVE` instruments must not accept new orders, but rows remain because positions and history may still refer to them. Do not delete instrument rows.
+`ACTIVE` instruments may accept new OPEN/INCREASE/REVERSE exposure. `INACTIVE` instruments must not accept that exposure, but reduceOnly REDUCE/CLOSE and liquidation may still exit with a fresh BBO. Rows remain because positions and history may still refer to them. Do not delete instrument rows.
 
 PRICE_FILTER values of `0` mean a disabled Binance sub-rule and must be persisted as `0`. Quantity lot-size filters remain positive. Minimum notional is a positive USDT decimal string.
 
@@ -555,5 +570,5 @@ Phase 7 ingests only contracts that satisfy all of:
 
 Eligible + Binance `TRADING` maps to `ACTIVE`. Any other Binance status maps to `INACTIVE`. Never delete rows.
 
-Catalog synchronization must use a fully validated eligible snapshot. If any eligible candidate is missing or has malformed PRICE_FILTER, LOT_SIZE, MARKET_LOT_SIZE, or MIN_NOTIONAL (`notional`), abort the cycle and leave PostgreSQL unchanged. An empty mapped catalog also aborts. Only then may upserts and mass-inactivation run in one transaction.
+Catalog synchronization must use a fully validated eligible snapshot. If any eligible candidate is missing or has malformed PRICE_FILTER, LOT_SIZE, MARKET_LOT_SIZE, or MIN_NOTIONAL (`notional`), abort the cycle and leave PostgreSQL unchanged. An empty mapped catalog also aborts. The catalog transaction must `SELECT` all existing instrument rows `ORDER BY id ASC FOR UPDATE` before mutating them, then upsert existing symbols, INSERT genuinely new symbols only after those locks, and mark already-locked existing rows absent from the snapshot `INACTIVE`. Catalog sync must not lock `paper_account`, `trading_position`, or `trade_order`.
 

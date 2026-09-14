@@ -13,6 +13,7 @@ import { registerAuth, requireAuth } from "./auth-plugin.js";
 import { env } from "./env.js";
 import { getExecutionById, getExecutions } from "./executions.js";
 import { getInstrumentBySymbol, getInstruments } from "./instruments.js";
+import { getLiquidations } from "./liquidations.js";
 import { getMarginSettings, putMarginSettings } from "./margin-settings.js";
 import { getMarketDataBySymbol, getMarketDataStatus } from "./market-data.js";
 import {
@@ -69,6 +70,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.post("/api/orders/:id/cancel", { preHandler: requireAuth }, cancelOrder);
   app.get("/api/executions", { preHandler: requireAuth }, getExecutions);
   app.get("/api/executions/:id", { preHandler: requireAuth }, getExecutionById);
+  app.get("/api/liquidations", { preHandler: requireAuth }, getLiquidations);
   app.get("/api/positions", { preHandler: requireAuth }, getPositions);
   app.get("/api/positions/:symbol", { preHandler: requireAuth }, getPositionBySymbol);
   app.get("/api/margin-settings/:symbol", { preHandler: requireAuth }, getMarginSettings);

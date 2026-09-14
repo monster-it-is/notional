@@ -34,7 +34,9 @@ export {
   findInstrumentBySymbol,
   listActiveInstruments,
   listInstrumentSymbols,
+  lockExistingInstrumentsForCatalogSync,
   lockInstrumentByIdForTrading,
+  lockInstrumentsByIdsForTrading,
   markInstrumentsInactiveExcept,
   upsertInstrumentBySymbol,
 } from "./instrument.js";
@@ -50,6 +52,8 @@ export {
   findOrderByIdempotencyKey,
   hasOpenOrdersForAccountInstrument,
   insertOpenLimitOrder,
+  listOpenCrossModeLimitOrdersByPaperAccountId,
+  listOpenLimitOrdersByAccountAndInstrument,
   listOpenLimitOrdersByInstrumentId,
   listOrdersByPaperAccountId,
   lockOrderById,
@@ -63,6 +67,7 @@ export type {
   ListOrdersFilters,
   ListOrdersPagination,
   Order,
+  OrderOrigin,
   OrderSide,
   OrderStatus,
   OrderType,
@@ -71,6 +76,7 @@ export type {
 export {
   applyFaucetClaim,
   ensurePaperAccount,
+  findPaperAccountById,
   findPaperAccountByUserId,
   lockPaperAccountById,
   lockPaperAccountByUserId,
@@ -84,6 +90,8 @@ export {
   findAccountExecutionById,
   findExecutionByOrderId,
   insertFilledOrderWithExecution,
+  insertLiquidationFilledOrderWithExecution,
+  liquidationOrderIdempotencyKey,
   listExecutionsByPaperAccountId,
 } from "./execution.js";
 export type {
@@ -101,7 +109,9 @@ export {
   findOpenPositionByAccountAndSymbol,
   findPositionByAccountAndInstrument,
   listOpenPositionsByPaperAccountId,
+  listOpenPositionsForLiquidation,
   lockPositionByAccountAndInstrument,
+  lockPositionsByAccountAndInstrumentIds,
   PositionMutationError,
   sumIsolatedMarginByPaperAccountId,
   updateMarginSettingsForFlatPosition,
@@ -114,3 +124,14 @@ export type {
   UpdateMarginSettingsInput,
   UpdatePositionStateInput,
 } from "./position.js";
+export {
+  createLiquidationEvent,
+  findLiquidationEventById,
+  listLiquidationEventsByPaperAccountId,
+} from "./liquidation-event.js";
+export type {
+  CreateLiquidationEventInput,
+  LiquidationEvent,
+  LiquidationEventWithSymbol,
+  LiquidationMarginMode,
+} from "./liquidation-event.js";

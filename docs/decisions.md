@@ -410,11 +410,11 @@ Legacy `wss://fstream.binance.com/ws` was retired 2026-04-23. Streams require `/
 Phase 7 connections:
 
 - one market connection: `wss://fstream.binance.com/market/stream?streams=!markPrice@arr@1s`
-- one or more public connections: `wss://fstream.binance.com/public/ws` with per-symbol `<symbol>@bookTicker` for ACTIVE instruments
+- one or more public connections: `wss://fstream.binance.com/public/ws` with per-symbol `<symbol>@bookTicker` for **all known** catalog symbols (ACTIVE and INACTIVE)
 
-All-market `!bookTicker` was not chosen. Official USD-M connector documentation lists that stream at a 5-second update speed while individual `@bookTicker` is real-time. Future MARKET execution must not sit on a known ~5s BBO feed. Mark remains one all-market stream, so public stream count is about N active instruments, not 2N.
+All-market `!bookTicker` was not chosen. Official USD-M connector documentation lists that stream at a 5-second update speed while individual `@bookTicker` is real-time. MARKET execution and liquidation fills must not sit on a known ~5s BBO feed. Mark remains one all-market stream, so public stream count is about N known catalog symbols, not 2N.
 
-Subscribe/unsubscribe as ACTIVE membership changes. Control messages are chunked. Connections stay under 200 streams each. Protocol ping/pong is handled by Node's WebSocket implementation; Phase 7 does not send application heartbeats.
+Subscribe/unsubscribe as catalog membership changes, including INACTIVE known symbols. Control messages are chunked. Connections stay under 200 streams each. Protocol ping/pong is handled by Node's WebSocket implementation; Phase 7 does not send application heartbeats.
 
 Reconnect uses exponential backoff, jitter, a max delay, generation protection, proactive rotation before the 24-hour server lifetime, and shutdown cancellation.
 
@@ -730,7 +730,7 @@ Combined CHECK `trading_position_isolated_margin_by_mode`:
 
 Existing Phase 11 rows migrate as `CROSS / 1 / 0`. Quantity/entry invariants are unchanged.
 
-`ensurePosition` relies on those defaults. `updatePositionState` still writes only quantity, entry, and realized PnL and must preserve mode/leverage/isolated margin (valid for CROSS opens).
+`ensurePosition` relies on those defaults. `updatePositionState` writes quantity, entry, realized PnL, and `isolated_margin` in one UPDATE. CROSS always persists `isolated_margin = 0`. Isolated non-flat persists a positive ROUND_UP allocation; isolated flat persists 0.
 
 PostgreSQL CHECKs are immediate. Isolated fill persistence, when enabled, must write quantity/entry/realized PnL and `isolated_margin` in one `UPDATE`.
 
@@ -776,9 +776,9 @@ requiredIsolatedMargin (flat) = 0
 
 `openOrderReservedMargin` is 0 in Phase 12. Negative available balance is valid risk state.
 
-Isolated reserve uses **persisted entry**, not mark, so PostgreSQL is not rewritten on ticks. Persist later with `quantizeToNumeric3818` HALF_EVEN. Phase 12 implements `calculateRequiredIsolatedMargin` as pure math only.
+Isolated reserve uses **persisted entry**, not mark, so PostgreSQL is not rewritten on ticks. Persist isolated collateral with `quantizeCollateralRequirementToNumeric3818` (`ROUND_UP`). Phase 12 implemented `calculateRequiredIsolatedMargin` as pure math; Phase 14 persists that allocation on isolated fills.
 
-Maintenance primitive: `notional × rate` with `0 < rate < 1`. The product rate is a Phase 14 domain constant, not env. Margin ratio is deferred.
+Maintenance primitive: `notional × rate` with `0 < rate < 1`. The product rate is `MAINTENANCE_MARGIN_RATE = "0.005"` (ADR-034), not env. Margin ratio is not a public live endpoint in Phase 14.
 
 Account equity is display-only and is not implemented as a helper.
 
@@ -798,11 +798,11 @@ Lock order: `paper_account` → `trading_position` (`ensurePosition` then `FOR U
 
 `PositionResponse` is unchanged in Phase 12.
 
-### Isolated-fill guard
+### Isolated fills (Phase 14)
 
-`applyCreatedExecutionToPosition` throws `ISOLATED_FILL_NOT_IMPLEMENTED` before `updatePositionState`. `replayed_filled` remains a no-op. **Keep this guard through Phase 13 and 14 until isolated fills exist.** Phase 13 is CROSS-only (ADR-033). Phase 14 implements isolated liquidation, isolated bankruptcy/insurance, same-UPDATE allocation, then enables isolated fills.
+Phase 14 implements isolated OPEN/INCREASE/REDUCE/CLOSE, atomic isolated_margin persistence, isolated loss containment, and then enables public isolated placement/matcher. Isolated REVERSE remains unsupported (`ISOLATED_REVERSE_NOT_SUPPORTED`). `replayed_filled` remains a no-op.
 
-A REDUCE that realizes more than `isolated_margin` while leaving residual qty has no legal isolated collateral source without liquidating the remainder. Do not enable isolated fills merely because the reserve formula exists.
+A REDUCE that realizes more than released isolated margin is contained: insurance absorbs the gap; free/CROSS wallet is not a silent rescue.
 
 ### CROSS bankruptcy (Phase 13 hard gate)
 
@@ -819,19 +819,9 @@ Example: wallet `1000`, `realizedPnlDelta = -1500` → user cash `-1000`, insura
 
 Do not clamp losses. Do not reject an otherwise valid close.
 
-### Isolated reserves vs later CROSS bankruptcy (Phase 14)
+### Isolated reserves vs CROSS bankruptcy (Phase 14)
 
-Once isolated exposure exists, CROSS bankruptcy must not consume wallet cash reserved to isolated positions.
-
-During Phase 13, isolated fills are disabled, so `isolatedReservedMargin = 0` and a wallet floor of 0 is sufficient.
-
-After Phase 14 enables ISOLATED positions, CROSS user-loss capacity is conceptually:
-
-`max(walletBalance - isolatedReservedMargin, 0)`
-
-Insurance absorbs any residual CROSS loss before wallet falls below the isolated reserved amount.
-
-Example: wallet `1000`, isolated reserved `400`, CROSS gap `-800` → CROSS may consume `600`; insurance `200`; wallet must not fall below `400`.
+CROSS user/matcher settlement uses `protectedBalance = sumIsolatedMarginByPaperAccountId(...)`. Isolated reserved collateral is never consumed by a CROSS loss. If isolated reserve exceeds wallet, fail loudly (not `INSUFFICIENT_MARGIN`, no clamp).
 
 ### OPEN order reservation (Phase 13, not 12)
 
@@ -845,11 +835,13 @@ Phase 12 does not itself expose `POST /api/orders`, cancel, matcher, available-b
 
 Status: Accepted
 
-Phase 13 enables public CROSS trading. Isolated fills stay disabled (`ISOLATED_FILL_NOT_IMPLEMENTED`). Liquidation, maintenance, funding settlement, fees, partial fills, TP/SL, Redis locks, frontend, and Binance order placement are out of scope.
+Phase 13 enabled public CROSS trading. Isolated fills were disabled until ADR-034. Funding settlement, fees, partial fills, TP/SL, Redis locks, frontend, and Binance order placement remain out of scope.
 
-Permanent lock order for financial mutations remains:
+Permanent lock order for a single-symbol financial mutation remains:
 
 `paper_account FOR UPDATE → instrument FOR SHARE → trading_position FOR UPDATE → trade_order FOR UPDATE`
+
+Multi-symbol financial mutations (CROSS liquidation) acquire categories in batches: account, then all instruments `id ASC FOR SHARE`, then positions in that instrument order, then orders. Never lock instrument A / position A / order A / instrument B. Catalog sync never locks account, position, or order rows (ADR-034).
 
 Never reverse it. Account-row locking is the account-wide financial serialization boundary. Instrument `FOR SHARE` keeps the instrument `ACTIVE` for the whole trading transaction and blocks Phase 7 catalog `UPDATE` without serializing unrelated accounts on the same instrument. Catalog sync does not acquire paper-account, position, or order locks, so this does not introduce a lock cycle. Cancellation is the intentional exception: it locks only the order row because it only releases reservation. A stale risk read that still includes that reservation is conservative.
 
@@ -912,7 +904,7 @@ If `reduceOnly === true` and the transition is REDUCE or CLOSE:
 
 Only created fills may settle. Use the exact `realizedPnlDelta` from position application. Do not recompute PnL. Delta `0` posts no wallet update and no `REALIZED_PNL` ledger transaction.
 
-`calculateWalletRealizedSettlement` preconditions: `walletBalance >= 0`, `protectedBalance >= 0`, `protectedBalance <= walletBalance`. Invalid precondition throws `TradingMathError INVALID_ARGUMENT`. No clamping. Phase 13 always passes `protectedBalance = "0"`. Preserve full `realizedPnlDelta` independently of the wallet mutation.
+`calculateWalletRealizedSettlement` preconditions: `walletBalance >= 0`, `protectedBalance >= 0`, `protectedBalance <= walletBalance`. Invalid precondition throws `TradingMathError INVALID_ARGUMENT`. No clamping. User/matcher CROSS fills pass `protectedBalance = sum(isolated_margin)` (ADR-034). Preserve full `realizedPnlDelta` independently of the wallet mutation.
 
 Ledger kinds: `USER_CASH`, `SYSTEM_VIRTUAL_FUNDING`, `SYSTEM_TRADING_PNL`, `SYSTEM_INSURANCE`. System kinds are global (`paper_account_id` NULL). Event type `REALIZED_PNL` with idempotency `realized-pnl:<executionId>`.
 
@@ -928,7 +920,7 @@ Do not insert `funding_event` for trading PnL.
 
 HTTP MARKET, immediate LIMIT, and matcher LIMIT share one path: `applyCreatedFillEffectsInTx`.
 
-- `created_filled` → position application → exact realized settlement → post-fill CROSS risk when OPEN/INCREASE/REVERSE
+- `created_filled` → position application → realized settlement (CROSS protected isolated reserve, or isolated containment) → post-fill CROSS risk when isolated reserve increased or when CROSS OPEN/INCREASE/REVERSE
 - `replayed_filled` → no position, wallet, ledger, or risk reapplication
 - `replayed_order` → no effects
 
@@ -946,7 +938,7 @@ Replay-before-mutable-validation: authenticate, initialized account, validate ke
 
 First successful creation `201`. Replay `200`. Concurrent same-key submissions produce exactly one financial effect.
 
-MARKET never persists OPEN. LIMIT uses a fresh BBO to choose marketable versus resting. No BBO → `MARKET_DATA_UNAVAILABLE`. ISOLATED settings reject trading with `ISOLATED_TRADING_NOT_AVAILABLE`. INACTIVE instruments reject new placement (`INSTRUMENT_INACTIVE`).
+MARKET never persists OPEN. LIMIT uses a fresh BBO to choose marketable versus resting. No BBO → `MARKET_DATA_UNAVAILABLE`. Isolated REVERSE is rejected (`ISOLATED_REVERSE_NOT_SUPPORTED`). INACTIVE instruments reject new OPEN/INCREASE/REVERSE (`INSTRUMENT_INACTIVE`); reduceOnly REDUCE/CLOSE may proceed with a fresh BBO.
 
 ### Public cancel
 
@@ -958,19 +950,97 @@ In-process, single API process. Trigger when the market-data store accepts a new
 
 Per symbol: one cycle in flight; a tick during the cycle sets dirty; after the cycle run at most one more using newest store state. Candidates are OPEN LIMIT for the instrument, `ORDER BY created_at ASC, id ASC`.
 
-Per candidate, one transaction: `paper_account FOR UPDATE` → `instrument FOR SHARE` → ensure+lock position → lock order. Not OPEN, INACTIVE instrument, or non-CROSS → no-op. Re-read fresh BBO after locks; stale or not marketable → no-op. Re-classify reduce-only. `completeOpenLimitOrder` then shared created-fill effects.
+Per candidate, one transaction: `paper_account FOR UPDATE` → `instrument FOR SHARE` → ensure+lock position → lock order. Not OPEN → no-op. INACTIVE non-reduce → no-op. INACTIVE reduceOnly REDUCE/CLOSE may fill. Isolated REVERSE leaves OPEN. Re-read fresh BBO after locks; stale or not marketable → no-op. Re-classify reduce-only. `completeOpenLimitOrder` then shared created-fill effects.
 
 `INSUFFICIENT_MARGIN` and post-fill `MARKET_DATA_UNAVAILABLE` roll back that candidate, leave the order OPEN with its original reservation, and continue the symbol cycle. Unexpected cycle errors are logged with symbol/detail; the scheduler stays usable and must not leave the symbol permanently in-flight. Hard database, corruption, and math errors are not converted into no-ops.
 
-INACTIVE OPEN orders are not auto-cancelled, not matched, and do not silently release reservation.
+INACTIVE non-reduce OPEN orders are not auto-cancelled, not matched, and do not silently release reservation. INACTIVE reduceOnly REDUCE/CLOSE may match.
 
 ### Margin settings
 
 `PUT /api/margin-settings/:symbol` still requires FLAT. After account and position locks it also requires no OPEN order for that account+instrument (`409 OPEN_ORDERS_EXIST`). Leverage is not snapshotted onto orders.
 
-### Phase 14 still owns
+### Later phases
 
-Isolated fills, isolated liquidation and bankruptcy, `protectedBalance = isolatedReservedMargin`, maintenance rate, margin ratio, CROSS liquidation. Funding settlement is Phase 15.
+Funding settlement is Phase 15. Isolated reverse, fees, partial liquidation, tiers, ADL, and a live public risk API remain out of scope.
+
+## ADR-034 — Liquidation and ISOLATED trading
+
+Status: Accepted
+
+Phase 14 adds maintenance-based liquidation, isolated trading, CROSS protected-reserve settlement, INACTIVE unwind, all-known BBO subscriptions, and a global `instrument.id ASC` lock rule. There is no liquidation fee, no tiers, no Binance brackets, no partial liquidation, no ADL, no persisted liquidation price, and no live public risk API.
+
+### Maintenance
+
+`MAINTENANCE_MARGIN_RATE = "0.005"` in `@notional/trading`. Not env. Exact Decimal math.
+
+```
+maintenanceMargin = notional × 0.005
+isMaintenanceBreached when equity <= maintenanceMargin
+```
+
+Equality liquidates.
+
+### Price roles
+
+Fresh MARK: UPNL, maintenance, trigger. Fresh BBO: actual execution (LONG SELL bid, SHORT BUY ask). Never trigger or fill from entry, index, last trade, or a synthetic liquidation price. Do not persist an authoritative liquidation price. Audit snapshots persist pre-liquidation `equity` and `maintenanceMargin` quantized HALF_EVEN to `NUMERIC(38,18)`.
+
+### CROSS vs ISOLATED trigger
+
+```
+crossEquity = walletBalance - isolatedReservedMargin + crossUnrealizedPnl
+crossMaintenanceMargin = SUM(abs(CROSS qty) × freshMark × 0.005)
+isolatedEquity = isolatedMargin + unrealizedPnl(mark)
+isolatedMaintenanceMargin = abs(qty) × freshMark × 0.005
+```
+
+No nonzero CROSS positions: no CROSS liquidation event even if equity `<= 0`. Every required CROSS mark must be fresh; missing one does not liquidate. Isolated requires a fresh mark. Missing/stale BBO skips execution; CROSS missing one BBO means no partial close.
+
+### Isolated allocation
+
+Isolated margin is reserved existing wallet collateral. Non-flat: `ROUND_UP(abs(qty) × persisted HALF_EVEN entry / leverage)` to `NUMERIC(38,18)`. Flat: `0`. CROSS always `0`. One SQL UPDATE writes quantity, entry, realized PnL, and `isolated_margin`. Mark ticks do not rewrite isolated margin. Isolated REVERSE is unsupported (`409 ISOLATED_REVERSE_NOT_SUPPORTED`). A resting isolated order that later becomes REVERSE stays OPEN.
+
+Isolated OPEN/INCREASE: post-fill CROSS `available >= 0` using the new total isolated reserve. Wallet is not mutated merely because margin is reserved. Isolated REDUCE/CLOSE: `lossCapacity = current - next`; `protectedBalance = wallet - lossCapacity`; insurance absorbs excess; no CROSS affordability sweep.
+
+### CROSS protected reserve
+
+All normal CROSS user/matcher realized settlements use `protectedBalance = sum(isolated_margin)`. CROSS must never consume isolated reserved collateral. Isolated reserve `>` wallet is corruption: fail loudly, do not clamp, do not map to `INSUFFICIENT_MARGIN`.
+
+### Liquidation event and origin
+
+`liquidation_event` is immutable. CROSS → `instrument_id` NULL. ISOLATED → instrument required. Negative equity allowed. Index `(paper_account_id, created_at DESC, id DESC)` via newest-first listing. `trade_order.origin` is `USER` (default) or `LIQUIDATION`. `OrderResponse` includes `origin`. `CreateOrderRequest` does not. User insert helpers cannot select origin. Liquidation fills: `insertLiquidationFilledOrderWithExecution`, MARKET FILLED reduceOnly, reservation 0, skip quantity/price filters, idempotency `liquidation:<eventId>:<positionId>`. Key reuse is a hard invariant error.
+
+Ledger event type remains `REALIZED_PNL`. Isolated liquidation and user/matcher fills use `realized-pnl:<executionId>`. CROSS multi-position liquidation uses one aggregate `liquidation-realized:<eventId>`.
+
+### CROSS full-account liquidation
+
+One event. Full close of every nonzero CROSS position. One MARKET order/execution per position. Cancel OPEN CROSS orders (`reserved_margin = 0`), including flats with resting CROSS orders. Do not cancel ISOLATED orders. Individual positions persist their own realized PnL. Wallet/insurance settles once from the pre-liquidation wallet against `SUM(realizedPnlDelta)` and current isolated reserve. Position processing order must not change wallet, insurance, or trading-PnL. Any failure rolls back the whole CROSS liquidation.
+
+### Isolated liquidation
+
+One breached position. Cancel OPEN orders for that account+instrument. Forced CLOSE. Persist qty 0 / entry null / updated realized / isolated 0. Settle with loss capacity = pre-liquidation isolated margin. Insurance absorbs gaps. Other positions untouched.
+
+### Scanner and concurrency
+
+`LIQUIDATION_SCAN_INTERVAL_MS` default 1000, operational only. One global scan; skip/coalesce if in flight. Isolated candidates first, then reload and re-evaluate CROSS. Unlocked scan is a trigger. Real work rechecks under locks. SUSPENDED accounts remain liquidatable. Unexpected errors log and continue. `stop()` clears the timer. Started from `server.ts`, not `buildApp`.
+
+Account lock serializes user close, matcher, placement, and liquidation. Two scanner attempts produce one committed event. HTTP cancel remains order-row-only. No Redis/advisory locks. No repair job for committed executions.
+
+### Global instrument locking
+
+Any transaction locking/mutating multiple existing instrument rows uses `instrument.id ASC`. Financial multi-symbol: paper_account → instruments FOR SHARE id ASC → positions → orders. Catalog: lock all existing instruments id ASC FOR UPDATE, then update existing, INSERT new only after that prelock, then inactivate missing. Catalog never locks account/position/order.
+
+### INACTIVE unwind and BBO universe
+
+INACTIVE rejects new OPEN/INCREASE/REVERSE. reduceOnly REDUCE/CLOSE allowed with fresh BBO (LIMIT may rest with reservation 0). Matcher fills INACTIVE only when reduceOnly is still REDUCE/CLOSE. Liquidation may close INACTIVE with fresh BBO. Book-ticker universe is all known catalog symbols. Mark remains all-catalog. If Binance stops publishing, fail closed.
+
+### History API
+
+Authenticated `GET /api/liquidations`, account-scoped, newest first, default 50 max 100. CROSS `symbol` is null. No mutation endpoint. No public live risk endpoint.
+
+### Out of scope
+
+Funding settlement, fees, liquidation fee, partial liquidation, tiers, Binance brackets, ADL, manual isolated margin, isolated reverse, TP/SL, partial fills, Redis locks, multi-process liquidation coordination, frontend, Binance order placement, live public risk API.
 
 
 

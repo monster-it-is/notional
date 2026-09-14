@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type { FinancialTransaction } from "./executor.js";
@@ -28,6 +28,7 @@ export type UpdatePositionStateInput = {
   quantity: string;
   entryPrice: string | null;
   realizedPnl: string;
+  isolatedMargin?: string;
 };
 
 export type UpdateMarginSettingsInput = {
@@ -159,6 +160,48 @@ export async function listOpenPositionsByPaperAccountId(
   return rows.map(fromPersistedPositionWithSymbol);
 }
 
+export async function listOpenPositionsForLiquidation(
+  executor: Pick<NodePgDatabase, "select">,
+): Promise<PositionWithSymbol[]> {
+  const rows = await executor
+    .select(positionWithSymbolColumns)
+    .from(tradingPosition)
+    .innerJoin(instrument, eq(tradingPosition.instrumentId, instrument.id))
+    .where(sql`${tradingPosition.quantity} <> 0`)
+    .orderBy(asc(tradingPosition.paperAccountId), asc(tradingPosition.instrumentId));
+
+  return rows.map(fromPersistedPositionWithSymbol);
+}
+
+export async function lockPositionsByAccountAndInstrumentIds(
+  executor: FinancialTransaction,
+  paperAccountId: string,
+  instrumentIds: string[],
+): Promise<Position[]> {
+  if (instrumentIds.length === 0) {
+    return [];
+  }
+
+  const uniqueIds = [...new Set(instrumentIds)];
+  const rows = await executor
+    .select(positionColumns)
+    .from(tradingPosition)
+    .where(
+      and(
+        eq(tradingPosition.paperAccountId, paperAccountId),
+        inArray(tradingPosition.instrumentId, uniqueIds),
+      ),
+    )
+    .orderBy(asc(tradingPosition.instrumentId))
+    .for("update");
+
+  if (rows.length !== uniqueIds.length) {
+    throw new Error("trading_position missing during multi-position lock");
+  }
+
+  return rows.map(fromPersistedPosition);
+}
+
 export async function sumIsolatedMarginByPaperAccountId(
   executor: Pick<NodePgDatabase, "execute">,
   paperAccountId: string,
@@ -206,6 +249,7 @@ export async function updatePositionState(
   const entryPrice =
     input.entryPrice === null ? null : toPersistedDecimal(input.entryPrice);
   const realizedPnl = toPersistedDecimal(input.realizedPnl);
+  const isolatedMargin = toPersistedDecimal(input.isolatedMargin ?? "0");
 
   const [updated] = await executor
     .update(tradingPosition)
@@ -213,6 +257,7 @@ export async function updatePositionState(
       quantity,
       entryPrice,
       realizedPnl,
+      isolatedMargin,
       updatedAt: sql`clock_timestamp() AT TIME ZONE 'UTC'`,
     })
     .where(eq(tradingPosition.id, positionId))

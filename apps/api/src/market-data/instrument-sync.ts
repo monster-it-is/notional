@@ -1,5 +1,6 @@
 import {
   db,
+  lockExistingInstrumentsForCatalogSync,
   markInstrumentsInactiveExcept,
   upsertInstrumentBySymbol,
   type UpsertInstrumentInput,
@@ -61,6 +62,8 @@ export async function syncInstrumentCatalog(options: {
 
 async function persistCatalogSnapshot(instruments: UpsertInstrumentInput[]): Promise<number> {
   return db.transaction(async (tx) => {
+    await lockExistingInstrumentsForCatalogSync(tx);
+
     for (const instrument of instruments) {
       await upsertInstrumentBySymbol(tx, instrument);
     }

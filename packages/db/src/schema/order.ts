@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 
 import { instrument } from "./instrument.js";
+import { liquidationEvent } from "./liquidation.js";
 import { paperAccount } from "./paper-account.js";
 
 export const tradeOrder = pgTable(
@@ -38,6 +39,10 @@ export const tradeOrder = pgTable(
     })
       .notNull()
       .default("0"),
+    origin: text("origin").notNull().default("USER"),
+    liquidationEventId: uuid("liquidation_event_id").references(() => liquidationEvent.id, {
+      onDelete: "restrict",
+    }),
     status: text("status").notNull(),
     idempotencyKey: text("idempotency_key").notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -74,6 +79,15 @@ export const tradeOrder = pgTable(
       "trade_order_idempotency_key_shape",
       sql`char_length(${table.idempotencyKey}) BETWEEN 1 AND 128
         AND ${table.idempotencyKey} = btrim(${table.idempotencyKey})`,
+    ),
+    check("trade_order_origin_valid", sql`${table.origin} in ('USER', 'LIQUIDATION')`),
+    check(
+      "trade_order_origin_event",
+      sql`(
+        (${table.origin} = 'USER' AND ${table.liquidationEventId} IS NULL)
+        OR
+        (${table.origin} = 'LIQUIDATION' AND ${table.liquidationEventId} IS NOT NULL)
+      )`,
     ),
     check("trade_order_reserved_margin_non_negative", sql`${table.reservedMargin} >= 0`),
     check(
@@ -121,5 +135,9 @@ export const tradeOrderRelations = relations(tradeOrder, ({ one }) => ({
   instrument: one(instrument, {
     fields: [tradeOrder.instrumentId],
     references: [instrument.id],
+  }),
+  liquidationEvent: one(liquidationEvent, {
+    fields: [tradeOrder.liquidationEventId],
+    references: [liquidationEvent.id],
   }),
 }));

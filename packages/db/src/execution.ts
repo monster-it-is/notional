@@ -157,6 +157,64 @@ export async function insertFilledOrderWithExecution(
   return fill;
 }
 
+export function liquidationOrderIdempotencyKey(
+  liquidationEventId: string,
+  positionId: string,
+): string {
+  return `liquidation:${liquidationEventId}:${positionId}`;
+}
+
+export async function insertLiquidationFilledOrderWithExecution(
+  executor: FinancialTransaction,
+  input: {
+    paperAccountId: string;
+    instrumentId: string;
+    positionId: string;
+    liquidationEventId: string;
+    side: OrderSide;
+    quantity: string;
+    executionPrice: string;
+  },
+): Promise<{ kind: "created_filled"; order: Order; execution: Execution }> {
+  const quantity = persistPlainDecimal(input.quantity);
+
+  if (!fromDbDecimal(quantity).isPositive()) {
+    throw new Error("liquidation quantity must be positive");
+  }
+
+  const idempotencyKey = liquidationOrderIdempotencyKey(
+    input.liquidationEventId,
+    input.positionId,
+  );
+  const inserted = await insertTradeOrderRow(executor, {
+    paperAccountId: input.paperAccountId,
+    instrumentId: input.instrumentId,
+    side: input.side,
+    orderType: "MARKET",
+    quantity,
+    limitPrice: null,
+    reduceOnly: true,
+    reservedMargin: "0",
+    status: "FILLED",
+    origin: "LIQUIDATION",
+    liquidationEventId: input.liquidationEventId,
+    idempotencyKey,
+  });
+
+  if (inserted.kind !== "created") {
+    throw new Error("liquidation order idempotency conflict");
+  }
+
+  const executionPrice = persistExecutionPrice(input.executionPrice);
+  const fill = await insertExecutionForOrder(executor, inserted.order, executionPrice);
+
+  if (fill.kind !== "created_filled") {
+    throw new ExecutionMutationError("EXECUTION_CONFLICT");
+  }
+
+  return fill;
+}
+
 export async function completeOpenLimitOrder(
   executor: FinancialTransaction,
   paperAccountId: string,

@@ -516,7 +516,7 @@ describe("position application", () => {
     expect(first.position.isolatedMargin).toBe("0");
   });
 
-  it("rejects a created fill against an ISOLATED position", async () => {
+  it("persists isolated qty, entry, realized PnL, and isolated margin in one update", async () => {
     const { account, btcId } = await seed();
     await db.transaction(async (tx) => {
       await lockPaperAccountById(tx, account.id);
@@ -528,27 +528,25 @@ describe("position application", () => {
       });
     });
 
-    await expect(
-      applyImmediateFill(
-        account.id,
-        btcId,
-        filledMarket(account.id, btcId, {
-          quantity: "1",
-          executionPrice: "100",
-          idempotencyKey: "isolated-fill",
-        }),
-      ),
-    ).rejects.toSatisfy((error: unknown) => {
-      return (
-        error instanceof PositionApplicationError &&
-        error.code === "ISOLATED_FILL_NOT_IMPLEMENTED"
-      );
-    });
+    const applied = await applyImmediateFill(
+      account.id,
+      btcId,
+      filledMarket(account.id, btcId, {
+        quantity: "1",
+        executionPrice: "100",
+        idempotencyKey: "isolated-fill",
+      }),
+    );
+    expect(applied.kind).toBe("applied");
+    if (applied.kind !== "applied") {
+      return;
+    }
 
-    const row = await findPositionByAccountAndInstrument(db, account.id, btcId);
-    expect(row?.quantity).toBe("0");
-    expect(row?.marginMode).toBe("ISOLATED");
-    expect(row?.isolatedMargin).toBe("0");
+    expect(applied.position.marginMode).toBe("ISOLATED");
+    expect(applied.position.quantity).toBe("1");
+    expect(applied.position.entryPrice).toBe("100");
+    expect(applied.position.isolatedMargin).toBe("10");
+    expect(applied.nextIsolatedMargin).toBe("10");
   });
 
   it("does not reapply position on a resting LIMIT retry", async () => {

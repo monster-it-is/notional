@@ -212,3 +212,7 @@ export function sumDecimalValues(values: string[]): string {
 export function isDecimalGte(left: string, right: string): boolean {
   return parsePlainDecimal(left).gte(parsePlainDecimal(right));
 }
+
+export function isDecimalLte(left: string, right: string): boolean {
+  return parsePlainDecimal(left).lte(parsePlainDecimal(right));
+}

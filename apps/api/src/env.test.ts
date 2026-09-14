@@ -56,6 +56,14 @@ describe("parseEnv", () => {
     expect(parsed.MARKET_DATA_BOOK_STALE_MS).toBe(10_000);
   });
 
+  it("defaults LIQUIDATION_SCAN_INTERVAL_MS to 1000 and rejects non-positive values", () => {
+    const source = { ...process.env };
+    delete source.LIQUIDATION_SCAN_INTERVAL_MS;
+    expect(parseEnv(source).LIQUIDATION_SCAN_INTERVAL_MS).toBe(1_000);
+    expect(() => parseEnv({ ...process.env, LIQUIDATION_SCAN_INTERVAL_MS: "0" })).toThrow();
+    expect(() => parseEnv({ ...process.env, LIQUIDATION_SCAN_INTERVAL_MS: "-1" })).toThrow();
+  });
+
   it("rejects invalid Binance URLs", () => {
     expect(() =>
       parseEnv({ ...process.env, BINANCE_FAPI_REST_BASE_URL: "not-a-url" }),

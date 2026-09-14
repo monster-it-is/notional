@@ -7,9 +7,12 @@ import {
   calculateInitialMargin,
   calculateIsolatedEquity,
   calculateMaintenanceMargin,
+  calculatePersistedIsolatedMargin,
   calculateRequiredIsolatedMargin,
   DEFAULT_LEVERAGE,
   DEFAULT_MARGIN_MODE,
+  isMaintenanceBreached,
+  MAINTENANCE_MARGIN_RATE,
   MAX_LEVERAGE,
   MIN_LEVERAGE,
 } from "./margin.js";
@@ -21,6 +24,7 @@ describe("leverage product constants", () => {
     expect(MAX_LEVERAGE).toBe(100);
     expect(DEFAULT_LEVERAGE).toBe(1);
     expect(DEFAULT_MARGIN_MODE).toBe("CROSS");
+    expect(MAINTENANCE_MARGIN_RATE).toBe("0.005");
   });
 });
 
@@ -72,6 +76,12 @@ describe("calculateMaintenanceMargin", () => {
     expect(
       calculateMaintenanceMargin({ notional: "0", maintenanceMarginRate: "0.5" }),
     ).toBe("0");
+    expect(
+      calculateMaintenanceMargin({
+        notional: "1000",
+        maintenanceMarginRate: MAINTENANCE_MARGIN_RATE,
+      }),
+    ).toBe("5");
   });
 
   it("rejects zero, negative, and rate >= 1", () => {
@@ -188,7 +198,7 @@ describe("calculateRequiredIsolatedMargin", () => {
     ).toBe("20");
   });
 
-  it("keeps repeating division exact and quantizes with HALF_EVEN only when asked", () => {
+  it("keeps repeating division exact and persists isolated collateral ROUND_UP", () => {
     const exact = calculateRequiredIsolatedMargin({
       positionQty: "1",
       entryPrice: "100",
@@ -198,6 +208,25 @@ describe("calculateRequiredIsolatedMargin", () => {
     expect(exact.includes("e")).toBe(false);
     expect(fractionalDigitCount(exact)).toBeGreaterThan(18);
     expect(quantizeToNumeric3818(exact)).toBe("33.333333333333333333");
+    expect(calculatePersistedIsolatedMargin({
+      positionQty: "1",
+      entryPrice: "100",
+      leverage: "3",
+    })).toBe("33.333333333333333334");
+    expect(
+      calculatePersistedIsolatedMargin({
+        positionQty: "0",
+        entryPrice: null,
+        leverage: "10",
+      }),
+    ).toBe("0");
+  });
+
+  it("isMaintenanceBreached includes equality", () => {
+    expect(isMaintenanceBreached({ equity: "10", maintenanceMargin: "9" })).toBe(false);
+    expect(isMaintenanceBreached({ equity: "10", maintenanceMargin: "10" })).toBe(true);
+    expect(isMaintenanceBreached({ equity: "9", maintenanceMargin: "10" })).toBe(true);
+    expect(isMaintenanceBreached({ equity: "-1", maintenanceMargin: "0" })).toBe(true);
   });
 
   it("rejects a non-flat shape without entry and invalid leverage", () => {

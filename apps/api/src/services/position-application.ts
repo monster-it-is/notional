@@ -2,6 +2,8 @@ import type { Execution, FinancialTransaction, Order, Position } from "@notional
 import { fromDbDecimal, updatePositionState } from "@notional/db";
 import { applyFillToPosition, toPersistedFillState, type PositionTransition } from "@notional/trading";
 
+import { nextIsolatedMarginForFill } from "./isolated-fill.js";
+
 export type CreatedFilledResult = {
   kind: "created_filled";
   order: Order;
@@ -23,6 +25,8 @@ export type AppliedPositionTransition = {
   realizedPnlDelta: string;
   previousQty: string;
   previousEntryPrice: string | null;
+  previousIsolatedMargin: string;
+  nextIsolatedMargin: string;
 };
 
 export type ReplayedPositionTransition = {
@@ -32,10 +36,7 @@ export type ReplayedPositionTransition = {
 
 export type PositionApplicationResult = AppliedPositionTransition | ReplayedPositionTransition;
 
-export type PositionApplicationCode =
-  | "MISMATCHED_FILL"
-  | "ORDER_NOT_FILLED"
-  | "ISOLATED_FILL_NOT_IMPLEMENTED";
+export type PositionApplicationCode = "MISMATCHED_FILL" | "ORDER_NOT_FILLED";
 
 export class PositionApplicationError extends Error {
   readonly code: PositionApplicationCode;
@@ -96,10 +97,6 @@ export async function applyCreatedExecutionToPosition(
     throw new PositionApplicationError("MISMATCHED_FILL");
   }
 
-  if (position.marginMode === "ISOLATED") {
-    throw new PositionApplicationError("ISOLATED_FILL_NOT_IMPLEMENTED");
-  }
-
   const fillState = toPersistedFillState(
     applyFillToPosition({
       currentQty: position.quantity,
@@ -111,10 +108,18 @@ export async function applyCreatedExecutionToPosition(
     position.realizedPnl,
   );
 
+  const nextIsolatedMargin = nextIsolatedMarginForFill({
+    marginMode: position.marginMode,
+    quantity: fillState.quantity,
+    entryPrice: fillState.entryPrice,
+    leverage: position.leverage,
+  });
+
   const next = await updatePositionState(tx, position.id, {
     quantity: fillState.quantity,
     entryPrice: fillState.entryPrice,
     realizedPnl: fillState.realizedPnl,
+    isolatedMargin: nextIsolatedMargin,
   });
 
   return {
@@ -124,5 +129,7 @@ export async function applyCreatedExecutionToPosition(
     realizedPnlDelta: fillState.realizedPnlDelta,
     previousQty: fillState.previousQty,
     previousEntryPrice: fillState.previousEntryPrice,
+    previousIsolatedMargin: position.isolatedMargin,
+    nextIsolatedMargin,
   };
 }

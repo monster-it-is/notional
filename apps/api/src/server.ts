@@ -3,6 +3,7 @@ import { env } from "./env.js";
 import { createMarketDataRuntime } from "./market-data/coordinator.js";
 import type { Logger } from "./market-data/types.js";
 import { createLimitOrderMatcher } from "./services/limit-matcher.js";
+import { createLiquidationScanner } from "./services/liquidation-scanner.js";
 
 const logger: Logger = {
   info() {},
@@ -23,6 +24,11 @@ const start = async () => {
     },
   });
   const matcher = createLimitOrderMatcher({ marketData, logger });
+  const scanner = createLiquidationScanner({
+    marketData,
+    intervalMs: env.LIQUIDATION_SCAN_INTERVAL_MS,
+    logger,
+  });
   notifyAcceptedBook = (symbol) => matcher.schedule(symbol);
   const app = await buildApp({
     marketData,
@@ -31,9 +37,11 @@ const start = async () => {
 
   app.addHook("onReady", async () => {
     await marketData.start();
+    scanner.start();
   });
 
   app.addHook("onClose", async () => {
+    scanner.stop();
     await marketData.stop();
   });
 

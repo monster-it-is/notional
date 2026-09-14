@@ -18,6 +18,7 @@ const envSchema = z.object({
   MARKET_DATA_MARK_STALE_MS: positiveInt.default(10_000),
   MARKET_DATA_BOOK_STALE_MS: positiveInt.default(10_000),
   BINANCE_WS_RECONNECT_MAX_MS: positiveInt.default(30_000),
+  LIQUIDATION_SCAN_INTERVAL_MS: positiveInt.default(1_000),
 });
 
 export type ApiEnv = Omit<z.infer<typeof envSchema>, "FAUCET_AMOUNT"> & {

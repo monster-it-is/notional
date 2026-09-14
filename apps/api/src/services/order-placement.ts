@@ -25,6 +25,7 @@ import {
   lockPositionByAccountAndInstrument,
   OrderMutationError,
   sameRequestFingerprint,
+  sumIsolatedMarginByPaperAccountId,
   type InsertFilledOrderResult,
 } from "@notional/db";
 import {
@@ -52,6 +53,8 @@ import {
 } from "../orders/validate-order.js";
 import { applyPositionForFillResult } from "./position-application.js";
 import { calculateCrossPortfolioRisk, CrossRiskError } from "./cross-risk.js";
+import { isolatedReduceSettlementProtection } from "./isolated-fill.js";
+import { ISOLATED_TRADING_ENABLED } from "./isolated-trading.js";
 import { settleCreatedFillRealizedPnlInTx } from "./realized-settlement.js";
 
 const IDEMPOTENCY_KEY = /^[!-~]{1,128}$/;
@@ -92,6 +95,7 @@ export type OrderPlacementCode =
   | "REDUCE_ONLY_VIOLATION"
   | "INSUFFICIENT_MARGIN"
   | "ISOLATED_TRADING_NOT_AVAILABLE"
+  | "ISOLATED_REVERSE_NOT_SUPPORTED"
   | "ORDER_NOT_FOUND"
   | "ORDER_NOT_CANCELLABLE";
 
@@ -177,11 +181,48 @@ export async function applyCreatedFillEffectsInTx(
     return;
   }
 
+  if (applied.position.marginMode === "ISOLATED") {
+    const nextWalletBalance =
+      applied.transition === "REDUCE" || applied.transition === "CLOSE"
+        ? await settleCreatedFillRealizedPnlInTx(tx, {
+            paperAccountId: params.account.id,
+            walletBalance: params.account.balance,
+            executionId: params.fill.execution.id,
+            realizedPnlDelta: applied.realizedPnlDelta,
+            protectedBalance: isolatedReduceSettlementProtection({
+              walletBalance: params.account.balance,
+              currentIsolatedMargin: applied.previousIsolatedMargin,
+              nextIsolatedMargin: applied.nextIsolatedMargin,
+            }).protectedBalance,
+          })
+        : params.account.balance;
+
+    if (applied.transition === "OPEN" || applied.transition === "INCREASE") {
+      const risk = await calculateCrossPortfolioRisk(tx, {
+        paperAccount: { id: params.account.id, balance: nextWalletBalance },
+        marketData: params.marketData,
+      });
+
+      if (!isDecimalGte(risk.crossAvailableBalance, "0")) {
+        throw new OrderPlacementError("INSUFFICIENT_MARGIN");
+      }
+    }
+
+    return;
+  }
+
+  const isolatedReservedMargin = await sumIsolatedMarginByPaperAccountId(tx, params.account.id);
+
+  if (!isDecimalGte(params.account.balance, isolatedReservedMargin)) {
+    throw new Error("isolated reserved margin exceeds walletBalance");
+  }
+
   const nextWalletBalance = await settleCreatedFillRealizedPnlInTx(tx, {
     paperAccountId: params.account.id,
     walletBalance: params.account.balance,
     executionId: params.fill.execution.id,
     realizedPnlDelta: applied.realizedPnlDelta,
+    protectedBalance: isolatedReservedMargin,
   });
 
   if (
@@ -227,14 +268,10 @@ async function placeNewOrderInTx(
     throw new OrderPlacementError("INSTRUMENT_NOT_FOUND");
   }
 
-  if (instrument.status !== "ACTIVE") {
-    throw new OrderPlacementError("INSTRUMENT_INACTIVE");
-  }
-
   await ensurePosition(tx, account.id, instrument.id);
   const position = await lockPositionByAccountAndInstrument(tx, account.id, instrument.id);
 
-  if (position.marginMode === "ISOLATED") {
+  if (!ISOLATED_TRADING_ENABLED && position.marginMode === "ISOLATED") {
     throw new OrderPlacementError("ISOLATED_TRADING_NOT_AVAILABLE");
   }
 
@@ -291,6 +328,9 @@ async function placeMarketOrderInTx(
   if (reduceOnly && !reduceOnlyAllows(transition)) {
     throw new OrderPlacementError("REDUCE_ONLY_VIOLATION");
   }
+
+  assertIsolatedReversePolicy(params.position.marginMode, transition);
+  assertInstrumentEligibility(params.instrument.status, reduceOnly, transition);
 
   const book = params.marketData.getFreshBook(params.instrument.symbol);
   const exit = reduceOnly && reduceOnlyAllows(transition);
@@ -355,6 +395,9 @@ async function placeLimitOrderInTx(
   if (reduceOnly && !reduceOnlyAllows(transition)) {
     throw new OrderPlacementError("REDUCE_ONLY_VIOLATION");
   }
+
+  assertIsolatedReversePolicy(params.position.marginMode, transition);
+  assertInstrumentEligibility(params.instrument.status, reduceOnly, transition);
 
   const exit = reduceOnly && reduceOnlyAllows(transition);
   const validated = exit
@@ -649,6 +692,31 @@ async function loadInitializedAccount(userId: string) {
   }
 
   return account;
+}
+
+function assertIsolatedReversePolicy(
+  marginMode: Position["marginMode"],
+  transition: ReturnType<typeof classifyPositionTransition>,
+): void {
+  if (marginMode === "ISOLATED" && transition === "REVERSE") {
+    throw new OrderPlacementError("ISOLATED_REVERSE_NOT_SUPPORTED");
+  }
+}
+
+function assertInstrumentEligibility(
+  status: string,
+  reduceOnly: boolean,
+  transition: ReturnType<typeof classifyPositionTransition>,
+): void {
+  if (status === "ACTIVE") {
+    return;
+  }
+
+  if (reduceOnly && reduceOnlyAllows(transition)) {
+    return;
+  }
+
+  throw new OrderPlacementError("INSTRUMENT_INACTIVE");
 }
 
 function mapPlacementCause(error: unknown): unknown {

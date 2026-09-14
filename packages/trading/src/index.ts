@@ -2,6 +2,7 @@ export {
   addNumeric3818Exact,
   assertFitsNumeric3818,
   isDecimalGte,
+  isDecimalLte,
   NUMERIC_INTEGER_DIGITS,
   NUMERIC_PRECISION,
   NUMERIC_SCALE,
@@ -40,9 +41,12 @@ export {
   calculateInitialMargin,
   calculateIsolatedEquity,
   calculateMaintenanceMargin,
+  calculatePersistedIsolatedMargin,
   calculateRequiredIsolatedMargin,
   DEFAULT_LEVERAGE,
   DEFAULT_MARGIN_MODE,
+  isMaintenanceBreached,
+  MAINTENANCE_MARGIN_RATE,
   MAX_LEVERAGE,
   MIN_LEVERAGE,
 } from "./margin.js";
@@ -64,7 +68,10 @@ export type {
   PositionSide,
   PositionTransition,
 } from "./position.js";
-export { calculateWalletRealizedSettlement } from "./wallet-settlement.js";
+export {
+  calculateIsolatedReduceProtectedBalance,
+  calculateWalletRealizedSettlement,
+} from "./wallet-settlement.js";
 export type { WalletRealizedSettlement } from "./wallet-settlement.js";
 
 void (true satisfies Extract<

@@ -9,7 +9,9 @@ import {
   instrument,
   listActiveInstruments,
   listInstrumentSymbols,
+  lockExistingInstrumentsForCatalogSync,
   lockInstrumentByIdForTrading,
+  lockInstrumentsByIdsForTrading,
   markInstrumentsInactiveExcept,
   upsertInstrumentBySymbol,
   type UpsertInstrumentInput,
@@ -361,6 +363,28 @@ describe("instrument", () => {
 
     await upsertInstrumentBySymbol(db, btc({ status: "INACTIVE" }));
     expect((await findInstrumentById(db, row.id))?.status).toBe("INACTIVE");
+  });
+
+  it("acquires catalog FOR UPDATE and trading FOR SHARE in id ASC without deadlock", async () => {
+    const first = await upsertInstrumentBySymbol(db, btc());
+    const second = await upsertInstrumentBySymbol(db, eth());
+    const ids = [first.id, second.id].sort();
+
+    await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        await Promise.all([
+          db.transaction(async (tx) => {
+            await lockExistingInstrumentsForCatalogSync(tx);
+          }),
+          db.transaction(async (tx) => {
+            await lockInstrumentsByIdsForTrading(tx, ids);
+          }),
+        ]);
+      }),
+    );
+
+    expect((await findInstrumentById(db, first.id))?.status).toBe("ACTIVE");
+    expect((await findInstrumentById(db, second.id))?.status).toBe("ACTIVE");
   });
 
   it("sees INACTIVE after a catalog update commits first", async () => {

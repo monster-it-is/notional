@@ -5,6 +5,7 @@ import type { FinancialTransaction } from "./executor.js";
 import { fromDbDecimal, toDbDecimal } from "./money.js";
 import { instrument } from "./schema/instrument.js";
 import { tradeOrder } from "./schema/order.js";
+import { tradingPosition } from "./schema/position.js";
 
 export type Order = typeof tradeOrder.$inferSelect;
 
@@ -15,6 +16,8 @@ export type OrderSide = "BUY" | "SELL";
 export type OrderType = "MARKET" | "LIMIT";
 
 export type OrderStatus = "OPEN" | "FILLED" | "CANCELLED";
+
+export type OrderOrigin = "USER" | "LIQUIDATION";
 
 export type CreateOpenLimitOrderInput = {
   paperAccountId: string;
@@ -37,6 +40,8 @@ export type InsertOrderValues = {
   limitPrice: string | null;
   reduceOnly: boolean;
   reservedMargin: string;
+  origin: OrderOrigin;
+  liquidationEventId: string | null;
   status: OrderStatus;
   idempotencyKey: string;
 };
@@ -111,6 +116,8 @@ export async function insertTradeOrderRow(
     limitPrice: string | null;
     reduceOnly?: boolean;
     reservedMargin?: string;
+    origin?: OrderOrigin;
+    liquidationEventId?: string | null;
     status: OrderStatus;
     idempotencyKey: string;
   },
@@ -127,6 +134,16 @@ export async function insertTradeOrderRow(
     status: input.status,
     reduceOnly,
   });
+  const origin = input.origin ?? "USER";
+  const liquidationEventId = input.liquidationEventId ?? null;
+
+  if (origin === "USER" && liquidationEventId !== null) {
+    throw new Error("USER orders must not reference a liquidation event");
+  }
+
+  if (origin === "LIQUIDATION" && liquidationEventId === null) {
+    throw new Error("LIQUIDATION orders require a liquidation event");
+  }
 
   if (input.orderType === "LIMIT") {
     if (limitPrice === null || !fromDbDecimal(limitPrice).isPositive()) {
@@ -145,6 +162,8 @@ export async function insertTradeOrderRow(
     limitPrice,
     reduceOnly,
     reservedMargin,
+    origin,
+    liquidationEventId,
     status: input.status,
     idempotencyKey: input.idempotencyKey,
   };
@@ -307,6 +326,54 @@ export async function listOpenLimitOrdersByInstrumentId(
     .orderBy(asc(tradeOrder.createdAt), asc(tradeOrder.id));
 
   return rows.map(fromPersistedOrder);
+}
+
+export async function listOpenLimitOrdersByAccountAndInstrument(
+  executor: Pick<NodePgDatabase, "select">,
+  paperAccountId: string,
+  instrumentId: string,
+): Promise<Order[]> {
+  const rows = await executor
+    .select()
+    .from(tradeOrder)
+    .where(
+      and(
+        eq(tradeOrder.paperAccountId, paperAccountId),
+        eq(tradeOrder.instrumentId, instrumentId),
+        eq(tradeOrder.status, "OPEN"),
+        eq(tradeOrder.orderType, "LIMIT"),
+      ),
+    )
+    .orderBy(asc(tradeOrder.id));
+
+  return rows.map(fromPersistedOrder);
+}
+
+export async function listOpenCrossModeLimitOrdersByPaperAccountId(
+  executor: Pick<NodePgDatabase, "select">,
+  paperAccountId: string,
+): Promise<Order[]> {
+  const rows = await executor
+    .select({ order: tradeOrder })
+    .from(tradeOrder)
+    .innerJoin(
+      tradingPosition,
+      and(
+        eq(tradingPosition.paperAccountId, tradeOrder.paperAccountId),
+        eq(tradingPosition.instrumentId, tradeOrder.instrumentId),
+      ),
+    )
+    .where(
+      and(
+        eq(tradeOrder.paperAccountId, paperAccountId),
+        eq(tradeOrder.status, "OPEN"),
+        eq(tradeOrder.orderType, "LIMIT"),
+        eq(tradingPosition.marginMode, "CROSS"),
+      ),
+    )
+    .orderBy(asc(tradeOrder.id));
+
+  return rows.map((row) => fromPersistedOrder(row.order));
 }
 
 export async function lockOrderById(

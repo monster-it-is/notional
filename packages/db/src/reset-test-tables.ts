@@ -14,6 +14,7 @@ export async function resetTestTables(): Promise<void> {
       "verification",
       "execution",
       "trade_order",
+      "liquidation_event",
       "trading_position",
       "paper_account",
       "instrument",

@@ -1,4 +1,4 @@
-import { and, asc, eq, ne, notInArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, ne, notInArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type { FinancialTransaction } from "./executor.js";
@@ -61,6 +61,36 @@ export async function lockInstrumentByIdForTrading(
     .for("share");
 
   return existing ? fromPersistedInstrument(existing) : null;
+}
+
+export async function lockInstrumentsByIdsForTrading(
+  executor: FinancialTransaction,
+  instrumentIds: string[],
+): Promise<Instrument[]> {
+  if (instrumentIds.length === 0) {
+    return [];
+  }
+
+  const uniqueIds = [...new Set(instrumentIds)];
+  const rows = await executor
+    .select()
+    .from(instrument)
+    .where(inArray(instrument.id, uniqueIds))
+    .orderBy(asc(instrument.id))
+    .for("share");
+
+  if (rows.length !== uniqueIds.length) {
+    throw new Error("instrument missing during multi-instrument trading lock");
+  }
+
+  return rows.map(fromPersistedInstrument);
+}
+
+export async function lockExistingInstrumentsForCatalogSync(
+  executor: FinancialTransaction,
+): Promise<Instrument[]> {
+  const rows = await executor.select().from(instrument).orderBy(asc(instrument.id)).for("update");
+  return rows.map(fromPersistedInstrument);
 }
 
 export async function findInstrumentBySymbol(

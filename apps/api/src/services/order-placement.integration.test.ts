@@ -19,6 +19,8 @@ import {
   lockPaperAccountById,
   lockPositionByAccountAndInstrument,
   paperAccount,
+  updateMarginSettingsForFlatPosition,
+  updatePositionState,
   upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables, setPaperAccountStatusForTests } from "@notional/db/test";
@@ -87,7 +89,9 @@ describe("atomic CROSS order placement", () => {
     expect(buy.statusCode).toBe(201);
     const buyBody = buy.json() as OrderResponse;
     expect(buyBody.status).toBe("FILLED");
+    expect(buyBody.origin).toBe("USER");
     expect(buyBody).not.toHaveProperty("reservedMargin");
+    expect(buyBody).not.toHaveProperty("liquidationEventId");
 
     const executions = await app.inject({
       method: "GET",
@@ -181,8 +185,8 @@ describe("atomic CROSS order placement", () => {
     expect(staleMark.json()).toEqual({ error: "MARKET_DATA_UNAVAILABLE" });
   });
 
-  it("rejects ISOLATED trading even while flat", async () => {
-    const { cookies } = await initializeUser(app, "isolated@example.com");
+  it("places an isolated MARKET open and reserves isolated margin without mutating wallet", async () => {
+    const { cookies, accountId } = await initializeUser(app, "isolated@example.com");
     await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
     const settings = await app.inject({
       method: "PUT",
@@ -198,8 +202,70 @@ describe("atomic CROSS order placement", () => {
       side: "BUY",
       quantity: "0.1",
     });
-    expect(response.statusCode).toBe(409);
-    expect(response.json()).toEqual({ error: "ISOLATED_TRADING_NOT_AVAILABLE" });
+    expect(response.statusCode).toBe(201);
+    const instrument = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    const position = await findPositionByAccountAndInstrument(db, accountId, instrument.id);
+    expect(position?.marginMode).toBe("ISOLATED");
+    expect(position?.isolatedMargin).toBe("2.02");
+    const account = await requireAccount(accountId);
+    expect(asMoney(account.balance)).toBe("1000");
+  });
+
+  it("does not let a CROSS realized loss consume isolated reserved collateral", async () => {
+    const { cookies, accountId } = await initializeUser(app, "protect-iso@example.com");
+    const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    await upsertInstrumentBySymbol(db, sample("ETHUSDT", "ETH"));
+    seedQuote(store, "ETHUSDT", { mark: "100", bid: "99", ask: "101", id: 1 });
+    const leverage = await app.inject({
+      method: "PUT",
+      url: "/api/margin-settings/ETHUSDT",
+      headers: authHeaders(cookies),
+      payload: { marginMode: "CROSS", leverage: 20 },
+    });
+    expect(leverage.statusCode).toBe(200);
+
+    await db.transaction(async (tx) => {
+      await lockPaperAccountById(tx, accountId);
+      await ensurePosition(tx, accountId, btc.id);
+      const position = await lockPositionByAccountAndInstrument(tx, accountId, btc.id);
+      await updateMarginSettingsForFlatPosition(tx, position.id, {
+        marginMode: "ISOLATED",
+        leverage: 10,
+      });
+      await updatePositionState(tx, position.id, {
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "0",
+        isolatedMargin: "400",
+      });
+    });
+
+    const open = await postOrder(app, cookies, "eth-open", {
+      type: "MARKET",
+      symbol: "ETHUSDT",
+      side: "BUY",
+      quantity: "10",
+    });
+    expect(open.statusCode).toBe(201);
+    seedQuote(store, "ETHUSDT", { mark: "20", bid: "21", ask: "22", id: 2 });
+    const close = await postOrder(app, cookies, "eth-close", {
+      type: "MARKET",
+      symbol: "ETHUSDT",
+      side: "SELL",
+      quantity: "10",
+    });
+    expect(close.statusCode).toBe(201);
+    const account = await requireAccount(accountId);
+    expect(asMoney(account.balance)).toBe("400");
+    const btcPosition = await findPositionByAccountAndInstrument(db, accountId, btc.id);
+    expect(btcPosition?.quantity).toBe("1");
+    expect(btcPosition?.isolatedMargin).toBe("400");
+    const realized = await realizedLedgerByKind();
+    expect(realized.byKind).toEqual({
+      USER_CASH: "-600",
+      SYSTEM_INSURANCE: "-200",
+      SYSTEM_TRADING_PNL: "800",
+    });
   });
 
   it("rejects INACTIVE instruments for new placement", async () => {
@@ -216,6 +282,41 @@ describe("atomic CROSS order placement", () => {
     expect(
       await listOrdersByPaperAccountId(db, accountId, { limit: 10, offset: 0 }),
     ).toHaveLength(0);
+  });
+
+  it("allows INACTIVE reduceOnly REDUCE/CLOSE with a fresh BBO and rejects new exposure", async () => {
+    const { cookies, accountId } = await initializeUser(app, "inactive-unwind@example.com");
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    const opened = await postOrder(app, cookies, "open", {
+      type: "MARKET",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.1",
+    });
+    expect(opened.statusCode).toBe(201);
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC", { status: "INACTIVE" }));
+
+    const increase = await postOrder(app, cookies, "increase", {
+      type: "MARKET",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.1",
+    });
+    expect(increase.statusCode).toBe(409);
+    expect(increase.json()).toEqual({ error: "INSTRUMENT_INACTIVE" });
+
+    const close = await postOrder(app, cookies, "close", {
+      type: "MARKET",
+      symbol: "BTCUSDT",
+      side: "SELL",
+      quantity: "0.1",
+      reduceOnly: true,
+    });
+    expect(close.statusCode).toBe(201);
+    const position = await findPositionByAccountAndInstrument(db, accountId, (
+      await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC", { status: "INACTIVE" }))
+    ).id);
+    expect(toCanonicalDecimalString(position?.quantity ?? "1")).toBe("0");
   });
 
   it("allows reduceOnly off-step, below-minQty, below-MIN_NOTIONAL exits and rejects the same qty without reduceOnly", async () => {
@@ -831,6 +932,23 @@ async function realizedPnlTransactions() {
   return (await db.select().from(ledgerTransaction)).filter(
     (row) => row.eventType === "REALIZED_PNL",
   );
+}
+
+async function realizedLedgerByKind() {
+  const transactions = await realizedPnlTransactions();
+  const txnIds = new Set(transactions.map((row) => row.id));
+  const accounts = await db.select().from(ledgerAccount);
+  const accountById = new Map(accounts.map((row) => [row.id, row]));
+  const byKind: Record<string, string> = {};
+  for (const row of await db.select().from(ledgerEntry)) {
+    if (!txnIds.has(row.ledgerTransactionId)) {
+      continue;
+    }
+
+    byKind[accountById.get(row.ledgerAccountId)?.kind ?? "UNKNOWN"] = asMoney(row.amount);
+  }
+
+  return { byKind };
 }
 
 async function requireAccount(accountId: string) {

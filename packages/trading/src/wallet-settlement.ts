@@ -73,3 +73,41 @@ function persistFit(value: TradingDecimal): string {
 
   return toCanonicalFromDecimal(value);
 }
+
+export function calculateIsolatedReduceProtectedBalance(params: {
+  walletBalance: string;
+  currentIsolatedMargin: string;
+  nextIsolatedMargin: string;
+}): { lossCapacity: string; protectedBalance: string } {
+  const walletBalance = parseNonNegativeValue(params.walletBalance, "walletBalance");
+  const currentIsolatedMargin = parseNonNegativeValue(
+    params.currentIsolatedMargin,
+    "currentIsolatedMargin",
+  );
+  const nextIsolatedMargin = parseNonNegativeValue(
+    params.nextIsolatedMargin,
+    "nextIsolatedMargin",
+  );
+
+  if (nextIsolatedMargin.gt(currentIsolatedMargin)) {
+    throw new TradingMathError(
+      "INVARIANT_VIOLATION",
+      "nextIsolatedMargin must not exceed currentIsolatedMargin",
+    );
+  }
+
+  const lossCapacity = currentIsolatedMargin.minus(nextIsolatedMargin);
+  const protectedBalance = walletBalance.minus(lossCapacity);
+
+  if (protectedBalance.isNegative()) {
+    throw new TradingMathError(
+      "INVARIANT_VIOLATION",
+      "isolated loss capacity exceeds walletBalance",
+    );
+  }
+
+  return {
+    lossCapacity: persistFit(lossCapacity),
+    protectedBalance: persistFit(protectedBalance),
+  };
+}
