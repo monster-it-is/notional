@@ -11,6 +11,7 @@ import {
 } from "./account.js";
 import { registerAuth, requireAuth } from "./auth-plugin.js";
 import { env } from "./env.js";
+import { getExecutionById, getExecutions } from "./executions.js";
 import { getInstrumentBySymbol, getInstruments } from "./instruments.js";
 import { getMarketDataBySymbol, getMarketDataStatus } from "./market-data.js";
 import {
@@ -59,6 +60,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
   );
   app.get("/api/orders", { preHandler: requireAuth }, getOrders);
   app.get("/api/orders/:id", { preHandler: requireAuth }, getOrderById);
+  app.get("/api/executions", { preHandler: requireAuth }, getExecutions);
+  app.get("/api/executions/:id", { preHandler: requireAuth }, getExecutionById);
 
   app.get("/api/me", { preHandler: requireAuth }, async (request, reply): Promise<MeResponse | { error: string }> => {
     const session = request.auth;

@@ -12,6 +12,15 @@ export {
 export { TradingMathError } from "./errors.js";
 export type { TradingMathErrorCode } from "./errors.js";
 export {
+  getLimitExecutionPrice,
+  getMarketExecutionPrice,
+  isLimitMarketable,
+} from "./execution-price.js";
+export type {
+  LimitMarketabilityInput,
+  MarketExecutionPriceInput,
+} from "./execution-price.js";
+export {
   isPriceInRange,
   isQuantityInRange,
   isQuantityOnStep,

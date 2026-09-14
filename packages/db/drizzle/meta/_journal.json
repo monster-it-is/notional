@@ -43,6 +43,13 @@
       "when": 1789334489223,
       "tag": "0005_light_stellaris",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1789387148216,
+      "tag": "0006_amusing_chimera",
+      "breakpoints": true
     }
   ]
 }

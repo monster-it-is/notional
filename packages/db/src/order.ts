@@ -16,29 +16,28 @@ export type OrderType = "MARKET" | "LIMIT";
 
 export type OrderStatus = "OPEN" | "FILLED" | "CANCELLED";
 
-export type CreateOrderInput =
-  | {
-      paperAccountId: string;
-      instrumentId: string;
-      side: OrderSide;
-      orderType: "MARKET";
-      quantity: string;
-      limitPrice?: null;
-      reduceOnly?: boolean;
-      status: "FILLED";
-      idempotencyKey: string;
-    }
-  | {
-      paperAccountId: string;
-      instrumentId: string;
-      side: OrderSide;
-      orderType: "LIMIT";
-      quantity: string;
-      limitPrice: string;
-      reduceOnly?: boolean;
-      status: "OPEN" | "FILLED";
-      idempotencyKey: string;
-    };
+export type CreateOpenLimitOrderInput = {
+  paperAccountId: string;
+  instrumentId: string;
+  side: OrderSide;
+  orderType: "LIMIT";
+  quantity: string;
+  limitPrice: string;
+  reduceOnly?: boolean;
+  idempotencyKey: string;
+};
+
+export type InsertOrderValues = {
+  paperAccountId: string;
+  instrumentId: string;
+  side: OrderSide;
+  orderType: OrderType;
+  quantity: string;
+  limitPrice: string | null;
+  reduceOnly: boolean;
+  status: OrderStatus;
+  idempotencyKey: string;
+};
 
 export type InsertOrderResult =
   | { kind: "created"; order: Order }
@@ -72,23 +71,56 @@ const orderWithSymbol = {
   symbol: instrument.symbol,
 };
 
-export async function insertOrder(
+export async function insertOpenLimitOrder(
   executor: OrderExecutor,
-  input: CreateOrderInput,
+  input: CreateOpenLimitOrderInput,
+): Promise<InsertOrderResult> {
+  assertOpenLimitInput(input);
+
+  return insertTradeOrderRow(executor, {
+    paperAccountId: input.paperAccountId,
+    instrumentId: input.instrumentId,
+    side: input.side,
+    orderType: "LIMIT",
+    quantity: input.quantity,
+    limitPrice: input.limitPrice,
+    reduceOnly: input.reduceOnly ?? false,
+    status: "OPEN",
+    idempotencyKey: input.idempotencyKey,
+  });
+}
+
+export async function insertTradeOrderRow(
+  executor: OrderExecutor,
+  input: {
+    paperAccountId: string;
+    instrumentId: string;
+    side: OrderSide;
+    orderType: OrderType;
+    quantity: string;
+    limitPrice: string | null;
+    reduceOnly?: boolean;
+    status: OrderStatus;
+    idempotencyKey: string;
+  },
 ): Promise<InsertOrderResult> {
   assertIdempotencyKey(input.idempotencyKey);
-  assertCreateInput(input);
+  assertOrderSide(input.side);
 
   const quantity = toPersistedDecimal(input.quantity);
   const limitPrice =
-    input.orderType === "LIMIT" ? toPersistedDecimal(input.limitPrice) : null;
+    input.limitPrice === null ? null : toPersistedDecimal(input.limitPrice);
   const reduceOnly = input.reduceOnly ?? false;
 
-  if (input.orderType === "LIMIT" && !fromDbDecimal(limitPrice!).isPositive()) {
-    throw new Error("LIMIT orders require a positive limit price");
+  if (input.orderType === "LIMIT") {
+    if (limitPrice === null || !fromDbDecimal(limitPrice).isPositive()) {
+      throw new Error("LIMIT orders require a positive limit price");
+    }
+  } else if (limitPrice !== null) {
+    throw new Error("MARKET orders must not have a limit price");
   }
 
-  const values = {
+  const values: InsertOrderValues = {
     paperAccountId: input.paperAccountId,
     instrumentId: input.instrumentId,
     side: input.side,
@@ -216,6 +248,25 @@ export async function lockOrderById(
   return row ? fromPersistedOrder(row) : null;
 }
 
+export async function lockOrderByIdempotencyKey(
+  executor: FinancialTransaction,
+  paperAccountId: string,
+  idempotencyKey: string,
+): Promise<Order | null> {
+  const [row] = await executor
+    .select()
+    .from(tradeOrder)
+    .where(
+      and(
+        eq(tradeOrder.paperAccountId, paperAccountId),
+        eq(tradeOrder.idempotencyKey, idempotencyKey),
+      ),
+    )
+    .for("update");
+
+  return row ? fromPersistedOrder(row) : null;
+}
+
 export async function cancelOpenLimitOrder(
   executor: FinancialTransaction,
   paperAccountId: string,
@@ -255,47 +306,7 @@ export async function cancelOpenLimitOrder(
   return fromPersistedOrder(updated);
 }
 
-function assertCreateInput(input: CreateOrderInput): void {
-  if (input.side !== "BUY" && input.side !== "SELL") {
-    throw new Error("order side must be BUY or SELL");
-  }
-
-  if (input.orderType === "MARKET") {
-    if (input.status !== "FILLED") {
-      throw new Error("MARKET orders must be created FILLED");
-    }
-
-    if (input.limitPrice != null) {
-      throw new Error("MARKET orders must not have a limit price");
-    }
-
-    return;
-  }
-
-  if (input.orderType === "LIMIT") {
-    const status = input.status as string;
-
-    if (status === "CANCELLED") {
-      throw new Error("LIMIT orders cannot be created CANCELLED");
-    }
-
-    if (status !== "OPEN" && status !== "FILLED") {
-      throw new Error("LIMIT orders must be created OPEN or FILLED");
-    }
-  }
-}
-
-const IDEMPOTENCY_KEY = /^[!-~]{1,128}$/;
-
-function assertIdempotencyKey(key: string): void {
-  if (typeof key !== "string" || !IDEMPOTENCY_KEY.test(key)) {
-    throw new Error(
-      "idempotency key must be 1..128 printable non-whitespace ASCII characters",
-    );
-  }
-}
-
-function sameRequestFingerprint(
+export function sameRequestFingerprint(
   existing: Order,
   attempted: {
     instrumentId: string;
@@ -330,16 +341,40 @@ function sameRequestFingerprint(
   return fromDbDecimal(existing.limitPrice).eq(fromDbDecimal(attempted.limitPrice));
 }
 
-function toPersistedDecimal(value: string): string {
-  return toDbDecimal(fromDbDecimal(value));
-}
-
-function fromPersistedOrder(row: Order): Order {
+export function fromPersistedOrder(row: Order): Order {
   return {
     ...row,
     quantity: toPersistedDecimal(row.quantity),
     limitPrice: row.limitPrice === null ? null : toPersistedDecimal(row.limitPrice),
   };
+}
+
+function assertOpenLimitInput(input: CreateOpenLimitOrderInput): void {
+  assertOrderSide(input.side);
+
+  if (input.orderType !== "LIMIT") {
+    throw new Error("insertOpenLimitOrder only creates LIMIT orders");
+  }
+}
+
+function assertOrderSide(side: string): void {
+  if (side !== "BUY" && side !== "SELL") {
+    throw new Error("order side must be BUY or SELL");
+  }
+}
+
+const IDEMPOTENCY_KEY = /^[!-~]{1,128}$/;
+
+function assertIdempotencyKey(key: string): void {
+  if (typeof key !== "string" || !IDEMPOTENCY_KEY.test(key)) {
+    throw new Error(
+      "idempotency key must be 1..128 printable non-whitespace ASCII characters",
+    );
+  }
+}
+
+function toPersistedDecimal(value: string): string {
+  return toDbDecimal(fromDbDecimal(value));
 }
 
 function fromPersistedOrderWithSymbol(row: OrderWithSymbol): OrderWithSymbol {

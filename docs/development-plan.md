@@ -49,11 +49,13 @@ Phase 8 added `@notional/trading`: pure deterministic exact-decimal math for lin
 
 Status: COMPLETE
 
-Phase 9 added PostgreSQL `trade_order`: UUID identity, paper-account and instrument RESTRICT FKs, MARKET/LIMIT with CHECK-enforced price and status rules, `reduce_only`, per-account idempotency, history and OPEN-LIMIT matcher indexes, and no physical deletes. The production create helper inserts MARKET `FILLED` and LIMIT `OPEN`/`FILLED` only; `CANCELLED` is reached through `cancelOpenLimitOrder` with `SELECT ... FOR UPDATE`. Public HTTP is read-only (`GET /api/orders`, `GET /api/orders/:id`). There is no public POST or cancel, no MARKET queue, no matching, no executions, no positions, and no margin. API validation uses `@notional/trading` filters: LIMIT MIN_NOTIONAL uses the limit price without market data; executable MARKET validation requires a fresh mark for MIN_NOTIONAL and a fresh BBO for the future fill path. Phase 13 owns atomic public placement.
+Phase 9 added PostgreSQL `trade_order`: UUID identity, paper-account and instrument RESTRICT FKs, MARKET/LIMIT with CHECK-enforced price and status rules, `reduce_only`, per-account idempotency, history and OPEN-LIMIT matcher indexes, and no physical deletes. Public HTTP is read-only (`GET /api/orders`, `GET /api/orders/:id`). There is no public POST or cancel, no MARKET queue, no matching, no positions, and no margin. API validation uses `@notional/trading` filters: LIMIT MIN_NOTIONAL uses the limit price without market data; executable MARKET validation requires a fresh mark for MIN_NOTIONAL and a fresh BBO for the future fill path. Phase 13 owns atomic public placement.
 
 ## Phase 10 — Executions
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 10 added PostgreSQL `execution`: UUID identity, unique `order_id` (one complete fill per order), positive quantity/price, and UTC-naive `executed_at` sampled with `clock_timestamp()`. Production FILLED creation is `insertFilledOrderWithExecution` (MARKET and marketable LIMIT) or `completeOpenLimitOrder` (resting OPEN LIMIT). `insertOpenLimitOrder` creates LIMIT `OPEN` only. `@notional/trading` owns MARKET ask/bid and LIMIT BBO marketability/price-improvement helpers. Authenticated read-only `GET /api/executions` and `GET /api/executions/:id` are account-scoped. There is no public fill mutation, matcher, position, margin, or ledger trading effect. Internal fill helpers do not make the product tradable. Positions, margin, and accounting remain Phases 11–13.
 
 ## Phase 11 — Positions
 

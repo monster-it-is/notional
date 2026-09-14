@@ -6,3 +6,4 @@ export {
   setLastFaucetClaimElapsed24h,
   setPaperAccountStatusForTests,
 } from "./faucet-test-helpers.js";
+export { setExecutionExecutedAtUtc } from "./execution-test-helpers.js";

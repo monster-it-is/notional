@@ -34,8 +34,15 @@ Signed quantity represents direction.
 
 Status: Accepted
 
-Schema supports multiple executions.
-Initial execution engine produces one complete fill.
+MVP enforces one complete fill per order:
+
+- `UNIQUE(execution.order_id)`
+- `execution.quantity` is the full persisted `trade_order.quantity`
+- no fill sequence, remaining quantity, or cumulative filled quantity
+
+PostgreSQL cannot CHECK “FILLED iff an execution exists” across tables. Production helpers create FILLED rows only together with that unique execution.
+
+If a later version adds partial fills, drop or migrate `UNIQUE(order_id)` deliberately. Do not leave a looser schema “just in case.”
 
 ## ADR-006 — USDT-Only Collateral
 
@@ -512,7 +519,7 @@ Quantity is a positive `NUMERIC(38,18)` string. Direction is `side`. MARKET `lim
 
 Statuses are only `OPEN`, `FILLED`, and `CANCELLED`. MARKET rows may only be `FILLED`. LIMIT rows may be `OPEN`, `FILLED`, or `CANCELLED`. There is no PENDING, ACCEPTED, REJECTED, PARTIALLY_FILLED, filled-qty, remaining-qty, or `time_in_force` (LIMIT is implicit GTC).
 
-The production create helper may insert MARKET `FILLED` and LIMIT `OPEN` or `FILLED`. It must not create `CANCELLED`. Cancellation is the only production path to `CANCELLED`.
+The production create helper `insertOpenLimitOrder` inserts LIMIT `OPEN` only. It must not create `CANCELLED` or `FILLED`. Cancellation is the only production path to `CANCELLED`. FILLED MARKET and immediately filled LIMIT rows are created only through `insertFilledOrderWithExecution`, which inserts the order and its unique execution in the same transaction. Resting LIMIT fills use `completeOpenLimitOrder`.
 
 `reduce_only` is `boolean NOT NULL DEFAULT false`. Instrument filters are not snapshotted onto the order. Orders are trading history and are never physically deleted in production.
 
@@ -531,13 +538,15 @@ The immutable fingerprint is:
 - canonical limit price or null
 - reduce-only
 
-It excludes status, timestamps, and lifecycle. Canonical decimal equality treats `"1"`, `"1.0"`, and `"1.00"` as the same request. No hash column.
+It excludes status, timestamps, execution price, and lifecycle. Canonical decimal equality treats `"1"`, `"1.0"`, and `"1.00"` as the same request. No hash column.
 
 Insert uses `INSERT ... ON CONFLICT DO NOTHING RETURNING`. If no row is returned, SELECT the existing row and compare the fingerprint: match → replay; mismatch → `IDEMPOTENCY_KEY_REUSED`. Unique violations are not leaked to the API.
 
 Failed placements that create no row do not consume the key.
 
-When public placement exists, a matching existing key must return the existing order **without** re-running mutable validations (account status, instrument status, filters, market freshness, reduce-only, margin), even if the account is later SUSPENDED, the instrument is INACTIVE, market data is stale, filters changed, or the order is already FILLED/CANCELLED. Only a missing key proceeds to current placement validation. The INSERT helper still handles the concurrent race after that pre-check.
+When public placement exists, a matching existing key must return the existing order **without** re-running mutable validations (account status, instrument status, filters, market freshness, reduce-only, margin, current BBO pricing), even if the account is later SUSPENDED, the instrument is INACTIVE, market data is stale, filters changed, or the order is already FILLED/CANCELLED. If that committed order is FILLED, reuse its existing execution and do not re-price it. Only a missing key proceeds to current placement validation. The INSERT helper still handles the concurrent race after that pre-check.
+
+Future `POST /api/orders` must look up `(paper_account_id, idempotency_key)` after authenticating, resolving the paper account, validating key syntax, and canonicalizing the immutable request identity. Ordinary HTTP replay of an existing same-fingerprint order must **not** acquire account/position locks first. New-placement races then lock `account → position → order`, re-check idempotency, and rely on PostgreSQL uniqueness as the final backstop. Matcher fills of existing OPEN orders are a different path: they follow the locked `account → position → order` order.
 
 HTTP (Phase 13): first insert `201`; replay `200`.
 
@@ -567,6 +576,61 @@ List pagination matches funding history: default limit 50, max 100, offset 0, ne
 
 Filter-change and instrument-inactivity policy for resting OPEN limits is recorded as unresolved for Phase 13. Phase 9 does not auto-cancel or delete those rows.
 
+## ADR-030 — Immutable paper executions
+
+Status: Accepted
+
+An execution is an append-only historical fact: the quantity, price, and PostgreSQL wall-clock instant at which a paper order was completely filled. It is not a live market snapshot, a position, or a ledger entry.
+
+### Identity and cardinality
+
+`execution.id` is a PostgreSQL UUID. `execution.order_id` is a unique `ON DELETE RESTRICT` foreign key to `trade_order.id`. MVP has no partial fills, so one `FILLED` order has exactly one execution. `UNIQUE(order_id)` is the execution identity. Do not persist fill sequence, remaining quantity, or cumulative filled quantity.
+
+### Schema
+
+Columns are only `id`, `order_id`, `quantity`, `price`, and `executed_at`. Quantity and price are `NUMERIC(38,18)` strings, strictly positive. Account, instrument, side, order type, and reduce-only are read through the immutable order join. Do not store fees, realized PnL, Binance update ids, or live book snapshots. There is no status column and no production update/delete helper.
+
+### Timestamp
+
+`executed_at` is `timestamp` without time zone. The fill instant is sampled once as `clock_timestamp() AT TIME ZONE 'UTC'`, never `CURRENT_TIMESTAMP`/`now()`, Node `Date`, or client time. `completeOpenLimitOrder` writes that same sampled instant to `execution.executed_at` and `trade_order.updated_at`.
+
+Reads interpret the naive column as UTC before the API boundary (`executed_at AT TIME ZONE 'UTC'`). Do not load a timestamp-without-time-zone into a JS `Date` and call `toISOString()`. The column is not migrated to `timestamptz` in Phase 10.
+
+### Fill prices
+
+Pure helpers in `@notional/trading` own marketability and BBO fill prices. They do not access the database or market store.
+
+- MARKET BUY fills at fresh best ask; MARKET SELL fills at fresh best bid
+- BUY LIMIT is marketable iff `bestAsk <= limitPrice`; SELL LIMIT iff `bestBid >= limitPrice`
+- A marketable LIMIT fills at the current BBO (price improvement), not at the user limit
+- A non-marketable LIMIT rests `OPEN` with no execution
+
+A genuinely new fill validates execution price syntax, positivity, `NUMERIC(38,18)` fit, and LIMIT protection (`BUY: price <= limit`, `SELL: price >= limit`) using the locked order’s limit. Replay of an existing same-key order must not parse, compare, or replace the newly supplied executionPrice. Helpers do not consult instrument tick metadata.
+
+### Production FILLED boundary
+
+`insertOpenLimitOrder` creates LIMIT `OPEN` only. `insertFilledOrderWithExecution` creates MARKET or immediately filled LIMIT `FILLED` plus the execution in one `FinancialTransaction`. `completeOpenLimitOrder` locks the order `FOR UPDATE` (account-scoped), fills an OPEN LIMIT, and is idempotent if the order is already FILLED with an execution. Neither helper locks `paper_account` or a future position. Future callers own `account → position → order`.
+
+`insertFilledOrderWithExecution` result kinds:
+
+- `created_filled` — new FILLED order + execution
+- `replayed_filled` — existing FILLED order + existing execution; return immediately without validating or replacing the newly supplied price
+- `replayed_order` — existing matching OPEN or CANCELLED order; do not convert or re-price it
+- `key_reused` — same key, different immutable fingerprint
+
+A FILLED order without an execution is `EXECUTION_CONFLICT`. Order request fingerprint still excludes status, timestamps, and execution price.
+
+### Retry and concurrency
+
+Once an execution exists, return it. A retry after a lost response must not re-price against a later BBO. Two complete-fill attempts serialize on the order row lock; `UNIQUE(order_id)` is the duplicate-insert backstop and must not leak. Cancel and fill both `SELECT ... FOR UPDATE` the same `trade_order` row: fill-first yields `ORDER_NOT_CANCELLABLE`; cancel-first yields `ORDER_ALREADY_CANCELLED` and no execution.
+
+### Market-data freshness (Phase 13)
+
+Phase 10 does not wire live execution. Phase 13 must obtain a fresh BBO after financial locks. MARKET min-notional uses a fresh mark; the fill price uses a fresh BBO. Resting LIMIT execution uses persisted order terms plus a fresh BBO and does not rerun MARKET min-notional. Placement-time BBO must not be persisted or reused as the fill price.
+
+### Public API
+
+Authenticated `GET /api/executions` and `GET /api/executions/:id` are account-scoped reads. There is no `POST /api/executions` and there must never be a client-specified fill-price mutation endpoint. Phase 10 still does not make the product tradable: public placement waits for atomic order + execution + position + margin in Phase 13.
 
 
 

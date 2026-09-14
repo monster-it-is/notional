@@ -8,7 +8,8 @@ import {
   findAccountOrderById,
   findOrderById,
   findOrderByIdempotencyKey,
-  insertOrder,
+  insertFilledOrderWithExecution,
+  insertOpenLimitOrder,
   instrument,
   listOrdersByPaperAccountId,
   lockOrderById,
@@ -17,12 +18,9 @@ import {
   tradeOrder,
   user,
   upsertInstrumentBySymbol,
-  type CreateOrderInput,
+  type CreateOpenLimitOrderInput,
 } from "./index.js";
 import { endTestPool, postgresConstraint, resetTestTables } from "./test.js";
-
-const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 describe("trade_order", () => {
   afterAll(async () => {
@@ -33,35 +31,10 @@ describe("trade_order", () => {
     await resetTestTables();
   });
 
-  it("inserts a valid FILLED MARKET order with a null limit price", async () => {
-    const { account, btcId } = await seed();
-
-    const result = await insertOrder(
-      db,
-      marketInput(account.id, btcId, { quantity: "0.001" }),
-    );
-
-    expect(result.kind).toBe("created");
-    if (result.kind !== "created") {
-      return;
-    }
-
-    expect(result.order.id).toMatch(UUID_PATTERN);
-    expect(result.order.paperAccountId).toBe(account.id);
-    expect(result.order.instrumentId).toBe(btcId);
-    expect(result.order.side).toBe("BUY");
-    expect(result.order.orderType).toBe("MARKET");
-    expect(result.order.status).toBe("FILLED");
-    expect(result.order.limitPrice).toBeNull();
-    expect(typeof result.order.quantity).toBe("string");
-    expect(result.order.quantity).toBe("0.001");
-    expect(result.order.reduceOnly).toBe(false);
-  });
-
   it("inserts a valid OPEN LIMIT order with a positive limit price", async () => {
     const { account, btcId } = await seed();
 
-    const result = await insertOrder(
+    const result = await insertOpenLimitOrder(
       db,
       limitInput(account.id, btcId, { quantity: "0.002", limitPrice: "65000.1" }),
     );
@@ -75,23 +48,6 @@ describe("trade_order", () => {
     expect(result.order.status).toBe("OPEN");
     expect(result.order.limitPrice).toBe("65000.1");
     expect(result.order.quantity).toBe("0.002");
-  });
-
-  it("inserts a valid FILLED LIMIT order", async () => {
-    const { account, btcId } = await seed();
-
-    const result = await insertOrder(
-      db,
-      limitInput(account.id, btcId, { status: "FILLED" }),
-    );
-
-    expect(result.kind).toBe("created");
-    if (result.kind !== "created") {
-      return;
-    }
-
-    expect(result.order.status).toBe("FILLED");
-    expect(result.order.limitPrice).toBe("65000");
   });
 
   it("rejects MARKET OPEN, MARKET CANCELLED, and MARKET limit prices at the database", async () => {
@@ -278,7 +234,7 @@ describe("trade_order", () => {
     );
   });
 
-  it("accepts printable non-whitespace ASCII idempotency keys on insertOrder", async () => {
+  it("accepts printable non-whitespace ASCII idempotency keys on insertOpenLimitOrder", async () => {
     const { account, btcId } = await seed();
 
     for (const idempotencyKey of [
@@ -287,7 +243,7 @@ describe("trade_order", () => {
       "retry_ABC:123",
       "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~",
     ]) {
-      const result = await insertOrder(
+      const result = await insertOpenLimitOrder(
         db,
         limitInput(account.id, btcId, { idempotencyKey }),
       );
@@ -298,7 +254,7 @@ describe("trade_order", () => {
     }
   });
 
-  it("rejects non-printable or whitespace idempotency keys before insertOrder writes a row", async () => {
+  it("rejects non-printable or whitespace idempotency keys before insertOpenLimitOrder writes a row", async () => {
     const { account, btcId } = await seed();
     const invalidKeys = [
       "",
@@ -316,7 +272,7 @@ describe("trade_order", () => {
 
     for (const idempotencyKey of invalidKeys) {
       await expect(
-        insertOrder(db, limitInput(account.id, btcId, { idempotencyKey })),
+        insertOpenLimitOrder(db, limitInput(account.id, btcId, { idempotencyKey })),
       ).rejects.toThrow(
         "idempotency key must be 1..128 printable non-whitespace ASCII characters",
       );
@@ -351,7 +307,7 @@ describe("trade_order", () => {
 
   it("restricts deleting an account or instrument that still has orders", async () => {
     const { account, btcId } = await seed();
-    await insertOrder(db, limitInput(account.id, btcId));
+    await insertOpenLimitOrder(db, limitInput(account.id, btcId));
 
     await expectRejectedConstraint(
       db.delete(paperAccount).where(eq(paperAccount.id, account.id)),
@@ -364,22 +320,31 @@ describe("trade_order", () => {
     );
   });
 
-  it("rejects creating a LIMIT order directly in CANCELLED status", async () => {
+  it("does not create CANCELLED or MARKET orders through insertOpenLimitOrder", async () => {
     const { account, btcId } = await seed();
+    const created = await insertOpenLimitOrder(db, limitInput(account.id, btcId));
+    expect(created.kind).toBe("created");
+    if (created.kind !== "created") {
+      return;
+    }
+
+    expect(created.order.status).toBe("OPEN");
+    expect(created.order.orderType).toBe("LIMIT");
 
     await expect(
-      insertOrder(
+      insertOpenLimitOrder(
         db,
-        limitInput(account.id, btcId, {
-          status: "CANCELLED",
-        }) as unknown as CreateOrderInput,
+        {
+          ...limitInput(account.id, btcId, { idempotencyKey: "market-cast" }),
+          orderType: "MARKET",
+        } as unknown as CreateOpenLimitOrderInput,
       ),
-    ).rejects.toThrow("LIMIT orders cannot be created CANCELLED");
+    ).rejects.toThrow("insertOpenLimitOrder only creates LIMIT orders");
   });
 
   it("cancels an OPEN LIMIT order and treats a second cancel as success", async () => {
     const { account, btcId } = await seed();
-    const created = await insertOrder(db, limitInput(account.id, btcId));
+    const created = await insertOpenLimitOrder(db, limitInput(account.id, btcId));
     expect(created.kind).toBe("created");
     if (created.kind !== "created") {
       return;
@@ -402,18 +367,16 @@ describe("trade_order", () => {
 
   it("does not cancel FILLED LIMIT or MARKET orders", async () => {
     const { account, btcId } = await seed();
-    const filledLimit = await insertOrder(
-      db,
-      limitInput(account.id, btcId, { status: "FILLED", idempotencyKey: "filled-limit" }),
+    const filledLimit = await db.transaction((tx) =>
+      insertFilledOrderWithExecution(tx, filledLimitInput(account.id, btcId)),
     );
-    const filledMarket = await insertOrder(
-      db,
-      marketInput(account.id, btcId, { idempotencyKey: "filled-market" }),
+    const filledMarket = await db.transaction((tx) =>
+      insertFilledOrderWithExecution(tx, filledMarketInput(account.id, btcId)),
     );
 
-    expect(filledLimit.kind).toBe("created");
-    expect(filledMarket.kind).toBe("created");
-    if (filledLimit.kind !== "created" || filledMarket.kind !== "created") {
+    expect(filledLimit.kind).toBe("created_filled");
+    expect(filledMarket.kind).toBe("created_filled");
+    if (filledLimit.kind !== "created_filled" || filledMarket.kind !== "created_filled") {
       return;
     }
 
@@ -434,7 +397,7 @@ describe("trade_order", () => {
 
   it("does not cancel another account's order", async () => {
     const { account, other, btcId } = await seed();
-    const created = await insertOrder(db, limitInput(account.id, btcId));
+    const created = await insertOpenLimitOrder(db, limitInput(account.id, btcId));
     expect(created.kind).toBe("created");
     if (created.kind !== "created") {
       return;
@@ -453,7 +416,7 @@ describe("trade_order", () => {
 
   it("serializes concurrent cancels into one CANCELLED row", async () => {
     const { account, btcId } = await seed();
-    const created = await insertOrder(db, limitInput(account.id, btcId));
+    const created = await insertOpenLimitOrder(db, limitInput(account.id, btcId));
     expect(created.kind).toBe("created");
     if (created.kind !== "created") {
       return;
@@ -475,7 +438,7 @@ describe("trade_order", () => {
 
   it("locks an order row for update without locking the paper account", async () => {
     const { account, btcId } = await seed();
-    const created = await insertOrder(db, limitInput(account.id, btcId));
+    const created = await insertOpenLimitOrder(db, limitInput(account.id, btcId));
     expect(created.kind).toBe("created");
     if (created.kind !== "created") {
       return;
@@ -492,11 +455,11 @@ describe("trade_order", () => {
   it("enforces per-account idempotency uniqueness and allows the same key on another account", async () => {
     const { account, other, btcId } = await seed();
 
-    const first = await insertOrder(
+    const first = await insertOpenLimitOrder(
       db,
       limitInput(account.id, btcId, { idempotencyKey: "shared-key" }),
     );
-    const secondAccount = await insertOrder(
+    const secondAccount = await insertOpenLimitOrder(
       db,
       limitInput(other.id, btcId, { idempotencyKey: "shared-key" }),
     );
@@ -526,7 +489,7 @@ describe("trade_order", () => {
     const input = limitInput(account.id, btcId, { idempotencyKey: "same-create" });
 
     const results = await Promise.all(
-      Array.from({ length: 8 }, () => insertOrder(db, input)),
+      Array.from({ length: 8 }, () => insertOpenLimitOrder(db, input)),
     );
 
     const created = results.filter((result) => result.kind === "created");
@@ -549,14 +512,14 @@ describe("trade_order", () => {
   it("replays canonical quantity 1 and 1.0 as the same request", async () => {
     const { account, btcId } = await seed();
 
-    const first = await insertOrder(
+    const first = await insertOpenLimitOrder(
       db,
       limitInput(account.id, btcId, {
         quantity: "1",
         idempotencyKey: "canonical-qty",
       }),
     );
-    const second = await insertOrder(
+    const second = await insertOpenLimitOrder(
       db,
       limitInput(account.id, btcId, {
         quantity: "1.0",
@@ -576,7 +539,7 @@ describe("trade_order", () => {
   it("replays after the original OPEN order is cancelled without comparing status", async () => {
     const { account, btcId } = await seed();
     const input = limitInput(account.id, btcId, { idempotencyKey: "after-cancel" });
-    const first = await insertOrder(db, input);
+    const first = await insertOpenLimitOrder(db, input);
     expect(first.kind).toBe("created");
     if (first.kind !== "created") {
       return;
@@ -584,7 +547,7 @@ describe("trade_order", () => {
 
     await db.transaction((tx) => cancelOpenLimitOrder(tx, account.id, first.order.id));
 
-    const replay = await insertOrder(db, input);
+    const replay = await insertOpenLimitOrder(db, input);
     expect(replay.kind).toBe("replayed");
     if (replay.kind !== "replayed") {
       return;
@@ -596,19 +559,19 @@ describe("trade_order", () => {
 
   it("conflicts when the same key is reused with a different fingerprint", async () => {
     const { account, btcId, ethId } = await seed();
-    const first = await insertOrder(
+    const first = await insertOpenLimitOrder(
       db,
       limitInput(account.id, btcId, { idempotencyKey: "reuse", quantity: "0.001" }),
     );
     expect(first.kind).toBe("created");
 
-    const differentQty = await insertOrder(
+    const differentQty = await insertOpenLimitOrder(
       db,
       limitInput(account.id, btcId, { idempotencyKey: "reuse", quantity: "0.002" }),
     );
     expect(differentQty.kind).toBe("key_reused");
 
-    const differentSide = await insertOrder(
+    const differentSide = await insertOpenLimitOrder(
       db,
       limitInput(account.id, btcId, {
         idempotencyKey: "reuse",
@@ -618,7 +581,7 @@ describe("trade_order", () => {
     );
     expect(differentSide.kind).toBe("key_reused");
 
-    const differentInstrument = await insertOrder(
+    const differentInstrument = await insertOpenLimitOrder(
       db,
       limitInput(account.id, ethId, { idempotencyKey: "reuse", quantity: "0.001" }),
     );
@@ -627,7 +590,7 @@ describe("trade_order", () => {
 
   it("keeps order rows when the instrument becomes INACTIVE", async () => {
     const { account, btcId } = await seed();
-    const created = await insertOrder(db, limitInput(account.id, btcId));
+    const created = await insertOpenLimitOrder(db, limitInput(account.id, btcId));
     expect(created.kind).toBe("created");
     if (created.kind !== "created") {
       return;
@@ -645,23 +608,29 @@ describe("trade_order", () => {
 
   it("lists newest first and scopes finds to the paper account", async () => {
     const { account, other, btcId } = await seed();
-    const older = await insertOrder(
+    const older = await insertOpenLimitOrder(
       db,
       limitInput(account.id, btcId, { idempotencyKey: "older" }),
     );
-    const newer = await insertOrder(
-      db,
-      marketInput(account.id, btcId, { idempotencyKey: "newer" }),
+    const newer = await db.transaction((tx) =>
+      insertFilledOrderWithExecution(
+        tx,
+        filledMarketInput(account.id, btcId, { idempotencyKey: "newer" }),
+      ),
     );
-    const foreign = await insertOrder(
+    const foreign = await insertOpenLimitOrder(
       db,
       limitInput(other.id, btcId, { idempotencyKey: "foreign" }),
     );
 
     expect(older.kind).toBe("created");
-    expect(newer.kind).toBe("created");
+    expect(newer.kind).toBe("created_filled");
     expect(foreign.kind).toBe("created");
-    if (older.kind !== "created" || newer.kind !== "created" || foreign.kind !== "created") {
+    if (
+      older.kind !== "created" ||
+      newer.kind !== "created_filled" ||
+      foreign.kind !== "created"
+    ) {
       return;
     }
 
@@ -676,9 +645,13 @@ describe("trade_order", () => {
     expect(await findAccountOrderById(db, other.id, older.order.id)).toBeNull();
   });
 
-  it("does not export a production delete helper", async () => {
+  it("does not export a production delete helper or generic FILLED insert", async () => {
     const orderApi = await import("./order.js");
+    const dbApi = await import("./index.js");
     expect("deleteOrder" in orderApi).toBe(false);
+    expect("insertOrder" in orderApi).toBe(false);
+    expect("insertOrder" in dbApi).toBe(false);
+    expect("insertTradeOrderRow" in dbApi).toBe(false);
   });
 });
 
@@ -692,25 +665,45 @@ async function seed() {
   return { account, other, btcId: btcRow.id, ethId: ethRow.id };
 }
 
-function marketInput(
+function filledMarketInput(
   paperAccountId: string,
   instrumentId: string,
   overrides: Partial<{
-    side: "BUY" | "SELL";
     quantity: string;
-    reduceOnly: boolean;
+    executionPrice: string;
     idempotencyKey: string;
   }> = {},
-): CreateOrderInput {
+) {
   return {
     paperAccountId,
     instrumentId,
-    side: overrides.side ?? "BUY",
-    orderType: "MARKET",
+    side: "BUY" as const,
+    orderType: "MARKET" as const,
     quantity: overrides.quantity ?? "0.001",
-    status: "FILLED",
-    reduceOnly: overrides.reduceOnly,
-    idempotencyKey: overrides.idempotencyKey ?? "market-1",
+    executionPrice: overrides.executionPrice ?? "65000",
+    idempotencyKey: overrides.idempotencyKey ?? "filled-market",
+  };
+}
+
+function filledLimitInput(
+  paperAccountId: string,
+  instrumentId: string,
+  overrides: Partial<{
+    quantity: string;
+    limitPrice: string;
+    executionPrice: string;
+    idempotencyKey: string;
+  }> = {},
+) {
+  return {
+    paperAccountId,
+    instrumentId,
+    side: "BUY" as const,
+    orderType: "LIMIT" as const,
+    quantity: overrides.quantity ?? "0.001",
+    limitPrice: overrides.limitPrice ?? "65000",
+    executionPrice: overrides.executionPrice ?? "65000",
+    idempotencyKey: overrides.idempotencyKey ?? "filled-limit",
   };
 }
 
@@ -722,10 +715,9 @@ function limitInput(
     quantity: string;
     limitPrice: string;
     reduceOnly: boolean;
-    status: "OPEN" | "FILLED" | "CANCELLED";
     idempotencyKey: string;
   }> = {},
-): CreateOrderInput {
+): CreateOpenLimitOrderInput {
   return {
     paperAccountId,
     instrumentId,
@@ -733,7 +725,6 @@ function limitInput(
     orderType: "LIMIT",
     quantity: overrides.quantity ?? "0.001",
     limitPrice: overrides.limitPrice ?? "65000",
-    status: (overrides.status ?? "OPEN") as "OPEN" | "FILLED",
     reduceOnly: overrides.reduceOnly,
     idempotencyKey: overrides.idempotencyKey ?? "limit-1",
   };

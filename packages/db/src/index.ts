@@ -45,13 +45,13 @@ export {
   findAccountOrderById,
   findOrderById,
   findOrderByIdempotencyKey,
-  insertOrder,
+  insertOpenLimitOrder,
   listOrdersByPaperAccountId,
   lockOrderById,
   OrderMutationError,
 } from "./order.js";
 export type {
-  CreateOrderInput,
+  CreateOpenLimitOrderInput,
   InsertOrderResult,
   ListOrdersFilters,
   ListOrdersPagination,
@@ -61,6 +61,24 @@ export type {
   OrderType,
   OrderWithSymbol,
 } from "./order.js";
+export {
+  completeOpenLimitOrder,
+  ExecutionMutationError,
+  findAccountExecutionById,
+  findExecutionByOrderId,
+  insertFilledOrderWithExecution,
+  listExecutionsByPaperAccountId,
+} from "./execution.js";
+export type {
+  CompleteOrderFillResult,
+  CreateFilledOrderInput,
+  Execution,
+  ExecutionMutationCode,
+  ExecutionWithOrder,
+  InsertFilledOrderResult,
+  ListExecutionsFilters,
+  ListExecutionsPagination,
+} from "./execution.js";
 export {
   applyFaucetClaim,
   ensurePaperAccount,

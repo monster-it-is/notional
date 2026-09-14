@@ -8,7 +8,8 @@ import type {
 import {
   db,
   findPaperAccountByUserId,
-  insertOrder,
+  insertFilledOrderWithExecution,
+  insertOpenLimitOrder,
   upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables, setPaperAccountStatusForTests } from "@notional/db/test";
@@ -90,7 +91,7 @@ describe("order api", () => {
     const bob = await initializeUser(app, "bob-orders@example.com");
     const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
 
-    const older = await insertOrder(
+    const older = await insertOpenLimitOrder(
       db,
       limitInput(ada.accountId, btc.id, {
         quantity: "1.00",
@@ -98,21 +99,23 @@ describe("order api", () => {
         idempotencyKey: "older",
       }),
     );
-    const newer = await insertOrder(
-      db,
-      marketInput(ada.accountId, btc.id, {
-        quantity: "0.010",
-        idempotencyKey: "newer",
-      }),
+    const newer = await db.transaction((tx) =>
+      insertFilledOrderWithExecution(
+        tx,
+        marketInput(ada.accountId, btc.id, {
+          quantity: "0.010",
+          idempotencyKey: "newer",
+        }),
+      ),
     );
-    await insertOrder(
+    await insertOpenLimitOrder(
       db,
       limitInput(bob.accountId, btc.id, { idempotencyKey: "bob" }),
     );
 
     expect(older.kind).toBe("created");
-    expect(newer.kind).toBe("created");
-    if (older.kind !== "created" || newer.kind !== "created") {
+    expect(newer.kind).toBe("created_filled");
+    if (older.kind !== "created" || newer.kind !== "created_filled") {
       return;
     }
 
@@ -150,7 +153,7 @@ describe("order api", () => {
     const ada = await initializeUser(app, "ada-hidden@example.com");
     const bob = await initializeUser(app, "bob-hidden@example.com");
     const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
-    const created = await insertOrder(db, limitInput(ada.accountId, btc.id));
+    const created = await insertOpenLimitOrder(db, limitInput(ada.accountId, btc.id));
     expect(created.kind).toBe("created");
     if (created.kind !== "created") {
       return;
@@ -191,7 +194,7 @@ describe("order api", () => {
   it("returns a single own order by id", async () => {
     const { cookies, accountId } = await initializeUser(app, "get-one@example.com");
     const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
-    const created = await insertOrder(db, limitInput(accountId, btc.id));
+    const created = await insertOpenLimitOrder(db, limitInput(accountId, btc.id));
     expect(created.kind).toBe("created");
     if (created.kind !== "created") {
       return;
@@ -216,7 +219,7 @@ describe("order api", () => {
     const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
 
     for (let index = 0; index < 3; index += 1) {
-      const created = await insertOrder(
+      const created = await insertOpenLimitOrder(
         db,
         limitInput(accountId, btc.id, { idempotencyKey: `page-${index}` }),
       );
@@ -245,13 +248,15 @@ describe("order api", () => {
     const { cookies, accountId } = await initializeUser(app, "filter-orders@example.com");
     const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
     const eth = await upsertInstrumentBySymbol(db, sample("ETHUSDT", "ETH"));
-    await insertOrder(
+    await insertOpenLimitOrder(
       db,
       limitInput(accountId, btc.id, { idempotencyKey: "open-btc" }),
     );
-    await insertOrder(
-      db,
-      marketInput(accountId, eth.id, { idempotencyKey: "filled-eth" }),
+    await db.transaction((tx) =>
+      insertFilledOrderWithExecution(
+        tx,
+        marketInput(accountId, eth.id, { idempotencyKey: "filled-eth" }),
+      ),
     );
 
     const open = await app.inject({
@@ -308,7 +313,7 @@ describe("order api", () => {
   it("allows a suspended account to read existing orders", async () => {
     const { cookies, accountId } = await initializeUser(app, "suspended-read@example.com");
     const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
-    await insertOrder(db, limitInput(accountId, btc.id));
+    await insertOpenLimitOrder(db, limitInput(accountId, btc.id));
     await setPaperAccountStatusForTests(accountId, "SUSPENDED");
 
     const response = await app.inject({
@@ -356,7 +361,6 @@ function limitInput(
     orderType: "LIMIT" as const,
     quantity: overrides.quantity ?? "0.001",
     limitPrice: overrides.limitPrice ?? "65000",
-    status: "OPEN" as const,
     idempotencyKey: overrides.idempotencyKey ?? "limit-1",
   };
 }
@@ -372,7 +376,7 @@ function marketInput(
     side: "BUY" as const,
     orderType: "MARKET" as const,
     quantity: overrides.quantity ?? "0.001",
-    status: "FILLED" as const,
+    executionPrice: "65000",
     idempotencyKey: overrides.idempotencyKey ?? "market-1",
   };
 }

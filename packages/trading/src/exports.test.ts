@@ -15,5 +15,8 @@ describe("public package boundary", () => {
     expect(typeof trading.assertFitsNumeric3818).toBe("function");
     expect(typeof trading.quantizeToNumeric3818).toBe("function");
     expect(typeof trading.TradingMathError).toBe("function");
+    expect(typeof trading.getMarketExecutionPrice).toBe("function");
+    expect(typeof trading.getLimitExecutionPrice).toBe("function");
+    expect(typeof trading.isLimitMarketable).toBe("function");
   });
 });

@@ -40,3 +40,8 @@ export type {
   OrderStatus,
   OrderType,
 } from "./order.js";
+export type {
+  ExecutionListResponse,
+  ExecutionNotFoundError,
+  ExecutionResponse,
+} from "./execution.js";

@@ -205,7 +205,7 @@ Persisted paper orders live in PostgreSQL `trade_order`. Notional never places o
 Identity:
 
 - `trade_order.id` is the stable internal UUID
-- later executions reference `trade_order.id`
+- executions reference `trade_order.id` with `UNIQUE(execution.order_id)` in MVP
 - `paper_account_id` and `instrument_id` are RESTRICT foreign keys
 - placement retries use `idempotency_key`, which is unique per paper account and is not the order id
 - there is no clientOrderId and no Binance order id
@@ -238,11 +238,15 @@ Statuses are only:
 
 There is no `PENDING`, `ACCEPTED`, `REJECTED`, or `PARTIALLY_FILLED`. Failed placements that never insert a row do not consume the idempotency key.
 
-MVP does not implement true partial fills. Do not persist filled/remaining quantity on the order. The schema may later support multiple execution rows per order; the initial engine produces one complete fill.
+MVP does not implement true partial fills. Do not persist filled/remaining quantity on the order. One `FILLED` order has exactly one `execution` row (`UNIQUE(order_id)`). `execution.quantity` is the full persisted order quantity. Partial fills would require a deliberate migration of that unique constraint.
 
-Public HTTP in Phase 9 is read-only (`GET /api/orders`, `GET /api/orders/:id`). Public placement and cancel wait until order, execution, position, and margin can run atomically (Phase 13). Cancellation is an internal `OPEN → CANCELLED` transition on a locked LIMIT row. MARKET is not cancellable. Terminal FILLED/CANCELLED cannot be cancelled except that a second cancel of an already CANCELLED order is idempotent success.
+Public HTTP in Phase 9–10 is read-only for orders (`GET /api/orders`, `GET /api/orders/:id`) and executions (`GET /api/executions`, `GET /api/executions/:id`). Public placement and cancel wait until order, execution, position, and margin can run atomically (Phase 13). There is no `POST /api/executions`; fills are system-generated. Cancellation is an internal `OPEN → CANCELLED` transition on a locked LIMIT row. MARKET is not cancellable. Terminal FILLED/CANCELLED cannot be cancelled except that a second cancel of an already CANCELLED order is idempotent success.
 
-Creation helpers may insert MARKET `FILLED` and LIMIT `OPEN` or `FILLED`. They must not create `CANCELLED` directly.
+`insertOpenLimitOrder` inserts LIMIT `OPEN` only. FILLED MARKET and immediately filled LIMIT rows are created only through `insertFilledOrderWithExecution` (order + execution in one transaction). Resting LIMIT completion uses `completeOpenLimitOrder` (`OPEN → FILLED` + execution). Production helpers must not create `CANCELLED` directly or create a `FILLED` order without its execution.
+
+A `FILLED` order conceptually has exactly one execution. `OPEN` and `CANCELLED` orders have none. Cancel and fill both `SELECT ... FOR UPDATE` the same `trade_order` row: if fill commits first, cancel returns `ORDER_NOT_CANCELLABLE`; if cancel commits first, fill returns `ORDER_ALREADY_CANCELLED` and inserts no execution. A second fill of an already executed order returns the original execution and must not re-price it.
+
+Execution rows are immutable historical facts (`quantity`, `price`, `executed_at`). `executed_at` is a UTC-naive PostgreSQL timestamp sampled once with `clock_timestamp() AT TIME ZONE 'UTC'` at the fill. Reads interpret that column as UTC before the API boundary. Later fees and realized PnL reference the execution; they must not mutate it.
 
 Reduce-only is a persisted boolean defaulting to false. Phase 9 does not have a position table and must not fabricate one. Placement may persist the flag. Actual execution must re-classify against the then-current locked position with `classifyPositionTransition`. Only `REDUCE` and `CLOSE` may execute. `OPEN`, `INCREASE`, and `REVERSE` must fail.
 
@@ -267,7 +271,16 @@ Binance USD-M filter validation:
 - LIMIT MIN_NOTIONAL uses the order's LIMIT price
 - MARKET MIN_NOTIONAL uses a fresh **mark price**
 
-Do not use best bid/ask for MARKET MIN_NOTIONAL. Execution price is separate (MARKET BUY executes at best ask, MARKET SELL at best bid). LIMIT static-filter validation does not require live market data. Executable MARKET validation requires both a fresh mark and a fresh BBO. Freshness is independent. Placement validation never authorizes a later fill; execution must re-read required market state and fail closed if stale.
+Do not use best bid/ask for MARKET MIN_NOTIONAL. Execution price is separate:
+
+- MARKET BUY executes at a fresh best ask
+- MARKET SELL executes at a fresh best bid
+- BUY LIMIT is marketable when `bestAsk <= limitPrice` and then fills at the current best ask
+- SELL LIMIT is marketable when `bestBid >= limitPrice` and then fills at the current best bid
+
+A marketable LIMIT therefore receives BBO price improvement versus always filling at the user limit. A non-marketable LIMIT rests `OPEN` with no execution.
+
+LIMIT static-filter validation does not require live market data. Executable MARKET validation requires both a fresh mark and a fresh BBO. Freshness is independent. Placement validation never authorizes a later fill; execution must re-read required market state and fail closed if stale. Resting LIMIT execution uses persisted limit terms plus a fresh BBO and does not rerun MARKET min-notional.
 
 Do not copy instrument filter snapshots onto order rows. Placement uses filters current at placement. An already accepted OPEN LIMIT is not retroactively invalid solely because catalog filters later change. Phase 13 may finalize execution policy if Binance metadata changes or an instrument becomes INACTIVE while orders rest.
 
@@ -275,9 +288,9 @@ Idempotency:
 
 - unique `(paper_account_id, idempotency_key)`
 - fingerprint is instrument, side, type, canonical quantity, canonical limit price or null, and reduce-only
-- fingerprint excludes status and timestamps so a retry after FILLED/CANCELLED still returns the same order
+- fingerprint excludes status, timestamps, and execution price so a retry after FILLED/CANCELLED still returns the same order and, if FILLED, the original execution
 - concurrent identical inserts use `INSERT ... ON CONFLICT DO NOTHING` then SELECT
-- when public POST exists, a matching existing key must return the existing order without re-running mutable placement validation
+- when public POST exists, a matching existing key must return the existing order without re-running mutable placement validation, including current BBO pricing. Ordinary HTTP replay must not acquire account/position locks first. Matcher fills of existing OPEN orders still lock `account → position → order`.
 
 Never physically delete normal order records. Test cleanup may truncate.
 
