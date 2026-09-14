@@ -13,6 +13,7 @@ import { registerAuth, requireAuth } from "./auth-plugin.js";
 import { env } from "./env.js";
 import { getExecutionById, getExecutions } from "./executions.js";
 import { getInstrumentBySymbol, getInstruments } from "./instruments.js";
+import { getMarginSettings, putMarginSettings } from "./margin-settings.js";
 import { getMarketDataBySymbol, getMarketDataStatus } from "./market-data.js";
 import {
   unavailableMarketDataAccess,
@@ -65,6 +66,8 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.get("/api/executions/:id", { preHandler: requireAuth }, getExecutionById);
   app.get("/api/positions", { preHandler: requireAuth }, getPositions);
   app.get("/api/positions/:symbol", { preHandler: requireAuth }, getPositionBySymbol);
+  app.get("/api/margin-settings/:symbol", { preHandler: requireAuth }, getMarginSettings);
+  app.put("/api/margin-settings/:symbol", { preHandler: requireAuth }, putMarginSettings);
 
   app.get("/api/me", { preHandler: requireAuth }, async (request, reply): Promise<MeResponse | { error: string }> => {
     const session = request.auth;

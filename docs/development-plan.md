@@ -65,7 +65,11 @@ Phase 11 added PostgreSQL `trading_position`: one persistent row per paper accou
 
 ## Phase 12 — Margin and Leverage
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 12 extends `trading_position` with `margin_mode` (default `CROSS`), integer `leverage` `1..100` (default `1`), and `isolated_margin` (default `0`), plus CHECKs including CROSS isolated margin zero and ISOLATED open requiring positive isolated margin. `@notional/trading` adds exact collateral, available-balance, isolated-equity, required-isolated-margin, and caller-supplied maintenance primitives. Authenticated `GET`/`PUT /api/margin-settings/:symbol` mutate settings only while FLAT, under `paper_account → trading_position` locks. GET without a row returns `CROSS`/`1` without insert. Isolated fills throw `ISOLATED_FILL_NOT_IMPLEMENTED` and stay disabled through Phase 13. Wallet balance is still realized cash only; reservation does not move cash. Public order placement, order `reserved_margin`, trading ledger effects, liquidation, and isolated fills are out of scope.
+
+Phase 13 must still integrate CROSS order reservation, execution, position, wallet-floor/bankruptcy settlement, ledger, and CROSS margin checks before `POST /api/orders`. Isolated fills and liquidation remain Phase 14.
 
 ## Phase 13 — Order / Position Integration
 

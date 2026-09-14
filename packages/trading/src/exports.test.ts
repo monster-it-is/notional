@@ -14,6 +14,15 @@ describe("public package boundary", () => {
     expect(typeof trading.classifyPositionTransition).toBe("function");
     expect(typeof trading.satisfiesMinNotional).toBe("function");
     expect(typeof trading.calculateInitialMargin).toBe("function");
+    expect(typeof trading.calculateMaintenanceMargin).toBe("function");
+    expect(typeof trading.calculateCrossCollateral).toBe("function");
+    expect(typeof trading.calculateAvailableBalance).toBe("function");
+    expect(typeof trading.calculateIsolatedEquity).toBe("function");
+    expect(typeof trading.calculateRequiredIsolatedMargin).toBe("function");
+    expect(trading.MIN_LEVERAGE).toBe(1);
+    expect(trading.MAX_LEVERAGE).toBe(100);
+    expect(trading.DEFAULT_LEVERAGE).toBe(1);
+    expect(trading.DEFAULT_MARGIN_MODE).toBe("CROSS");
     expect(typeof trading.assertFitsNumeric3818).toBe("function");
     expect(typeof trading.quantizeToNumeric3818).toBe("function");
     expect(typeof trading.TradingMathError).toBe("function");

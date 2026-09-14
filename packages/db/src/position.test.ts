@@ -11,7 +11,9 @@ import {
   lockPaperAccountById,
   lockPositionByAccountAndInstrument,
   paperAccount,
+  PositionMutationError,
   tradingPosition,
+  updateMarginSettingsForFlatPosition,
   updatePositionState,
   user,
   upsertInstrumentBySymbol,
@@ -22,11 +24,11 @@ import { endTestPool, postgresConstraint, resetTestTables } from "./test.js";
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-describe("trading_position", () => {
-  afterAll(async () => {
-    await endTestPool();
-  });
+afterAll(async () => {
+  await endTestPool();
+});
 
+describe("trading_position", () => {
   beforeEach(async () => {
     await resetTestTables();
   });
@@ -41,8 +43,13 @@ describe("trading_position", () => {
     expect(position.quantity).toBe("0");
     expect(position.entryPrice).toBeNull();
     expect(position.realizedPnl).toBe("0");
+    expect(position.marginMode).toBe("CROSS");
+    expect(position.leverage).toBe(1);
+    expect(position.isolatedMargin).toBe("0");
     expect(typeof position.quantity).toBe("string");
     expect(typeof position.realizedPnl).toBe("string");
+    expect(typeof position.isolatedMargin).toBe("string");
+    expect(typeof position.leverage).toBe("number");
     expect(position.createdAt).toBeInstanceOf(Date);
     expect(position.updatedAt).toBeInstanceOf(Date);
   });
@@ -371,6 +378,304 @@ describe("trading_position", () => {
   it("does not export a production delete helper", async () => {
     const positionApi = await import("./position.js");
     expect("deletePosition" in positionApi).toBe(false);
+  });
+});
+
+describe("trading_position margin settings", () => {
+  beforeEach(async () => {
+    await resetTestTables();
+  });
+
+  it("applies CROSS / 1 / 0 when new columns are omitted", async () => {
+    const { account, btcId } = await seed();
+
+    await db.insert(tradingPosition).values({
+      paperAccountId: account.id,
+      instrumentId: btcId,
+      quantity: "0",
+      entryPrice: null,
+      realizedPnl: "0",
+    });
+
+    const row = await findPositionByAccountAndInstrument(db, account.id, btcId);
+    expect(row?.marginMode).toBe("CROSS");
+    expect(row?.leverage).toBe(1);
+    expect(row?.isolatedMargin).toBe("0");
+  });
+
+  it("rejects invalid margin mode and leverage bounds", async () => {
+    const { account, btcId, ethId } = await seed();
+
+    await expect(db.insert(tradingPosition).values({
+      paperAccountId: account.id,
+      instrumentId: btcId,
+      quantity: "0",
+      entryPrice: null,
+      realizedPnl: "0",
+      marginMode: "HEDGE",
+    })).rejects.toSatisfy((error: unknown) => {
+      const constraint = postgresConstraint(error);
+      return (
+        constraint === "trading_position_margin_mode_valid" ||
+        constraint === "trading_position_isolated_margin_by_mode"
+      );
+    });
+
+    await expectRejectedConstraint(
+      db.insert(tradingPosition).values({
+        paperAccountId: account.id,
+        instrumentId: btcId,
+        quantity: "0",
+        entryPrice: null,
+        realizedPnl: "0",
+        leverage: 0,
+      }),
+      "trading_position_leverage_bounds",
+    );
+
+    await expectRejectedConstraint(
+      db.insert(tradingPosition).values({
+        paperAccountId: account.id,
+        instrumentId: ethId,
+        quantity: "0",
+        entryPrice: null,
+        realizedPnl: "0",
+        leverage: 101,
+      }),
+      "trading_position_leverage_bounds",
+    );
+  });
+
+  it("accepts leverage 1 and 100", async () => {
+    const { account, btcId, ethId } = await seed();
+    const one = await db.transaction((tx) => ensurePosition(tx, account.id, btcId));
+    const hundred = await db.transaction((tx) => ensurePosition(tx, account.id, ethId));
+
+    const min = await db.transaction((tx) =>
+      updateMarginSettingsForFlatPosition(tx, one.id, {
+        marginMode: "CROSS",
+        leverage: 1,
+      }),
+    );
+    const max = await db.transaction((tx) =>
+      updateMarginSettingsForFlatPosition(tx, hundred.id, {
+        marginMode: "ISOLATED",
+        leverage: 100,
+      }),
+    );
+
+    expect(min.leverage).toBe(1);
+    expect(max.leverage).toBe(100);
+    expect(max.marginMode).toBe("ISOLATED");
+    expect(max.isolatedMargin).toBe("0");
+  });
+
+  it("enforces isolated_margin mode and qty invariants", async () => {
+    const { account, btcId, ethId } = await seed();
+    const other = await upsertInstrumentBySymbol(db, sample("SOLUSDT", "SOL"));
+
+    await expect(db.insert(tradingPosition).values({
+      paperAccountId: account.id,
+      instrumentId: btcId,
+      quantity: "0",
+      entryPrice: null,
+      realizedPnl: "0",
+      isolatedMargin: "-1",
+    })).rejects.toSatisfy((error: unknown) => {
+      const constraint = postgresConstraint(error);
+      return (
+        constraint === "trading_position_isolated_margin_non_negative" ||
+        constraint === "trading_position_isolated_margin_by_mode"
+      );
+    });
+
+    await expectRejectedConstraint(
+      db.insert(tradingPosition).values({
+        paperAccountId: account.id,
+        instrumentId: btcId,
+        quantity: "0",
+        entryPrice: null,
+        realizedPnl: "0",
+        marginMode: "CROSS",
+        isolatedMargin: "1",
+      }),
+      "trading_position_isolated_margin_by_mode",
+    );
+
+    await expectRejectedConstraint(
+      db.insert(tradingPosition).values({
+        paperAccountId: account.id,
+        instrumentId: ethId,
+        quantity: "0",
+        entryPrice: null,
+        realizedPnl: "0",
+        marginMode: "ISOLATED",
+        isolatedMargin: "10",
+      }),
+      "trading_position_isolated_margin_by_mode",
+    );
+
+    await expectRejectedConstraint(
+      db.insert(tradingPosition).values({
+        paperAccountId: account.id,
+        instrumentId: other.id,
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "0",
+        marginMode: "ISOLATED",
+        isolatedMargin: "0",
+      }),
+      "trading_position_isolated_margin_by_mode",
+    );
+
+    const [isolatedOpen] = await db
+      .insert(tradingPosition)
+      .values({
+        paperAccountId: account.id,
+        instrumentId: btcId,
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "0",
+        marginMode: "ISOLATED",
+        isolatedMargin: "10",
+      })
+      .returning({ id: tradingPosition.id });
+
+    expect(isolatedOpen).toBeDefined();
+
+    const isolatedFlat = await db.transaction((tx) => ensurePosition(tx, account.id, ethId));
+    const updated = await db.transaction((tx) =>
+      updateMarginSettingsForFlatPosition(tx, isolatedFlat.id, {
+        marginMode: "ISOLATED",
+        leverage: 5,
+      }),
+    );
+    expect(updated.quantity).toBe("0");
+    expect(updated.isolatedMargin).toBe("0");
+  });
+
+  it("updates flat CROSS and ISOLATED settings without touching realized pnl", async () => {
+    const { account, btcId } = await seed();
+    const created = await db.transaction((tx) => ensurePosition(tx, account.id, btcId));
+    await db.transaction((tx) =>
+      updatePositionState(tx, created.id, {
+        quantity: "0",
+        entryPrice: null,
+        realizedPnl: "30",
+      }),
+    );
+
+    const isolated = await db.transaction((tx) =>
+      updateMarginSettingsForFlatPosition(tx, created.id, {
+        marginMode: "ISOLATED",
+        leverage: 20,
+      }),
+    );
+    expect(isolated.marginMode).toBe("ISOLATED");
+    expect(isolated.leverage).toBe(20);
+    expect(isolated.realizedPnl).toBe("30");
+    expect(isolated.quantity).toBe("0");
+    expect(isolated.entryPrice).toBeNull();
+    expect(isolated.isolatedMargin).toBe("0");
+
+    const cross = await db.transaction((tx) =>
+      updateMarginSettingsForFlatPosition(tx, created.id, {
+        marginMode: "CROSS",
+        leverage: 8,
+      }),
+    );
+    expect(cross.marginMode).toBe("CROSS");
+    expect(cross.leverage).toBe(8);
+    expect(cross.realizedPnl).toBe("30");
+  });
+
+  it("rejects settings mutation on a non-flat position", async () => {
+    const { account, btcId } = await seed();
+    const created = await db.transaction((tx) => ensurePosition(tx, account.id, btcId));
+    await db.transaction((tx) =>
+      updatePositionState(tx, created.id, {
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "0",
+      }),
+    );
+
+    await expect(
+      db.transaction((tx) =>
+        updateMarginSettingsForFlatPosition(tx, created.id, {
+          marginMode: "ISOLATED",
+          leverage: 10,
+        }),
+      ),
+    ).rejects.toSatisfy((error: unknown) => {
+      return error instanceof PositionMutationError && error.code === "POSITION_NOT_FLAT";
+    });
+  });
+
+  it("preserves margin settings when a CROSS fill updates quantity", async () => {
+    const { account, btcId } = await seed();
+    const created = await db.transaction((tx) => ensurePosition(tx, account.id, btcId));
+    await db.transaction((tx) =>
+      updateMarginSettingsForFlatPosition(tx, created.id, {
+        marginMode: "CROSS",
+        leverage: 25,
+      }),
+    );
+
+    const opened = await db.transaction((tx) =>
+      updatePositionState(tx, created.id, {
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "4",
+      }),
+    );
+
+    expect(opened.marginMode).toBe("CROSS");
+    expect(opened.leverage).toBe(25);
+    expect(opened.isolatedMargin).toBe("0");
+    expect(opened.quantity).toBe("1");
+    expect(opened.realizedPnl).toBe("4");
+  });
+
+  it("serializes settings updates against account then position locks", async () => {
+    const { account, btcId } = await seed();
+    await db.transaction((tx) => ensurePosition(tx, account.id, btcId));
+
+    const results = await Promise.allSettled([
+      db.transaction(async (tx) => {
+        await lockPaperAccountById(tx, account.id);
+        const position = await lockPositionByAccountAndInstrument(tx, account.id, btcId);
+        return updateMarginSettingsForFlatPosition(tx, position.id, {
+          marginMode: "CROSS",
+          leverage: 50,
+        });
+      }),
+      db.transaction(async (tx) => {
+        await lockPaperAccountById(tx, account.id);
+        const position = await lockPositionByAccountAndInstrument(tx, account.id, btcId);
+        return updatePositionState(tx, position.id, {
+          quantity: "1",
+          entryPrice: "100",
+          realizedPnl: "0",
+        });
+      }),
+    ]);
+
+    expect(results.some((result) => result.status === "fulfilled")).toBe(true);
+    const row = await findPositionByAccountAndInstrument(db, account.id, btcId);
+    expect(row).not.toBeNull();
+    expect(await db.select().from(tradingPosition)).toHaveLength(1);
+
+    if (row?.quantity === "0") {
+      expect(row.leverage === 50 || row.leverage === 1).toBe(true);
+      expect(row.entryPrice).toBeNull();
+    } else {
+      expect(row?.quantity).toBe("1");
+      expect(row?.entryPrice).toBe("100");
+      expect(row?.marginMode).toBe("CROSS");
+      expect(row?.leverage === 1 || row?.leverage === 50).toBe(true);
+      expect(row?.isolatedMargin).toBe("0");
+    }
   });
 });
 

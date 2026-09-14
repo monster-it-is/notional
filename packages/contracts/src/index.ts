@@ -46,6 +46,14 @@ export type {
   ExecutionResponse,
 } from "./execution.js";
 export type {
+  InvalidMarginSettingsError,
+  InvalidMarginSettingsReason,
+  MarginMode,
+  MarginSettingsResponse,
+  PositionNotFlatError,
+  UpdateMarginSettingsRequest,
+} from "./margin.js";
+export type {
   PositionListResponse,
   PositionNotFoundError,
   PositionResponse,

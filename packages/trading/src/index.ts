@@ -31,7 +31,19 @@ export {
   validatePriceFilter,
   validateQuantityFilter,
 } from "./filters.js";
-export { calculateInitialMargin } from "./margin.js";
+export {
+  calculateAvailableBalance,
+  calculateCrossCollateral,
+  calculateInitialMargin,
+  calculateIsolatedEquity,
+  calculateMaintenanceMargin,
+  calculateRequiredIsolatedMargin,
+  DEFAULT_LEVERAGE,
+  DEFAULT_MARGIN_MODE,
+  MAX_LEVERAGE,
+  MIN_LEVERAGE,
+} from "./margin.js";
+export type { MarginMode } from "./margin.js";
 export { calculateNotional } from "./notional.js";
 export { calculateRealizedPnl, calculateUnrealizedPnl } from "./pnl.js";
 export {

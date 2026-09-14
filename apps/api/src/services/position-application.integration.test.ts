@@ -13,6 +13,7 @@ import {
   lockPaperAccountById,
   lockPositionByAccountAndInstrument,
   pool,
+  updateMarginSettingsForFlatPosition,
   user,
   upsertInstrumentBySymbol,
 } from "@notional/db";
@@ -510,6 +511,44 @@ describe("position application", () => {
     expect(first.position.quantity).toBe("1");
     expect(replay.position.quantity).toBe("1");
     expect(replay.position.realizedPnl).toBe(first.position.realizedPnl);
+    expect(first.position.marginMode).toBe("CROSS");
+    expect(first.position.leverage).toBe(1);
+    expect(first.position.isolatedMargin).toBe("0");
+  });
+
+  it("rejects a created fill against an ISOLATED position", async () => {
+    const { account, btcId } = await seed();
+    await db.transaction(async (tx) => {
+      await lockPaperAccountById(tx, account.id);
+      await ensurePosition(tx, account.id, btcId);
+      const position = await lockPositionByAccountAndInstrument(tx, account.id, btcId);
+      await updateMarginSettingsForFlatPosition(tx, position.id, {
+        marginMode: "ISOLATED",
+        leverage: 10,
+      });
+    });
+
+    await expect(
+      applyImmediateFill(
+        account.id,
+        btcId,
+        filledMarket(account.id, btcId, {
+          quantity: "1",
+          executionPrice: "100",
+          idempotencyKey: "isolated-fill",
+        }),
+      ),
+    ).rejects.toSatisfy((error: unknown) => {
+      return (
+        error instanceof PositionApplicationError &&
+        error.code === "ISOLATED_FILL_NOT_IMPLEMENTED"
+      );
+    });
+
+    const row = await findPositionByAccountAndInstrument(db, account.id, btcId);
+    expect(row?.quantity).toBe("0");
+    expect(row?.marginMode).toBe("ISOLATED");
+    expect(row?.isolatedMargin).toBe("0");
   });
 
   it("does not reapply position on a resting LIMIT retry", async () => {

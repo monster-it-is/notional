@@ -32,7 +32,10 @@ export type ReplayedPositionTransition = {
 
 export type PositionApplicationResult = AppliedPositionTransition | ReplayedPositionTransition;
 
-export type PositionApplicationCode = "MISMATCHED_FILL" | "ORDER_NOT_FILLED";
+export type PositionApplicationCode =
+  | "MISMATCHED_FILL"
+  | "ORDER_NOT_FILLED"
+  | "ISOLATED_FILL_NOT_IMPLEMENTED";
 
 export class PositionApplicationError extends Error {
   readonly code: PositionApplicationCode;
@@ -91,6 +94,10 @@ export async function applyCreatedExecutionToPosition(
 
   if (order.side !== "BUY" && order.side !== "SELL") {
     throw new PositionApplicationError("MISMATCHED_FILL");
+  }
+
+  if (position.marginMode === "ISOLATED") {
+    throw new PositionApplicationError("ISOLATED_FILL_NOT_IMPLEMENTED");
   }
 
   const fillState = toPersistedFillState(

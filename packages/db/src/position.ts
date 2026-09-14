@@ -6,6 +6,8 @@ import { fromDbDecimal, toDbDecimal } from "./money.js";
 import { instrument } from "./schema/instrument.js";
 import { tradingPosition } from "./schema/position.js";
 
+export type MarginMode = "CROSS" | "ISOLATED";
+
 export type Position = {
   id: string;
   paperAccountId: string;
@@ -13,6 +15,9 @@ export type Position = {
   quantity: string;
   entryPrice: string | null;
   realizedPnl: string;
+  marginMode: MarginMode;
+  leverage: number;
+  isolatedMargin: string;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -24,6 +29,21 @@ export type UpdatePositionStateInput = {
   entryPrice: string | null;
   realizedPnl: string;
 };
+
+export type UpdateMarginSettingsInput = {
+  marginMode: MarginMode;
+  leverage: number;
+};
+
+export class PositionMutationError extends Error {
+  readonly code: "POSITION_NOT_FLAT";
+
+  constructor(code: "POSITION_NOT_FLAT") {
+    super(code);
+    this.name = "PositionMutationError";
+    this.code = code;
+  }
+}
 
 const createdAtUtc = sql<Date>`${tradingPosition.createdAt} AT TIME ZONE 'UTC'`.as(
   "created_at_utc",
@@ -39,6 +59,9 @@ const positionColumns = {
   quantity: tradingPosition.quantity,
   entryPrice: tradingPosition.entryPrice,
   realizedPnl: tradingPosition.realizedPnl,
+  marginMode: tradingPosition.marginMode,
+  leverage: tradingPosition.leverage,
+  isolatedMargin: tradingPosition.isolatedMargin,
   createdAt: createdAtUtc,
   updatedAt: updatedAtUtc,
 };
@@ -181,6 +204,42 @@ export async function updatePositionState(
     throw new Error("trading_position missing after update");
   }
 
+  return loadPositionById(executor, positionId);
+}
+
+export async function updateMarginSettingsForFlatPosition(
+  executor: FinancialTransaction,
+  positionId: string,
+  input: UpdateMarginSettingsInput,
+): Promise<Position> {
+  const [updated] = await executor
+    .update(tradingPosition)
+    .set({
+      marginMode: input.marginMode,
+      leverage: input.leverage,
+      isolatedMargin: "0",
+      updatedAt: sql`clock_timestamp() AT TIME ZONE 'UTC'`,
+    })
+    .where(
+      and(
+        eq(tradingPosition.id, positionId),
+        sql`${tradingPosition.quantity} = 0`,
+        sql`${tradingPosition.entryPrice} IS NULL`,
+      ),
+    )
+    .returning({ id: tradingPosition.id });
+
+  if (!updated) {
+    throw new PositionMutationError("POSITION_NOT_FLAT");
+  }
+
+  return loadPositionById(executor, positionId);
+}
+
+async function loadPositionById(
+  executor: FinancialTransaction,
+  positionId: string,
+): Promise<Position> {
   const [row] = await executor
     .select(positionColumns)
     .from(tradingPosition)
@@ -200,6 +259,9 @@ function fromPersistedPosition(row: {
   quantity: string;
   entryPrice: string | null;
   realizedPnl: string;
+  marginMode: string;
+  leverage: number;
+  isolatedMargin: string;
   createdAt: Date | string;
   updatedAt: Date | string;
 }): Position {
@@ -210,6 +272,9 @@ function fromPersistedPosition(row: {
     quantity: toPersistedDecimal(row.quantity),
     entryPrice: row.entryPrice === null ? null : toPersistedDecimal(row.entryPrice),
     realizedPnl: toPersistedDecimal(row.realizedPnl),
+    marginMode: asMarginMode(row.marginMode),
+    leverage: asLeverage(row.leverage),
+    isolatedMargin: toPersistedDecimal(row.isolatedMargin),
     createdAt: fromUtcTimestamptz(row.createdAt),
     updatedAt: fromUtcTimestamptz(row.updatedAt),
   };
@@ -223,6 +288,9 @@ function fromPersistedPositionWithSymbol(
     quantity: string;
     entryPrice: string | null;
     realizedPnl: string;
+    marginMode: string;
+    leverage: number;
+    isolatedMargin: string;
     createdAt: Date | string;
     updatedAt: Date | string;
     symbol: string;
@@ -232,6 +300,22 @@ function fromPersistedPositionWithSymbol(
     ...fromPersistedPosition(row),
     symbol: row.symbol,
   };
+}
+
+function asMarginMode(value: string): MarginMode {
+  if (value === "CROSS" || value === "ISOLATED") {
+    return value;
+  }
+
+  throw new Error(`invalid trading_position.margin_mode: ${value}`);
+}
+
+function asLeverage(value: number): number {
+  if (typeof value !== "number" || !Number.isInteger(value)) {
+    throw new Error("trading_position.leverage must be an integer");
+  }
+
+  return value;
 }
 
 function toPersistedDecimal(value: string): string {

@@ -95,10 +95,14 @@ export {
   findPositionByAccountAndInstrument,
   listOpenPositionsByPaperAccountId,
   lockPositionByAccountAndInstrument,
+  PositionMutationError,
+  updateMarginSettingsForFlatPosition,
   updatePositionState,
 } from "./position.js";
 export type {
+  MarginMode,
   Position,
   PositionWithSymbol,
+  UpdateMarginSettingsInput,
   UpdatePositionStateInput,
 } from "./position.js";

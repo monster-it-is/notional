@@ -706,6 +706,144 @@ There is no `POST`/`PUT`/`DELETE /api/positions` and there must never be. Positi
 
 Phase 11 does not mutate `paper_account.balance` and does not post trading ledger entries. Position persistence is not financially complete; margin and accounting remain Phase 12/13.
 
+## ADR-032 — Margin mode, leverage, and collateral projections
+
+Status: Accepted
+
+Phase 12 persists per-symbol margin configuration on `trading_position` and adds exact margin primitives. It does not open public trading, mutate wallet for trades, reserve OPEN-order margin, or liquidate.
+
+### Position-owned settings
+
+Do not create a second margin-settings table. Identity `(paper_account_id, instrument_id)` already survives while flat. The row is both current position state and future trading configuration.
+
+Columns:
+
+- `margin_mode` text NOT NULL DEFAULT `'CROSS'` — `CROSS` | `ISOLATED`
+- `leverage` integer NOT NULL DEFAULT `1` — `CHECK` `BETWEEN 1 AND 100`
+- `isolated_margin` `NUMERIC(38,18)` NOT NULL DEFAULT `0`
+
+Combined CHECK `trading_position_isolated_margin_by_mode`:
+
+- `CROSS` → `isolated_margin = 0`
+- `ISOLATED` AND `quantity = 0` → `isolated_margin = 0`
+- `ISOLATED` AND `quantity <> 0` → `isolated_margin > 0`
+
+Existing Phase 11 rows migrate as `CROSS / 1 / 0`. Quantity/entry invariants are unchanged.
+
+`ensurePosition` relies on those defaults. `updatePositionState` still writes only quantity, entry, and realized PnL and must preserve mode/leverage/isolated margin (valid for CROSS opens).
+
+PostgreSQL CHECKs are immediate. Isolated fill persistence, when enabled, must write quantity/entry/realized PnL and `isolated_margin` in one `UPDATE`.
+
+### CROSS vs ISOLATED
+
+No hedge mode. One net signed position.
+
+**CROSS:** supported by account-level cross collateral. `isolated_margin` is always 0. Fresh-mark unrealized PnL enters `crossUnrealizedPnl`. Initial margin is a transient mark projection, not stored.
+
+**ISOLATED:** only that position’s `isolated_margin` plus its own mark unrealized PnL support it. Isolated unrealized PnL must not enter cross collateral. `isolated_margin` is reserved existing wallet cash, not extra money. Opening isolated does not create money.
+
+Phase 12 may store `ISOLATED` on a **flat** row as configuration only. That is not permission to take isolated exposure.
+
+### Wallet vs reservation
+
+`paper_account.balance` is wallet / realized cash. It does not include unrealized PnL. Margin reservation does not mutate it. No ledger posting for reserve/release.
+
+### Leverage policy
+
+Product-wide integer range **1..100**, default **1**. Encoded as `@notional/trading` constants and a DB CHECK. Not an environment variable (a restart must not invalidate persisted leverage). Not Binance per-symbol tiers.
+
+`calculateInitialMargin` remains an uncapped positive-integer primitive. The 1..100 cap is settings/API/DB only.
+
+ADR-007 “configurable risk model” means **one non-tiered product-wide model**, not an env var.
+
+### Formulas (`@notional/trading`, decimal strings, no clamp)
+
+```
+initialMargin = notional / leverage
+crossPositionInitialMargin = abs(qty) × markPrice / leverage
+crossInitialMargin = sum of CROSS position initial margins
+
+walletBalance = paper_account.balance
+isolatedReservedMargin = sum(isolated_margin)
+crossUnrealizedPnl = sum of CROSS unrealized PnL at fresh mark
+crossCollateral = walletBalance - isolatedReservedMargin + crossUnrealizedPnl
+crossAvailableBalance = crossCollateral - crossInitialMargin - openOrderReservedMargin
+
+isolatedEquity = isolatedMargin + unrealizedPnl
+requiredIsolatedMargin (non-flat) = abs(qty) × persistedEntry / leverage
+requiredIsolatedMargin (flat) = 0
+```
+
+`openOrderReservedMargin` is 0 in Phase 12. Negative available balance is valid risk state.
+
+Isolated reserve uses **persisted entry**, not mark, so PostgreSQL is not rewritten on ticks. Persist later with `quantizeToNumeric3818` HALF_EVEN. Phase 12 implements `calculateRequiredIsolatedMargin` as pure math only.
+
+Maintenance primitive: `notional × rate` with `0 < rate < 1`. The product rate is a Phase 14 domain constant, not env. Margin ratio is deferred.
+
+Account equity is display-only and is not implemented as a helper.
+
+### Mark freshness (future risk, not settings HTTP)
+
+Unrealized PnL, cross IM, isolated equity, and maintenance use a **fresh mark**. If any CROSS position required for account-level risk lacks a fresh mark, fail closed. Do not omit stale positions. Do not substitute entry, BBO, index, or last trade. Independently fresh latest marks are enough; no event-time synchronized snapshot. Settings GET/PUT do not use market data.
+
+### Flat-only settings mutation
+
+`GET /api/margin-settings/:symbol` and `PUT /api/margin-settings/:symbol`.
+
+GET: authenticated, initialized account, known instrument. No row → `{ CROSS, 1 }` without INSERT. Existing row → stored values. Suspended and INACTIVE-known-instrument may read.
+
+PUT: ACTIVE account, ACTIVE instrument, position FLAT (`quantity = 0`, `entry_price` NULL). Body is exactly `{ marginMode, leverage }`. Strict validation; unknown keys including `isolatedMargin` → `400 INVALID_MARGIN_SETTINGS` / `UNEXPECTED_FIELD`. Leverage is a JSON integer 1..100. `isolated_margin` stays 0. Error `POSITION_NOT_FLAT` if open.
+
+Lock order: `paper_account` → `trading_position` (`ensurePosition` then `FOR UPDATE`). Settings vs first fill serialize on those locks. Helper: `updateMarginSettingsForFlatPosition`.
+
+`PositionResponse` is unchanged in Phase 12.
+
+### Isolated-fill guard
+
+`applyCreatedExecutionToPosition` throws `ISOLATED_FILL_NOT_IMPLEMENTED` before `updatePositionState`. `replayed_filled` remains a no-op. **Keep this guard through Phase 13.** Phase 13 is CROSS-only. Phase 14 implements isolated liquidation, isolated bankruptcy/insurance, same-UPDATE allocation, then enables isolated fills.
+
+A REDUCE that realizes more than `isolated_margin` while leaving residual qty has no legal isolated collateral source without liquidating the remainder. Do not enable isolated fills merely because the reserve formula exists.
+
+### CROSS bankruptcy (Phase 13 hard gate)
+
+`realizedPnlDelta` is the **full** execution-derived trading result on the position. It is not always the wallet mutation.
+
+```
+wallet absorbs a CROSS loss only down to 0
+insurance absorbs any residual
+wallet stays >= 0
+ledger posts the complete economic result with balanced entries
+```
+
+Example: wallet `1000`, `realizedPnlDelta = -1500` → user cash `-1000`, insurance `500`, wallet `0`, position realized PnL still `-1500`.
+
+If Phase 13 does not implement this invariant, `POST /api/orders` stays disabled.
+
+Do not implement bankruptcy ledger accounts in Phase 12. Do not clamp losses. Do not reject an otherwise valid close.
+
+### Isolated reserves vs later CROSS bankruptcy (Phase 14)
+
+Once isolated exposure exists, CROSS bankruptcy must not consume wallet cash reserved to isolated positions.
+
+During Phase 13, isolated fills are disabled, so `isolatedReservedMargin = 0` and a wallet floor of 0 is sufficient.
+
+After Phase 14 enables ISOLATED positions, CROSS user-loss capacity is conceptually:
+
+`max(walletBalance - isolatedReservedMargin, 0)`
+
+Insurance absorbs any residual CROSS loss before wallet falls below the isolated reserved amount.
+
+Example: wallet `1000`, isolated reserved `400`, CROSS gap `-800` → CROSS may consume `600`; insurance `200`; wallet must not fall below `400`.
+
+### OPEN order reservation (Phase 13, not 12)
+
+Do not change `trade_order` in Phase 12. Recommendation: persist `reserved_margin NUMERIC(38,18)` on accepted OPEN LIMIT orders. MARKET and immediately filled LIMIT leave no resting reservation. Reduce-only vs additive exposure is Phase 13 locked-position design.
+
+### Public trading
+
+Phase 12 does not expose `POST /api/orders`, cancel, matcher, available-balance HTTP, or live risk fields.
+
+
 
 
 

@@ -206,7 +206,9 @@ Position mutation uses `execution.price`. Never BBO, mark, or limit after the ex
 
 Lock order is `paper_account → trading_position → trade_order`. There is no public position mutation HTTP. Authenticated reads are `GET /api/positions` (open rows only) and `GET /api/positions/:symbol` (absent or flat → `POSITION_NOT_FOUND`). An existing nonzero position remains if the instrument later becomes `INACTIVE`; entry price is historical cost basis and is never rewritten because filters or status changed.
 
-Phase 11 persists position state only. It does not mutate `paper_account.balance` or post trading ledger entries. Margin and accounting remain Phase 12/13.
+Phase 11 persists position state only. It does not mutate `paper_account.balance` or post trading ledger entries. Margin configuration and accounting remain Phase 12/13.
+
+The same persistent row also stores per-symbol trading settings after Phase 12: `margin_mode`, `leverage`, and `isolated_margin`. Flat rows can hold future settings. A settings change on a symbol with no row may create the canonical flat row through `ensurePosition`.
 
 ## Orders
 
@@ -250,7 +252,7 @@ There is no `PENDING`, `ACCEPTED`, `REJECTED`, or `PARTIALLY_FILLED`. Failed pla
 
 MVP does not implement true partial fills. Do not persist filled/remaining quantity on the order. One `FILLED` order has exactly one `execution` row (`UNIQUE(order_id)`). `execution.quantity` is the full persisted order quantity. Partial fills would require a deliberate migration of that unique constraint.
 
-Public HTTP in Phase 9–11 is read-only for orders (`GET /api/orders`, `GET /api/orders/:id`), executions (`GET /api/executions`, `GET /api/executions/:id`), and positions (`GET /api/positions`, `GET /api/positions/:symbol`). Public placement and cancel wait until order, execution, position, and margin can run atomically (Phase 13). There is no `POST /api/executions` or `POST /api/positions`; fills are system-generated and positions are derived. Cancellation is an internal `OPEN → CANCELLED` transition on a locked LIMIT row. MARKET is not cancellable. Terminal FILLED/CANCELLED cannot be cancelled except that a second cancel of an already CANCELLED order is idempotent success.
+Public HTTP in Phase 9–11 is read-only for orders (`GET /api/orders`, `GET /api/orders/:id`), executions (`GET /api/executions`, `GET /api/executions/:id`), and positions (`GET /api/positions`, `GET /api/positions/:symbol`). Phase 12 adds authenticated `GET`/`PUT /api/margin-settings/:symbol` for flat-only mode and leverage. Public placement and cancel wait until order, execution, position, and margin can run atomically (Phase 13), and only after CROSS wallet-floor/bankruptcy accounting exists. There is no `POST /api/executions` or `POST /api/positions`; fills are system-generated and positions are derived. Cancellation is an internal `OPEN → CANCELLED` transition on a locked LIMIT row. MARKET is not cancellable. Terminal FILLED/CANCELLED cannot be cancelled except that a second cancel of an already CANCELLED order is idempotent success.
 
 `insertOpenLimitOrder` inserts LIMIT `OPEN` only. FILLED MARKET and immediately filled LIMIT rows are created only through `insertFilledOrderWithExecution` (order + execution in one transaction). Resting LIMIT completion uses `completeOpenLimitOrder` (`OPEN → FILLED` + execution). Production helpers must not create `CANCELLED` directly or create a `FILLED` order without its execution.
 
@@ -312,17 +314,62 @@ Supported:
 - cross margin
 - user-selectable leverage
 
-There are no margin tiers.
-
-Do not introduce:
+There are no margin tiers. Permanently do not introduce:
 
 - risk tiers
 - notional tiers
 - position-size tiers
 - tier-based leverage
 - tier-based maintenance margin
+- Binance leverage/maintenance brackets
+- a `margin_tier` table
 
-Use one deterministic configurable risk model.
+One product-wide model: leverage integers `1..100` (default `1`, default mode `CROSS`), encoded as domain constants plus PostgreSQL CHECK. Not an environment variable.
+
+`paper_account.balance` is wallet / realized cash. It does not include unrealized PnL. Margin reservation does not mutate wallet balance and is not a ledger funding event.
+
+**CROSS:** the position is supported by account-level cross collateral. `isolated_margin` is always `0`. Fresh-mark unrealized PnL contributes to cross collateral.
+
+**ISOLATED:** only that position’s `isolated_margin` plus its own unrealized PnL support it. Other account equity must not silently rescue it. `isolated_margin` is a reserved subset of wallet cash, not extra money. Isolated unrealized PnL must not increase cross available balance. Phase 12 may persist `ISOLATED` while flat as configuration only. Isolated fills stay disabled (`ISOLATED_FILL_NOT_IMPLEMENTED`) through Phase 13.
+
+Formulas (exact decimal strings; do not clamp; no JavaScript `Number` for money/rates):
+
+```
+initialMargin = notional / leverage
+
+crossPositionInitialMargin = abs(qty) × freshMark / leverage
+crossInitialMargin = sum of CROSS position initial margins
+
+walletBalance = paper_account.balance
+isolatedReservedMargin = sum(isolated_margin)
+crossUnrealizedPnl = sum of CROSS unrealized PnL at fresh mark
+crossCollateral = walletBalance - isolatedReservedMargin + crossUnrealizedPnl
+crossAvailableBalance = crossCollateral - crossInitialMargin - openOrderReservedMargin
+
+isolatedEquity = isolatedMargin + unrealizedPnl
+requiredIsolatedMargin = 0 when flat
+requiredIsolatedMargin = abs(qty) × persistedEntry / leverage when open
+```
+
+`openOrderReservedMargin` is `0` until Phase 13 persists it on OPEN LIMIT orders. Negative available balance is meaningful. Affordability is `availableBalance >= requiredAdditionalMargin`.
+
+Isolated reserve uses persisted entry after the fill, not mark. Quantize with `ROUND_HALF_EVEN` to `NUMERIC(38,18)` only when persisting.
+
+Maintenance:
+
+```
+maintenanceMargin = notional × maintenanceMarginRate
+```
+
+`0 < maintenanceMarginRate < 1`. The product rate is a Phase 14 domain constant, not env. Leverage does not change the maintenance rate. Margin ratio is deferred to Phase 14.
+
+Unrealized PnL, cross initial margin, isolated equity, maintenance, and liquidation use a fresh mark. If any CROSS position required for account-level risk lacks a fresh mark, fail closed. Do not omit a losing position. Do not substitute entry, BBO, index, or last trade.
+
+Settings mutation is allowed only while FLAT. Lock order remains `paper_account → trading_position → trade_order`. Public HTTP: `GET`/`PUT /api/margin-settings/:symbol`. GET with no row returns defaults without insert. PUT body is exactly `{ marginMode, leverage }`.
+
+**CROSS realized settlement (Phase 13, before public orders):** `realizedPnlDelta` is the full trading result on the position. Wallet absorbs a loss only down to `0`. Insurance absorbs any residual. Wallet stays `>= 0`. Do not claim the wallet mutation always equals `realizedPnlDelta`. If this invariant is missing, `POST /api/orders` stays disabled.
+
+**After isolated exposure exists (Phase 14):** CROSS bankruptcy must not consume isolated reserved cash. User CROSS-loss capacity is conceptually `max(walletBalance - isolatedReservedMargin, 0)`.
 
 ## PnL
 
@@ -338,7 +385,7 @@ Initial margin primitive:
 
 `notional / leverage`
 
-`leverage` is a positive integer. Phase 8 does not cap max leverage, reserve margin, or model isolated/cross/maintenance/liquidation.
+`leverage` is a positive integer. The `calculateInitialMargin` primitive does not cap max leverage. Product settings persist integers `1..100` (Phase 12). Reserve, isolated/cross portfolio checks, and liquidation remain later phases.
 
 Using signed quantity:
 

@@ -1,8 +1,10 @@
 import { relations, sql } from "drizzle-orm";
 import {
   check,
+  integer,
   numeric,
   pgTable,
+  text,
   timestamp,
   uniqueIndex,
   uuid,
@@ -30,6 +32,15 @@ export const tradingPosition = pgTable(
     realizedPnl: numeric("realized_pnl", { precision: 38, scale: 18, mode: "string" })
       .notNull()
       .default("0"),
+    marginMode: text("margin_mode").notNull().default("CROSS"),
+    leverage: integer("leverage").notNull().default(1),
+    isolatedMargin: numeric("isolated_margin", {
+      precision: 38,
+      scale: 18,
+      mode: "string",
+    })
+      .notNull()
+      .default("0"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -40,6 +51,30 @@ export const tradingPosition = pgTable(
         (${table.quantity} = 0 AND ${table.entryPrice} IS NULL)
         OR
         (${table.quantity} <> 0 AND ${table.entryPrice} IS NOT NULL AND ${table.entryPrice} > 0)
+      )`,
+    ),
+    check(
+      "trading_position_margin_mode_valid",
+      sql`${table.marginMode} in ('CROSS', 'ISOLATED')`,
+    ),
+    check(
+      "trading_position_leverage_bounds",
+      sql`${table.leverage} >= 1 AND ${table.leverage} <= 100`,
+    ),
+    check("trading_position_isolated_margin_non_negative", sql`${table.isolatedMargin} >= 0`),
+    check(
+      "trading_position_isolated_margin_by_mode",
+      sql`(
+        (${table.marginMode} = 'CROSS' AND ${table.isolatedMargin} = 0)
+        OR
+        (
+          ${table.marginMode} = 'ISOLATED'
+          AND (
+            (${table.quantity} = 0 AND ${table.isolatedMargin} = 0)
+            OR
+            (${table.quantity} <> 0 AND ${table.isolatedMargin} > 0)
+          )
+        )
       )`,
     ),
     uniqueIndex("trading_position_paper_account_instrument_unique").on(
