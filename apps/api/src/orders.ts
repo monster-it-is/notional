@@ -16,6 +16,9 @@ import {
 import { toCanonicalDecimalString } from "@notional/trading";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
+import type { MarketDataAccess } from "./market-data/coordinator.js";
+import { cancelUserOrder, OrderPlacementError, placeOrder } from "./services/order-placement.js";
+
 const DEFAULT_ORDER_LIMIT = 50;
 const MAX_ORDER_LIMIT = 100;
 const UUID_PATTERN =
@@ -91,6 +94,60 @@ export async function getOrderById(
   return toOrderResponse(row);
 }
 
+export async function postOrder(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  marketData: MarketDataAccess,
+  onOpenOrderCommitted?: (symbol: string) => void,
+): Promise<OrderResponse | { error: string; reason?: string }> {
+  const session = request.auth;
+
+  if (!session) {
+    return reply.status(401).send({ error: "Unauthorized" });
+  }
+
+  try {
+    const result = await placeOrder({
+      userId: session.user.id,
+      idempotencyKey: headerValue(request.headers["idempotency-key"]),
+      body: request.body,
+      marketData,
+      onOpenOrderCommitted,
+    });
+
+    return reply.status(result.created ? 201 : 200).send(toOrderResponse(result.order));
+  } catch (error) {
+    return sendOrderMutationError(reply, error);
+  }
+}
+
+export async function cancelOrder(
+  request: FastifyRequest,
+  reply: FastifyReply,
+): Promise<OrderResponse | OrderNotFoundError | { error: string }> {
+  const session = request.auth;
+
+  if (!session) {
+    return reply.status(401).send({ error: "Unauthorized" });
+  }
+
+  const orderId = requestOrderId(request);
+
+  if (!orderId) {
+    return reply.status(404).send({ error: "ORDER_NOT_FOUND" });
+  }
+
+  try {
+    const order = await cancelUserOrder({
+      userId: session.user.id,
+      orderId,
+    });
+    return toOrderResponse(order);
+  } catch (error) {
+    return sendOrderMutationError(reply, error);
+  }
+}
+
 async function loadInitializedAccount(userId: string) {
   const account = await findPaperAccountByUserId(db, userId);
 
@@ -159,6 +216,44 @@ function asOrderStatus(value: string): OrderStatus {
 
 function toIsoString(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  if (Array.isArray(value)) {
+    return value[0];
+  }
+
+  return value;
+}
+
+function sendOrderMutationError(reply: FastifyReply, error: unknown) {
+  if (!(error instanceof OrderPlacementError)) {
+    throw error;
+  }
+
+  if (error.code === "INVALID_ORDER") {
+    return reply.status(400).send({
+      error: "INVALID_ORDER",
+      reason: error.reason,
+    });
+  }
+
+  if (
+    error.code === "IDEMPOTENCY_KEY_REQUIRED" ||
+    error.code === "IDEMPOTENCY_KEY_INVALID"
+  ) {
+    return reply.status(400).send({ error: error.code });
+  }
+
+  if (error.code === "INSTRUMENT_NOT_FOUND" || error.code === "ORDER_NOT_FOUND") {
+    return reply.status(404).send({ error: error.code });
+  }
+
+  if (error.code === "MARKET_DATA_UNAVAILABLE") {
+    return reply.status(503).send({ error: error.code });
+  }
+
+  return reply.status(409).send({ error: error.code });
 }
 
 function requestOrderId(request: FastifyRequest): string | null {

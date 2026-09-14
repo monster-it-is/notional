@@ -5,6 +5,8 @@ import { postgresConstraint } from "./postgres-constraint.js";
 import {
   db,
   ensurePaperAccount,
+  ensureSystemInsuranceAccount,
+  ensureSystemTradingPnlAccount,
   ensureSystemVirtualFundingAccount,
   ensureUserCashLedgerAccount,
   fundingEvent,
@@ -456,6 +458,56 @@ describe("ledger and funding primitives", () => {
       .from(paperAccount)
       .where(eq(paperAccount.id, account.id));
     expect(accounts).toHaveLength(1);
+  });
+
+  it("accepts SYSTEM_TRADING_PNL and SYSTEM_INSURANCE global accounts and REALIZED_PNL events", async () => {
+    const createdUser = await insertUser("pnl@example.com");
+    const account = await ensurePaperAccount(db, createdUser.id);
+    const userCash = await ensureUserCashLedgerAccount(db, account.id);
+    const pnl = await ensureSystemTradingPnlAccount(db);
+    const insurance = await ensureSystemInsuranceAccount(db);
+
+    expect(pnl.paperAccountId).toBeNull();
+    expect(insurance.paperAccountId).toBeNull();
+
+    const duplicated = await Promise.all([
+      ensureSystemTradingPnlAccount(db),
+      ensureSystemInsuranceAccount(db),
+    ]);
+    expect(duplicated[0]?.id).toBe(pnl.id);
+    expect(duplicated[1]?.id).toBe(insurance.id);
+
+    const posted = await db.transaction((tx) =>
+      postLedgerTransaction(tx, {
+        eventType: "REALIZED_PNL",
+        idempotencyKey: "realized-pnl:test",
+        entries: [
+          { ledgerAccountId: userCash.id, amount: new MoneyDecimal("-1000") },
+          { ledgerAccountId: insurance.id, amount: new MoneyDecimal("-500") },
+          { ledgerAccountId: pnl.id, amount: new MoneyDecimal("1500") },
+        ],
+      }),
+    );
+
+    expect(posted.eventType).toBe("REALIZED_PNL");
+    const entries = await db
+      .select()
+      .from(ledgerEntry)
+      .where(eq(ledgerEntry.ledgerTransactionId, posted.id));
+    const sum = entries.reduce(
+      (total, entry) => total.plus(new MoneyDecimal(entry.amount)),
+      new MoneyDecimal("0"),
+    );
+    expect(sum.isZero()).toBe(true);
+
+    await expectRejectedConstraint(
+      db.insert(ledgerAccount).values({
+        kind: "SYSTEM_TRADING_PNL",
+        paperAccountId: account.id,
+        currency: "USDT",
+      }),
+      "ledger_account_ownership",
+    );
   });
 });
 

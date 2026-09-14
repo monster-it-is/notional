@@ -180,3 +180,35 @@ export function addNumeric3818Exact(left: string, right: string): string {
 
   return toCanonicalFromDecimal(sum);
 }
+
+export function quantizeCollateralRequirementToNumeric3818(value: string): string {
+  const parsed = parseNonNegativeValue(value, "collateralRequirement");
+  const rounded = parsed.toDecimalPlaces(NUMERIC_SCALE, Decimal.ROUND_UP);
+
+  if (integerDigitCount(rounded) > NUMERIC_INTEGER_DIGITS) {
+    throw new TradingMathError(
+      "OVERFLOW",
+      "collateral requirement exceeds NUMERIC(38,18) precision",
+    );
+  }
+
+  return toCanonicalFromDecimal(rounded);
+}
+
+export function sumDecimalValues(values: string[]): string {
+  let sum = new TradingDecimal("0");
+
+  for (const value of values) {
+    sum = sum.plus(parsePlainDecimal(value));
+  }
+
+  if (!sum.isFinite() || integerDigitCount(sum) > NUMERIC_INTEGER_DIGITS) {
+    throw new TradingMathError("OVERFLOW", "sum exceeds NUMERIC(38,18) precision");
+  }
+
+  return toCanonicalFromDecimal(sum);
+}
+
+export function isDecimalGte(left: string, right: string): boolean {
+  return parsePlainDecimal(left).gte(parsePlainDecimal(right));
+}

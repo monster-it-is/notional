@@ -5,6 +5,11 @@ import { ledgerAccount } from "./schema/ledger.js";
 
 export type LedgerAccount = typeof ledgerAccount.$inferSelect;
 
+export type SystemLedgerKind =
+  | "SYSTEM_VIRTUAL_FUNDING"
+  | "SYSTEM_TRADING_PNL"
+  | "SYSTEM_INSURANCE";
+
 export async function ensureUserCashLedgerAccount(
   executor: FinancialExecutor,
   paperAccountId: string,
@@ -43,10 +48,29 @@ export async function ensureUserCashLedgerAccount(
 export async function ensureSystemVirtualFundingAccount(
   executor: FinancialExecutor,
 ): Promise<LedgerAccount> {
+  return ensureSystemLedgerAccount(executor, "SYSTEM_VIRTUAL_FUNDING");
+}
+
+export async function ensureSystemTradingPnlAccount(
+  executor: FinancialExecutor,
+): Promise<LedgerAccount> {
+  return ensureSystemLedgerAccount(executor, "SYSTEM_TRADING_PNL");
+}
+
+export async function ensureSystemInsuranceAccount(
+  executor: FinancialExecutor,
+): Promise<LedgerAccount> {
+  return ensureSystemLedgerAccount(executor, "SYSTEM_INSURANCE");
+}
+
+async function ensureSystemLedgerAccount(
+  executor: FinancialExecutor,
+  kind: SystemLedgerKind,
+): Promise<LedgerAccount> {
   const [inserted] = await executor
     .insert(ledgerAccount)
     .values({
-      kind: "SYSTEM_VIRTUAL_FUNDING",
+      kind,
       paperAccountId: null,
       currency: "USDT",
     })
@@ -60,15 +84,10 @@ export async function ensureSystemVirtualFundingAccount(
   const [existing] = await executor
     .select()
     .from(ledgerAccount)
-    .where(
-      and(
-        eq(ledgerAccount.kind, "SYSTEM_VIRTUAL_FUNDING"),
-        isNull(ledgerAccount.paperAccountId),
-      ),
-    );
+    .where(and(eq(ledgerAccount.kind, kind), isNull(ledgerAccount.paperAccountId)));
 
   if (!existing) {
-    throw new Error("SYSTEM_VIRTUAL_FUNDING ledger_account missing after ensure");
+    throw new Error(`${kind} ledger_account missing after ensure`);
   }
 
   return existing;

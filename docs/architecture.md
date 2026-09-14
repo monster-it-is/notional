@@ -62,4 +62,4 @@ api -> trading
 
 Frontend must never import database models.
 
-Frontend must never import `@notional/trading`. Trading math is backend domain logic; display values come from the API.
+The LIMIT matcher is in-process in the single API process. It runs only when the in-memory market-data store accepts a newer BBO. Per symbol it coalesces ticks (one cycle in flight, at most one follow-up using newest state). PostgreSQL remains authoritative for orders, fills, positions, wallet, and ledger. Redis is not used for order matching or trading locks.

@@ -1,5 +1,6 @@
 import type { PositionTransition } from "@notional/trading";
 import {
+  assertFitsNumeric3818,
   parsePositiveDecimalString,
   toCanonicalDecimalString,
   validateMinNotional,
@@ -96,6 +97,50 @@ export function assertOrderPlacementEligibility(params: {
   if (params.instrument.status !== "ACTIVE") {
     throw new OrderValidationError("INSTRUMENT_INACTIVE");
   }
+}
+
+export function canonicalizeOrderQuantity(quantity: string): string {
+  try {
+    const canonical = parsePositiveDecimalString(quantity);
+    assertFitsNumeric3818(canonical);
+    return toCanonicalDecimalString(canonical);
+  } catch (error) {
+    throw mapInvalidOrder(error, "INVALID_QUANTITY");
+  }
+}
+
+export function validateReduceOnlyExitLimitFilters(params: {
+  quantity: string;
+  limitPrice: string;
+  instrument: OrderFilterInstrument;
+}): { quantity: string; limitPrice: string } {
+  return {
+    quantity: canonicalizeOrderQuantity(params.quantity),
+    limitPrice: canonicalLimitPrice(params.limitPrice, params.instrument),
+  };
+}
+
+export function validateReduceOnlyExitMarketFilters(params: {
+  quantity: string;
+  side: "BUY" | "SELL";
+  book: FreshBookQuote | null;
+}): { quantity: string } {
+  const quantity = canonicalizeOrderQuantity(params.quantity);
+
+  if (params.book === null) {
+    throw new OrderValidationError("MARKET_DATA_UNAVAILABLE");
+  }
+
+  const executablePrice =
+    params.side === "BUY" ? params.book.bestAskPrice : params.book.bestBidPrice;
+
+  try {
+    parsePositiveDecimalString(executablePrice);
+  } catch (error) {
+    throw new OrderValidationError("MARKET_DATA_UNAVAILABLE", undefined, error);
+  }
+
+  return { quantity };
 }
 
 export function validateLimitOrderFilters(params: {

@@ -67,13 +67,13 @@ Phase 11 added PostgreSQL `trading_position`: one persistent row per paper accou
 
 Status: COMPLETE
 
-Phase 12 extends `trading_position` with `margin_mode` (default `CROSS`), integer `leverage` `1..100` (default `1`), and `isolated_margin` (default `0`), plus CHECKs including CROSS isolated margin zero and ISOLATED open requiring positive isolated margin. `@notional/trading` adds exact collateral, available-balance, isolated-equity, required-isolated-margin, and caller-supplied maintenance primitives. Authenticated `GET`/`PUT /api/margin-settings/:symbol` mutate settings only while FLAT, under `paper_account → trading_position` locks. GET without a row returns `CROSS`/`1` without insert. Isolated fills throw `ISOLATED_FILL_NOT_IMPLEMENTED` and stay disabled through Phase 13. Wallet balance is still realized cash only; reservation does not move cash. Public order placement, order `reserved_margin`, trading ledger effects, liquidation, and isolated fills are out of scope.
-
-Phase 13 must still integrate CROSS order reservation, execution, position, wallet-floor/bankruptcy settlement, ledger, and CROSS margin checks before `POST /api/orders`. Isolated fills and liquidation remain Phase 14.
+Phase 12 extends `trading_position` with `margin_mode` (default `CROSS`), integer `leverage` `1..100` (default `1`), and `isolated_margin` (default `0`), plus CHECKs including CROSS isolated margin zero and ISOLATED open requiring positive isolated margin. `@notional/trading` adds exact collateral, available-balance, isolated-equity, required-isolated-margin, and caller-supplied maintenance primitives. Authenticated `GET`/`PUT /api/margin-settings/:symbol` mutate settings only while FLAT, under `paper_account → trading_position` locks. GET without a row returns `CROSS`/`1` without insert. Isolated fills throw `ISOLATED_FILL_NOT_IMPLEMENTED` and stay disabled through Phase 13. Wallet balance is still realized cash only; reservation does not move cash.
 
 ## Phase 13 — Order / Position Integration
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 13 enables public CROSS trading. `POST /api/orders` and `POST /api/orders/:id/cancel` run after CROSS margin checks, OPEN LIMIT `reserved_margin`, reduce-only placement and execution, exactly-once fill+position effects, wallet/insurance settlement, balanced `REALIZED_PNL` ledger, bankruptcy floor (`protectedBalance = 0`), replay-before-mutable-validation, stale-market fail-closed, one PostgreSQL transaction, in-process LIMIT matcher, and public cancel. Trading transactions SHARE-lock the instrument after the paper account so catalog inactivation cannot commit mid-trade. A newly created OPEN LIMIT schedules a matcher cycle after commit so a newer in-store BBO is not missed. Collateral requirements round **up**; PnL/wallet accounting stay HALF_EVEN. `reserved_margin` is placement-time only and is not a future-fill IM guarantee. Reduce-only exit-safety (waive LOT_SIZE / MIN_NOTIONAL for REDUCE/CLOSE; still PRICE_FILTER / BBO) is Notional policy, not Binance. Matcher insufficient margin, post-fill missing marks, and invalid reduce-only leave the order OPEN; expected matcher skip codes continue the symbol cycle. INACTIVE instruments reject new placement, do not match, and do not auto-cancel. Isolated fills stay `ISOLATED_FILL_NOT_IMPLEMENTED`. Isolated trading, liquidation, and maintenance remain Phase 14.
 
 ## Phase 14 — Liquidation
 

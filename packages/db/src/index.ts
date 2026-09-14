@@ -14,6 +14,8 @@ export { checkDatabaseHealth } from "./health.js";
 export { postLedgerTransaction } from "./ledger.js";
 export type { FinancialEventType, LedgerEntry, LedgerTransaction } from "./ledger.js";
 export {
+  ensureSystemInsuranceAccount,
+  ensureSystemTradingPnlAccount,
   ensureSystemVirtualFundingAccount,
   ensureUserCashLedgerAccount,
 } from "./ledger-account.js";
@@ -32,6 +34,7 @@ export {
   findInstrumentBySymbol,
   listActiveInstruments,
   listInstrumentSymbols,
+  lockInstrumentByIdForTrading,
   markInstrumentsInactiveExcept,
   upsertInstrumentBySymbol,
 } from "./instrument.js";
@@ -45,10 +48,14 @@ export {
   findAccountOrderById,
   findOrderById,
   findOrderByIdempotencyKey,
+  hasOpenOrdersForAccountInstrument,
   insertOpenLimitOrder,
+  listOpenLimitOrdersByInstrumentId,
   listOrdersByPaperAccountId,
   lockOrderById,
   OrderMutationError,
+  sameRequestFingerprint,
+  sumOpenOrderReservedMarginByPaperAccountId,
 } from "./order.js";
 export type {
   CreateOpenLimitOrderInput,
@@ -96,6 +103,7 @@ export {
   listOpenPositionsByPaperAccountId,
   lockPositionByAccountAndInstrument,
   PositionMutationError,
+  sumIsolatedMarginByPaperAccountId,
   updateMarginSettingsForFlatPosition,
   updatePositionState,
 } from "./position.js";

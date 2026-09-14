@@ -19,11 +19,12 @@ import {
   unavailableMarketDataAccess,
   type MarketDataAccess,
 } from "./market-data/coordinator.js";
-import { getOrderById, getOrders } from "./orders.js";
+import { getOrderById, getOrders, postOrder, cancelOrder } from "./orders.js";
 import { getPositionBySymbol, getPositions } from "./positions.js";
 
 export type BuildAppOptions = {
   marketData?: MarketDataAccess;
+  onOpenOrderCommitted?: (symbol: string) => void;
 };
 
 export async function buildApp(options: BuildAppOptions = {}) {
@@ -36,7 +37,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
     origin: env.WEB_ORIGIN,
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Idempotency-Key"],
   });
 
   await registerAuth(app);
@@ -61,7 +62,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
     getMarketDataBySymbol(request, reply, marketData),
   );
   app.get("/api/orders", { preHandler: requireAuth }, getOrders);
+  app.post("/api/orders", { preHandler: requireAuth }, (request, reply) =>
+    postOrder(request, reply, marketData, options.onOpenOrderCommitted),
+  );
   app.get("/api/orders/:id", { preHandler: requireAuth }, getOrderById);
+  app.post("/api/orders/:id/cancel", { preHandler: requireAuth }, cancelOrder);
   app.get("/api/executions", { preHandler: requireAuth }, getExecutions);
   app.get("/api/executions/:id", { preHandler: requireAuth }, getExecutionById);
   app.get("/api/positions", { preHandler: requireAuth }, getPositions);

@@ -1,4 +1,4 @@
-import { and, desc, eq, getTableColumns } from "drizzle-orm";
+import { and, asc, desc, eq, getTableColumns, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
 import type { FinancialTransaction } from "./executor.js";
@@ -23,6 +23,7 @@ export type CreateOpenLimitOrderInput = {
   orderType: "LIMIT";
   quantity: string;
   limitPrice: string;
+  reservedMargin: string;
   reduceOnly?: boolean;
   idempotencyKey: string;
 };
@@ -35,6 +36,7 @@ export type InsertOrderValues = {
   quantity: string;
   limitPrice: string | null;
   reduceOnly: boolean;
+  reservedMargin: string;
   status: OrderStatus;
   idempotencyKey: string;
 };
@@ -77,6 +79,13 @@ export async function insertOpenLimitOrder(
 ): Promise<InsertOrderResult> {
   assertOpenLimitInput(input);
 
+  const reduceOnly = input.reduceOnly ?? false;
+  const reservedMargin = persistReservedMargin(input.reservedMargin, {
+    orderType: "LIMIT",
+    status: "OPEN",
+    reduceOnly,
+  });
+
   return insertTradeOrderRow(executor, {
     paperAccountId: input.paperAccountId,
     instrumentId: input.instrumentId,
@@ -84,7 +93,8 @@ export async function insertOpenLimitOrder(
     orderType: "LIMIT",
     quantity: input.quantity,
     limitPrice: input.limitPrice,
-    reduceOnly: input.reduceOnly ?? false,
+    reduceOnly,
+    reservedMargin,
     status: "OPEN",
     idempotencyKey: input.idempotencyKey,
   });
@@ -100,6 +110,7 @@ export async function insertTradeOrderRow(
     quantity: string;
     limitPrice: string | null;
     reduceOnly?: boolean;
+    reservedMargin?: string;
     status: OrderStatus;
     idempotencyKey: string;
   },
@@ -111,6 +122,11 @@ export async function insertTradeOrderRow(
   const limitPrice =
     input.limitPrice === null ? null : toPersistedDecimal(input.limitPrice);
   const reduceOnly = input.reduceOnly ?? false;
+  const reservedMargin = persistReservedMargin(input.reservedMargin ?? "0", {
+    orderType: input.orderType,
+    status: input.status,
+    reduceOnly,
+  });
 
   if (input.orderType === "LIMIT") {
     if (limitPrice === null || !fromDbDecimal(limitPrice).isPositive()) {
@@ -128,6 +144,7 @@ export async function insertTradeOrderRow(
     quantity,
     limitPrice,
     reduceOnly,
+    reservedMargin,
     status: input.status,
     idempotencyKey: input.idempotencyKey,
   };
@@ -234,6 +251,64 @@ export async function listOrdersByPaperAccountId(
   return rows.map(fromPersistedOrderWithSymbol);
 }
 
+export async function sumOpenOrderReservedMarginByPaperAccountId(
+  executor: Pick<NodePgDatabase, "select" | "execute">,
+  paperAccountId: string,
+): Promise<string> {
+  const result = await executor.execute(sql`
+    SELECT coalesce(sum(reserved_margin), 0)::text AS total
+    FROM trade_order
+    WHERE paper_account_id = ${paperAccountId}::uuid
+      AND status = 'OPEN'
+  `);
+  const [row] = result.rows as { total: string }[];
+
+  if (!row) {
+    return "0";
+  }
+
+  return toPersistedDecimal(row.total);
+}
+
+export async function hasOpenOrdersForAccountInstrument(
+  executor: Pick<NodePgDatabase, "select">,
+  paperAccountId: string,
+  instrumentId: string,
+): Promise<boolean> {
+  const [row] = await executor
+    .select({ id: tradeOrder.id })
+    .from(tradeOrder)
+    .where(
+      and(
+        eq(tradeOrder.paperAccountId, paperAccountId),
+        eq(tradeOrder.instrumentId, instrumentId),
+        eq(tradeOrder.status, "OPEN"),
+      ),
+    )
+    .limit(1);
+
+  return row !== undefined;
+}
+
+export async function listOpenLimitOrdersByInstrumentId(
+  executor: Pick<NodePgDatabase, "select">,
+  instrumentId: string,
+): Promise<Order[]> {
+  const rows = await executor
+    .select()
+    .from(tradeOrder)
+    .where(
+      and(
+        eq(tradeOrder.instrumentId, instrumentId),
+        eq(tradeOrder.status, "OPEN"),
+        eq(tradeOrder.orderType, "LIMIT"),
+      ),
+    )
+    .orderBy(asc(tradeOrder.createdAt), asc(tradeOrder.id));
+
+  return rows.map(fromPersistedOrder);
+}
+
 export async function lockOrderById(
   executor: FinancialTransaction,
   paperAccountId: string,
@@ -290,20 +365,23 @@ export async function cancelOpenLimitOrder(
     throw new OrderMutationError("ORDER_NOT_CANCELLABLE");
   }
 
-  const [updated] = await executor
-    .update(tradeOrder)
-    .set({
-      status: "CANCELLED",
-      updatedAt: new Date(),
-    })
-    .where(eq(tradeOrder.id, orderId))
-    .returning();
+  const wallClock = await sampleUtcWallClock(executor);
+
+  await executor.execute(sql`
+    UPDATE trade_order
+    SET status = 'CANCELLED',
+        reserved_margin = 0,
+        updated_at = ${wallClock}::timestamp
+    WHERE id = ${orderId}::uuid
+  `);
+
+  const updated = await findOrderById(executor, paperAccountId, orderId);
 
   if (!updated) {
     throw new Error("trade_order missing after cancel");
   }
 
-  return fromPersistedOrder(updated);
+  return updated;
 }
 
 export function sameRequestFingerprint(
@@ -346,6 +424,7 @@ export function fromPersistedOrder(row: Order): Order {
     ...row,
     quantity: toPersistedDecimal(row.quantity),
     limitPrice: row.limitPrice === null ? null : toPersistedDecimal(row.limitPrice),
+    reservedMargin: toPersistedDecimal(row.reservedMargin),
   };
 }
 
@@ -371,6 +450,65 @@ function assertIdempotencyKey(key: string): void {
       "idempotency key must be 1..128 printable non-whitespace ASCII characters",
     );
   }
+}
+
+function persistReservedMargin(
+  value: string,
+  params: { orderType: OrderType; status: OrderStatus; reduceOnly: boolean },
+): string {
+  const reservedMargin = toPersistedDecimal(value);
+  const amount = fromDbDecimal(reservedMargin);
+
+  if (amount.isNegative()) {
+    throw new Error("reserved_margin must be non-negative");
+  }
+
+  if (params.orderType === "MARKET") {
+    if (!amount.isZero()) {
+      throw new Error("MARKET orders require reserved_margin 0");
+    }
+
+    return reservedMargin;
+  }
+
+  if (params.status === "FILLED" || params.status === "CANCELLED") {
+    if (!amount.isZero()) {
+      throw new Error("terminal orders require reserved_margin 0");
+    }
+
+    return reservedMargin;
+  }
+
+  if (params.orderType !== "LIMIT" || params.status !== "OPEN") {
+    throw new Error("reserved_margin is only held by OPEN LIMIT orders");
+  }
+
+  if (params.reduceOnly) {
+    if (!amount.isZero()) {
+      throw new Error("reduce-only OPEN LIMIT reserved_margin must be 0");
+    }
+
+    return reservedMargin;
+  }
+
+  if (amount.lte(0)) {
+    throw new Error("non-reduce OPEN LIMIT reserved_margin must be positive");
+  }
+
+  return reservedMargin;
+}
+
+async function sampleUtcWallClock(executor: FinancialTransaction): Promise<string> {
+  const result = await executor.execute(sql`
+    SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') AS wall_clock
+  `);
+  const [row] = result.rows as { wall_clock: string }[];
+
+  if (!row?.wall_clock) {
+    throw new Error("failed to sample PostgreSQL UTC wall clock");
+  }
+
+  return row.wall_clock;
 }
 
 function toPersistedDecimal(value: string): string {

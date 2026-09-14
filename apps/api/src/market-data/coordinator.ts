@@ -76,6 +76,7 @@ export function createMarketDataRuntime(options: {
   random?: () => number;
   logger?: Logger;
   connectionMaxMs?: number;
+  onAcceptedBook?: (symbol: string) => void;
 }): MarketDataRuntime {
   const env = options.env;
   const logger = options.logger ?? silentLogger;
@@ -139,8 +140,8 @@ export function createMarketDataRuntime(options: {
       const active = new Set((await listActiveInstruments(db)).map((row) => row.symbol));
 
       for (const tick of parseBookTickerTicks(books)) {
-        if (active.has(tick.symbol)) {
-          store.applyBook(tick);
+        if (active.has(tick.symbol) && store.applyBook(tick)) {
+          options.onAcceptedBook?.(tick.symbol);
         }
       }
     } catch (error) {
@@ -243,8 +244,8 @@ export function createMarketDataRuntime(options: {
         connectionMaxMs: options.connectionMaxMs,
         logger,
         onBook(tick) {
-          if (catalogSymbols.has(tick.symbol)) {
-            store.applyBook(tick);
+          if (catalogSymbols.has(tick.symbol) && store.applyBook(tick)) {
+            options.onAcceptedBook?.(tick.symbol);
           }
         },
       });

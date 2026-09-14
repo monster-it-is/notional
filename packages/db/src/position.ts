@@ -159,6 +159,24 @@ export async function listOpenPositionsByPaperAccountId(
   return rows.map(fromPersistedPositionWithSymbol);
 }
 
+export async function sumIsolatedMarginByPaperAccountId(
+  executor: Pick<NodePgDatabase, "execute">,
+  paperAccountId: string,
+): Promise<string> {
+  const result = await executor.execute(sql`
+    SELECT coalesce(sum(isolated_margin), 0)::text AS total
+    FROM trading_position
+    WHERE paper_account_id = ${paperAccountId}::uuid
+  `);
+  const [row] = result.rows as { total: string }[];
+
+  if (!row) {
+    return "0";
+  }
+
+  return toDbDecimal(fromDbDecimal(row.total));
+}
+
 export async function findOpenPositionByAccountAndSymbol(
   executor: Pick<NodePgDatabase, "select">,
   paperAccountId: string,

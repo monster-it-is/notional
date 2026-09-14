@@ -389,6 +389,7 @@ function limitInput(
     orderType: "LIMIT" as const,
     quantity: "0.001",
     limitPrice: "65000",
+    reservedMargin: "1",
     idempotencyKey: overrides.idempotencyKey ?? "limit-1",
   };
 }

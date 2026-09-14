@@ -7,6 +7,7 @@ import type {
   InvalidMarginSettingsReason,
   MarginMode,
   MarginSettingsResponse,
+  OpenOrdersExistError,
   PositionNotFlatError,
   UpdateMarginSettingsRequest,
 } from "@notional/contracts";
@@ -17,6 +18,7 @@ import {
   findPaperAccountByUserId,
   findPositionByAccountAndInstrument,
   findSignupAllocationFundingEvent,
+  hasOpenOrdersForAccountInstrument,
   lockPaperAccountByUserId,
   lockPositionByAccountAndInstrument,
   PositionMutationError,
@@ -37,6 +39,7 @@ export class MarginSettingsError extends Error {
     | "INSTRUMENT_NOT_FOUND"
     | "INSTRUMENT_INACTIVE"
     | "POSITION_NOT_FLAT"
+    | "OPEN_ORDERS_EXIST"
     | "INVALID_MARGIN_SETTINGS";
   readonly reason?: InvalidMarginSettingsReason;
 
@@ -47,6 +50,7 @@ export class MarginSettingsError extends Error {
       | "INSTRUMENT_NOT_FOUND"
       | "INSTRUMENT_INACTIVE"
       | "POSITION_NOT_FLAT"
+      | "OPEN_ORDERS_EXIST"
       | "INVALID_MARGIN_SETTINGS",
     reason?: InvalidMarginSettingsReason,
   ) {
@@ -137,6 +141,10 @@ export async function updateMarginSettingsInTx(
 
   await ensurePosition(tx, account.id, instrumentRow.id);
   const position = await lockPositionByAccountAndInstrument(tx, account.id, instrumentRow.id);
+
+  if (await hasOpenOrdersForAccountInstrument(tx, account.id, instrumentRow.id)) {
+    throw new MarginSettingsError("OPEN_ORDERS_EXIST");
+  }
 
   try {
     const updated = await updateMarginSettingsForFlatPosition(tx, position.id, {
@@ -232,4 +240,5 @@ export type MarginSettingsHttpError =
   | InstrumentInactiveError
   | InstrumentNotFoundError
   | InvalidMarginSettingsError
-  | PositionNotFlatError;
+  | PositionNotFlatError
+  | OpenOrdersExistError;

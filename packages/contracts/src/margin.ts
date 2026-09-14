@@ -24,3 +24,7 @@ export type InvalidMarginSettingsError = {
 export type PositionNotFlatError = {
   error: "POSITION_NOT_FLAT";
 };
+
+export type OpenOrdersExistError = {
+  error: "OPEN_ORDERS_EXIST";
+};

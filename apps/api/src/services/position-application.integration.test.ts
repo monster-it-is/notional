@@ -560,6 +560,7 @@ describe("position application", () => {
       orderType: "LIMIT",
       quantity: "1",
       limitPrice: "100",
+      reservedMargin: "1",
       idempotencyKey: "resting",
     });
     expect(created.kind).toBe("created");
@@ -590,6 +591,7 @@ describe("position application", () => {
       orderType: "LIMIT",
       quantity: "1",
       limitPrice: "100",
+      reservedMargin: "1",
       idempotencyKey: "corrupt",
     });
     expect(created.kind).toBe("created");
@@ -632,6 +634,7 @@ describe("position application", () => {
       orderType: "LIMIT",
       quantity: "1",
       limitPrice: "100",
+      reservedMargin: "1",
       idempotencyKey: "open-reject",
     });
     expect(open.kind).toBe("created");

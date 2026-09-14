@@ -1,3 +1,4 @@
+import { eq, sql } from "drizzle-orm";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -8,6 +9,7 @@ import {
   instrument,
   listActiveInstruments,
   listInstrumentSymbols,
+  lockInstrumentByIdForTrading,
   markInstrumentsInactiveExcept,
   upsertInstrumentBySymbol,
   type UpsertInstrumentInput,
@@ -322,6 +324,52 @@ describe("instrument", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]?.id).toBe(results[0]?.id);
   });
+
+  it("holds instrument FOR SHARE so a concurrent catalog UPDATE waits until the trade commits ACTIVE", async () => {
+    const row = await upsertInstrumentBySymbol(db, btc());
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let acquired!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      acquired = resolve;
+    });
+
+    const trade = db.transaction(async (tx) => {
+      const locked = await lockInstrumentByIdForTrading(tx, row.id);
+      expect(locked?.status).toBe("ACTIVE");
+      acquired();
+      await held;
+    });
+
+    await ready;
+    await expect(
+      db.transaction(async (tx) => {
+        await tx.execute(sql`SET LOCAL lock_timeout = '100ms'`);
+        await tx
+          .update(instrument)
+          .set({ status: "INACTIVE", updatedAt: new Date() })
+          .where(eq(instrument.id, row.id));
+      }),
+    ).rejects.toSatisfy((error: unknown) => postgresCode(error) === "55P03");
+
+    expect((await findInstrumentById(db, row.id))?.status).toBe("ACTIVE");
+    release();
+    await trade;
+    expect((await findInstrumentById(db, row.id))?.status).toBe("ACTIVE");
+
+    await upsertInstrumentBySymbol(db, btc({ status: "INACTIVE" }));
+    expect((await findInstrumentById(db, row.id))?.status).toBe("INACTIVE");
+  });
+
+  it("sees INACTIVE after a catalog update commits first", async () => {
+    const row = await upsertInstrumentBySymbol(db, btc());
+    await upsertInstrumentBySymbol(db, btc({ status: "INACTIVE" }));
+
+    const locked = await db.transaction((tx) => lockInstrumentByIdForTrading(tx, row.id));
+    expect(locked?.status).toBe("INACTIVE");
+  });
 });
 
 function btc(overrides: Partial<UpsertInstrumentInput> = {}): UpsertInstrumentInput {
@@ -393,5 +441,19 @@ async function expectRejectedConstraint(
   await expect(operation).rejects.toSatisfy((error: unknown) => {
     return postgresConstraint(error) === constraint;
   });
+}
+
+function postgresCode(error: unknown): string | undefined {
+  let current: unknown = error;
+
+  while (current && typeof current === "object") {
+    if ("code" in current && typeof current.code === "string" && /^[0-9A-Z]{5}$/.test(current.code)) {
+      return current.code;
+    }
+
+    current = "cause" in current ? current.cause : undefined;
+  }
+
+  return undefined;
 }
 

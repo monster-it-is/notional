@@ -8,6 +8,8 @@ import {
   validateLimitOrderFilters,
   validateMarketOrderFilters,
   validateOrderPlacement,
+  validateReduceOnlyExitLimitFilters,
+  validateReduceOnlyExitMarketFilters,
   type OrderFilterInstrument,
 } from "./validate-order.js";
 
@@ -449,6 +451,50 @@ describe("order placement eligibility", () => {
       fillSide: "SELL",
       fillQty: "2",
     }))).toBe(false);
+  });
+});
+
+describe("reduce-only exit-safety filters (Notional policy, not Binance)", () => {
+  it("waives LOT_SIZE, MARKET_LOT_SIZE, and MIN_NOTIONAL for REDUCE/CLOSE quantity", () => {
+    expect(
+      validateReduceOnlyExitLimitFilters({
+        quantity: "0.0004",
+        limitPrice: "100.1",
+        instrument,
+      }),
+    ).toEqual({ quantity: "0.0004", limitPrice: "100.1" });
+
+    expect(
+      validateReduceOnlyExitMarketFilters({
+        quantity: "0.0004",
+        side: "SELL",
+        book,
+      }),
+    ).toEqual({ quantity: "0.0004" });
+  });
+
+  it("still enforces PRICE_FILTER on LIMIT reduce-only exits", () => {
+    expectInvalidOrder(
+      () =>
+        validateReduceOnlyExitLimitFilters({
+          quantity: "0.0004",
+          limitPrice: "100.05",
+          instrument,
+        }),
+      "INVALID_PRICE",
+    );
+  });
+
+  it("requires a fresh BBO for MARKET reduce-only exits and does not require a mark", () => {
+    expectCode(
+      () =>
+        validateReduceOnlyExitMarketFilters({
+          quantity: "0.0004",
+          side: "SELL",
+          book: null,
+        }),
+      "MARKET_DATA_UNAVAILABLE",
+    );
   });
 });
 

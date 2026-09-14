@@ -72,3 +72,15 @@ export type IdempotencyKeyReusedError = {
 export type OrderNotCancellableError = {
   error: "ORDER_NOT_CANCELLABLE";
 };
+
+export type ReduceOnlyViolationError = {
+  error: "REDUCE_ONLY_VIOLATION";
+};
+
+export type InsufficientMarginError = {
+  error: "INSUFFICIENT_MARGIN";
+};
+
+export type IsolatedTradingNotAvailableError = {
+  error: "ISOLATED_TRADING_NOT_AVAILABLE";
+};

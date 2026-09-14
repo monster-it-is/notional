@@ -110,6 +110,7 @@ export async function insertFilledOrderWithExecution(
     quantity: input.quantity,
     limitPrice,
     reduceOnly: input.reduceOnly ?? false,
+    reservedMargin: "0",
     status: "FILLED",
     idempotencyKey: input.idempotencyKey,
   });
@@ -370,6 +371,7 @@ async function markOrderFilled(
   await executor.execute(sql`
     UPDATE trade_order
     SET status = 'FILLED',
+        reserved_margin = 0,
         updated_at = ${wallClock}::timestamp
     WHERE id = ${order.id}::uuid
   `);

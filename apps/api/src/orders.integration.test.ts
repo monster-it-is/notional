@@ -52,7 +52,7 @@ describe("order api", () => {
     expect(one.json()).toEqual({ error: "Unauthorized" });
   });
 
-  it("does not register public order placement or cancel routes", async () => {
+  it("requires an Idempotency-Key for public placement and does not accept DELETE", async () => {
     const { cookies } = await initializeUser(app, "no-post@example.com");
 
     const post = await app.inject({
@@ -67,7 +67,8 @@ describe("order api", () => {
       headers: authHeadersFromCookie(cookies),
     });
 
-    expect(post.statusCode).toBe(404);
+    expect(post.statusCode).toBe(400);
+    expect(post.json()).toEqual({ error: "IDEMPOTENCY_KEY_REQUIRED" });
     expect(del.statusCode).toBe(404);
   });
 
@@ -361,6 +362,7 @@ function limitInput(
     orderType: "LIMIT" as const,
     quantity: overrides.quantity ?? "0.001",
     limitPrice: overrides.limitPrice ?? "65000",
+    reservedMargin: "1",
     idempotencyKey: overrides.idempotencyKey ?? "limit-1",
   };
 }

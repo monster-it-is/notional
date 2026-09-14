@@ -25,6 +25,10 @@ describe("public package boundary", () => {
     expect(trading.DEFAULT_MARGIN_MODE).toBe("CROSS");
     expect(typeof trading.assertFitsNumeric3818).toBe("function");
     expect(typeof trading.quantizeToNumeric3818).toBe("function");
+    expect(typeof trading.quantizeCollateralRequirementToNumeric3818).toBe("function");
+    expect(typeof trading.sumDecimalValues).toBe("function");
+    expect(typeof trading.isDecimalGte).toBe("function");
+    expect(typeof trading.calculateWalletRealizedSettlement).toBe("function");
     expect(typeof trading.TradingMathError).toBe("function");
     expect(typeof trading.getMarketExecutionPrice).toBe("function");
     expect(typeof trading.getLimitExecutionPrice).toBe("function");

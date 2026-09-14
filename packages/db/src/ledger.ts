@@ -10,7 +10,7 @@ export type LedgerPostingEntry = {
   amount: MoneyDecimal;
 };
 
-export type FinancialEventType = "SIGNUP_ALLOCATION" | "FAUCET_CLAIM";
+export type FinancialEventType = "SIGNUP_ALLOCATION" | "FAUCET_CLAIM" | "REALIZED_PNL";
 
 export type PostLedgerTransactionInput = {
   eventType: FinancialEventType;

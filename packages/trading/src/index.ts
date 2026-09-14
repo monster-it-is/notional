@@ -1,13 +1,16 @@
 export {
   addNumeric3818Exact,
   assertFitsNumeric3818,
+  isDecimalGte,
   NUMERIC_INTEGER_DIGITS,
   NUMERIC_PRECISION,
   NUMERIC_SCALE,
   parseDecimalString,
   parseNonNegativeDecimalString,
   parsePositiveDecimalString,
+  quantizeCollateralRequirementToNumeric3818,
   quantizeToNumeric3818,
+  sumDecimalValues,
   toCanonicalDecimalString,
 } from "./decimal.js";
 export { TradingMathError } from "./errors.js";
@@ -61,6 +64,8 @@ export type {
   PositionSide,
   PositionTransition,
 } from "./position.js";
+export { calculateWalletRealizedSettlement } from "./wallet-settlement.js";
+export type { WalletRealizedSettlement } from "./wallet-settlement.js";
 
 void (true satisfies Extract<
   keyof typeof import("./index.js"),

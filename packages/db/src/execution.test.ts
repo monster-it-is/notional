@@ -781,6 +781,7 @@ function openLimitInput(
     orderType: "LIMIT" as const,
     quantity: overrides.quantity ?? "0.001",
     limitPrice: overrides.limitPrice ?? "100",
+    reservedMargin: "1",
     idempotencyKey: overrides.idempotencyKey ?? "open-limit",
   };
 }

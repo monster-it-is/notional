@@ -1,6 +1,7 @@
-import { and, asc, eq, ne, notInArray } from "drizzle-orm";
+import { and, asc, eq, ne, notInArray, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 
+import type { FinancialTransaction } from "./executor.js";
 import { fromDbDecimal, toDbDecimal } from "./money.js";
 import { instrument } from "./schema/instrument.js";
 
@@ -34,6 +35,30 @@ export async function findInstrumentById(
     .select()
     .from(instrument)
     .where(eq(instrument.id, id));
+
+  return existing ? fromPersistedInstrument(existing) : null;
+}
+
+/**
+ * SHARE-lock an instrument for a trading transaction.
+ *
+ * Permanent lock order:
+ * `paper_account FOR UPDATE` → `instrument FOR SHARE` → `trading_position FOR UPDATE`
+ * → `trade_order FOR UPDATE` when needed.
+ *
+ * FOR SHARE blocks Phase 7 catalog UPDATE until the trading transaction ends, without
+ * serializing unrelated accounts that trade the same instrument. Catalog sync must not
+ * acquire paper-account, position, or order locks (no lock cycle).
+ */
+export async function lockInstrumentByIdForTrading(
+  executor: FinancialTransaction,
+  instrumentId: string,
+): Promise<Instrument | null> {
+  const [existing] = await executor
+    .select()
+    .from(instrument)
+    .where(eq(instrument.id, instrumentId))
+    .for("share");
 
   return existing ? fromPersistedInstrument(existing) : null;
 }
@@ -133,7 +158,7 @@ export async function upsertInstrumentBySymbol(
         marketMinQty: values.marketMinQty,
         marketMaxQty: values.marketMaxQty,
         minNotional: values.minNotional,
-        updatedAt: new Date(),
+        updatedAt: sql`clock_timestamp()`,
       },
     })
     .returning();

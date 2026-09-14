@@ -176,7 +176,8 @@ describe("trade_order", () => {
       return (
         constraint === "trade_order_type_valid" ||
         constraint === "trade_order_status_by_type" ||
-        constraint === "trade_order_limit_price_by_type"
+        constraint === "trade_order_limit_price_by_type" ||
+        constraint === "trade_order_reserved_margin_lifecycle"
       );
     });
 
@@ -192,7 +193,8 @@ describe("trade_order", () => {
       const constraint = postgresConstraint(error);
       return (
         constraint === "trade_order_status_valid" ||
-        constraint === "trade_order_status_by_type"
+        constraint === "trade_order_status_by_type" ||
+        constraint === "trade_order_reserved_margin_lifecycle"
       );
     });
   });
@@ -714,6 +716,7 @@ function limitInput(
     side: "BUY" | "SELL";
     quantity: string;
     limitPrice: string;
+    reservedMargin: string;
     reduceOnly: boolean;
     idempotencyKey: string;
   }> = {},
@@ -725,6 +728,7 @@ function limitInput(
     orderType: "LIMIT",
     quantity: overrides.quantity ?? "0.001",
     limitPrice: overrides.limitPrice ?? "65000",
+    reservedMargin: overrides.reservedMargin ?? (overrides.reduceOnly ? "0" : "1"),
     reduceOnly: overrides.reduceOnly,
     idempotencyKey: overrides.idempotencyKey ?? "limit-1",
   };
@@ -733,7 +737,7 @@ function limitInput(
 function rawOrder(
   overrides: Partial<typeof tradeOrder.$inferInsert> = {},
 ): typeof tradeOrder.$inferInsert {
-  return {
+  const values: typeof tradeOrder.$inferInsert = {
     paperAccountId: overrides.paperAccountId ?? "00000000-0000-4000-8000-000000000001",
     instrumentId: overrides.instrumentId ?? "00000000-0000-4000-8000-000000000002",
     side: "BUY",
@@ -745,6 +749,14 @@ function rawOrder(
     idempotencyKey: "raw-1",
     ...overrides,
   };
+
+  if (overrides.reservedMargin === undefined) {
+    const terminal = values.status === "FILLED" || values.status === "CANCELLED";
+    values.reservedMargin =
+      values.orderType === "MARKET" || terminal || values.reduceOnly ? "0" : "1";
+  }
+
+  return values;
 }
 
 function btc(overrides: { status?: "ACTIVE" | "INACTIVE" } = {}) {

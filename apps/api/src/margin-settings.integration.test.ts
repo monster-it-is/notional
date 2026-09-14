@@ -5,6 +5,7 @@ import type {
   InstrumentNotFoundError,
   InvalidMarginSettingsError,
   MarginSettingsResponse,
+  OpenOrdersExistError,
   PositionNotFlatError,
 } from "@notional/contracts";
 import {
@@ -13,6 +14,7 @@ import {
   findPaperAccountByUserId,
   findPositionByAccountAndInstrument,
   insertFilledOrderWithExecution,
+  insertOpenLimitOrder,
   lockPaperAccountById,
   lockPositionByAccountAndInstrument,
   tradingPosition,
@@ -348,6 +350,34 @@ describe("margin settings api", () => {
     expect(response.json()).toEqual({
       error: "POSITION_NOT_FLAT",
     } satisfies PositionNotFlatError);
+  });
+
+  it("rejects settings mutation while an OPEN order exists for the symbol", async () => {
+    const { cookies, accountId } = await initializeUser(app, "open-order-margin@example.com");
+    const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    const resting = await insertOpenLimitOrder(db, {
+      paperAccountId: accountId,
+      instrumentId: btc.id,
+      side: "BUY",
+      orderType: "LIMIT",
+      quantity: "0.1",
+      limitPrice: "90",
+      reservedMargin: "9",
+      idempotencyKey: "open-settings",
+    });
+    expect(resting.kind).toBe("created");
+
+    const response = await app.inject({
+      method: "PUT",
+      url: "/api/margin-settings/BTCUSDT",
+      headers: authHeadersFromCookie(cookies),
+      payload: { marginMode: "CROSS", leverage: 10 },
+    });
+
+    expect(response.statusCode).toBe(409);
+    expect(response.json()).toEqual({
+      error: "OPEN_ORDERS_EXIST",
+    } satisfies OpenOrdersExistError);
   });
 });
 

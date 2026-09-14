@@ -28,10 +28,12 @@ export type {
   IdempotencyKeyInvalidError,
   IdempotencyKeyRequiredError,
   IdempotencyKeyReusedError,
+  InsufficientMarginError,
   InstrumentInactiveError,
   InvalidOrderError,
   InvalidOrderReason,
   InvalidQueryError,
+  IsolatedTradingNotAvailableError,
   OrderListResponse,
   OrderNotCancellableError,
   OrderNotFoundError,
@@ -39,6 +41,7 @@ export type {
   OrderSide,
   OrderStatus,
   OrderType,
+  ReduceOnlyViolationError,
 } from "./order.js";
 export type {
   ExecutionListResponse,
@@ -50,6 +53,7 @@ export type {
   InvalidMarginSettingsReason,
   MarginMode,
   MarginSettingsResponse,
+  OpenOrdersExistError,
   PositionNotFlatError,
   UpdateMarginSettingsRequest,
 } from "./margin.js";
