@@ -71,3 +71,5 @@ The funding scanner is also in-process in `server.ts` only, started after market
 Any transaction that locks or mutates multiple existing instrument rows acquires them `instrument.id ASC`. Financial multi-symbol order is `paper_account FOR UPDATE` → instruments `id ASC FOR SHARE` → positions in that instrument order → orders. Catalog sync prelocks existing instruments `id ASC FOR UPDATE` and never locks account, position, or order rows.
 
 Book-ticker subscriptions cover every known catalog symbol (ACTIVE and INACTIVE). Mark remains the all-catalog `!markPrice@arr@1s` stream. If Binance stops publishing a symbol, Notional has no BBO and liquidation/unwind fail closed.
+
+Browser realtime is in-process only. `server.ts` creates one `RealtimeRuntime` and injects it into `buildApp`. `GET /ws/market` fans out coalesced store snapshots. `GET /ws/account` emits post-commit private invalidations. WebSockets are not financially authoritative; REST resync is required after reconnect. Redis is unused for realtime.

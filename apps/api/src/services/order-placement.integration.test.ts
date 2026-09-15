@@ -31,7 +31,7 @@ import { buildApp } from "../app.js";
 import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { createMarketDataStore, type MarketDataStore } from "../market-data/market-data-store.js";
 import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./funding-test-fixtures.js";
-import { applyCreatedFillEffectsInTx } from "./order-placement.js";
+import { applyCreatedFillEffectsInTx, placeOrder } from "./order-placement.js";
 
 const password = "correct-horse-battery";
 
@@ -846,6 +846,30 @@ describe("atomic CROSS order placement", () => {
     });
     expect(inactiveCancel.statusCode).toBe(200);
   });
+
+  it("keeps a committed order successful if realtime publication throws", async () => {
+    const { userId } = await initializeUser(app, "realtime-throw@example.com");
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    let calls = 0;
+    const result = await placeOrder({
+      userId,
+      idempotencyKey: "rt-1",
+      body: {
+        type: "MARKET",
+        symbol: "BTCUSDT",
+        side: "BUY",
+        quantity: "0.1",
+      },
+      marketData,
+      onPrivateCommitted: () => {
+        calls += 1;
+        throw new Error("ws down");
+      },
+    });
+    expect(result.created).toBe(true);
+    expect(result.order.status).toBe("FILLED");
+    expect(calls).toBe(1);
+  });
 });
 
 async function roundTripPnl(
@@ -1066,7 +1090,7 @@ async function initializeUser(app: FastifyInstance, email: string) {
   if (!account) {
     throw new Error("expected initialized paper account");
   }
-  return { cookies, accountId: account.id };
+  return { cookies, accountId: account.id, userId: account.userId };
 }
 
 async function signUp(app: FastifyInstance, email: string) {

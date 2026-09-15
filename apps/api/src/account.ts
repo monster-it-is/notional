@@ -19,6 +19,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import { claimFaucet, FaucetClaimError } from "./services/faucet.js";
 import { provisionSignupAllocation } from "./services/signup-allocation.js";
+import type { CommittedPrivateEffect } from "./realtime/effects.js";
 
 const DEFAULT_FUNDING_LIMIT = 50;
 const MAX_FUNDING_LIMIT = 100;
@@ -45,6 +46,7 @@ export async function getAccount(
 export async function initializeAccount(
   request: FastifyRequest,
   reply: FastifyReply,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
 ): Promise<AccountResponse | { error: string }> {
   const session = request.auth;
 
@@ -52,7 +54,7 @@ export async function initializeAccount(
     return reply.status(401).send({ error: "Unauthorized" });
   }
 
-  const account = await provisionSignupAllocation(session.user.id);
+  const account = await provisionSignupAllocation(session.user.id, onPrivateCommitted);
 
   return toAccountResponse(account);
 }
@@ -60,6 +62,7 @@ export async function initializeAccount(
 export async function claimAccountFaucet(
   request: FastifyRequest,
   reply: FastifyReply,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
 ): Promise<
   | AccountResponse
   | AccountNotInitializedError
@@ -74,7 +77,7 @@ export async function claimAccountFaucet(
   }
 
   try {
-    const account = await claimFaucet(session.user.id);
+    const account = await claimFaucet(session.user.id, onPrivateCommitted);
     return toAccountResponse(account);
   } catch (error) {
     if (error instanceof FaucetClaimError) {
@@ -137,7 +140,7 @@ export async function getFundingHistory(
   };
 }
 
-async function loadInitializedAccount(userId: string) {
+export async function loadInitializedAccount(userId: string) {
   const account = await findPaperAccountByUserId(db, userId);
 
   if (!account) {

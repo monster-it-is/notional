@@ -356,7 +356,7 @@ Status: Accepted
 
 PostgreSQL `instrument` remains catalog metadata only (ADR-013). Live mark, index, BBO, and funding fields are never persisted.
 
-Phase 7 keeps market state in one API process. Redis is not introduced. Redis may later fan out to multiple processes (Phase 16). Binance remains the external market authority. Losing the API process loses live cache and is recovered from REST bootstrap plus WebSocket.
+Phase 7 keeps market state in one API process. Redis is not introduced. Redis multi-process fanout is deferred to later scaling work and is **not** Phase 16. Phase 16 delivers in-process browser WebSockets from this same ephemeral store. Binance remains the external market authority. Losing the API process loses live cache and is recovered from REST bootstrap plus WebSocket.
 
 ## ADR-019 — Fail-closed freshness and event ordering
 
@@ -1088,6 +1088,22 @@ READY snapshots are immutable. Identical payload replay is a no-op; a different 
 ### Runtime
 
 Funding scanner (`FUNDING_SCAN_INTERVAL_MS` default 5000) starts from `server.ts` `onReady` after market data, not `buildApp`. `GET /api/funding` is authenticated history. Predicted rate stays on `GET /api/market-data/:symbol`. Funding commits before liquidation recheck; the funding kline mark is not the liquidation trigger or BBO.
+
+## ADR-036 — Realtime Browser Fanout
+
+Status: Accepted
+
+Notional exposes two in-process JSON WebSocket endpoints. They are not financially authoritative. REST remains the source of truth. Delivery is transient, in-process, non-durable, at-most-once, and without replay. Reconnect requires REST resync.
+
+- `GET /ws/market` is unauthenticated, Origin-gated (`Origin` must equal `WEB_ORIGIN` exactly), and streams coalesced BBO/mark frames from the existing market-data coordinator store. There is no second Binance connection and no trading mutation.
+- `GET /ws/account` requires the same Origin check, a Better Auth cookie session, and an already initialized paper account. Upgrade is read-only: no signup allocation, faucet, ledger write, or lazy provisioning. Missing session is HTTP 401. Missing initialized account is HTTP 409 `ACCOUNT_NOT_INITIALIZED`. The socket is permanently bound to `{ userId, paperAccountId }` resolved server-side.
+
+`server.ts` creates one `RealtimeRuntime` and passes it into `buildApp({ realtime })`. The same instance is wired to accepted book/mark callbacks, matcher, scanners, and post-commit publishers. `buildApp` only registers `@fastify/websocket` routes against that instance. It does not construct a second hub and does not start Binance, matcher, or scanners. `server.ts` `onClose` owns `realtime.shutdown()`.
+
+Private invalidations publish only after `db.transaction` resolves. Rollback emits nothing. Nested funding settlement is unioned into the same committed event. Realtime failures after commit are logged and contained (`safeOnPrivateCommitted`); they must not become HTTP 500, matcher failure, or scanner failure.
+
+Browser market coalescing is outbound-only (~100ms) and must not delay store mutation, matcher scheduling, or trading freshness. A slow market socket may skip a coalesced frame; healthy sockets are not delayed. Private backpressure closes that connection (`4429`) instead of silently dropping. Protocol version is 1. No Redis, outbox, JWT, or multi-process fanout.
+
 
 
 

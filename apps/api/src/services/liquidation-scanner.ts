@@ -13,6 +13,7 @@ import {
   calculateCrossLiquidationRisk,
   calculateIsolatedLiquidationRisk,
 } from "./liquidation-risk.js";
+import type { CommittedPrivateEffect } from "../realtime/effects.js";
 
 export type LiquidationScanner = {
   requestScan(): void;
@@ -26,6 +27,7 @@ export function createLiquidationScanner(options: {
   intervalMs: number;
   logger?: Logger;
   scheduler?: Scheduler;
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
 }): LiquidationScanner {
   const logger = options.logger ?? silentLogger;
   const scheduler = options.scheduler ?? systemScheduler;
@@ -46,7 +48,13 @@ export function createLiquidationScanner(options: {
 
     for (const paperAccountId of [...byAccount.keys()].sort()) {
       try {
-        await processAccount(paperAccountId, byAccount.get(paperAccountId) ?? [], options.marketData, logger);
+        await processAccount(
+          paperAccountId,
+          byAccount.get(paperAccountId) ?? [],
+          options.marketData,
+          logger,
+          options.onPrivateCommitted,
+        );
       } catch (error) {
         logger.error("liquidation scanner account failed", {
           paperAccountId,
@@ -123,6 +131,7 @@ async function processAccount(
   positions: PositionWithSymbol[],
   marketData: MarketDataAccess,
   logger: Logger,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
 ): Promise<void> {
   const isolated = positions
     .filter((row) => row.marginMode === "ISOLATED")
@@ -155,6 +164,7 @@ async function processAccount(
       instrumentId: position.instrumentId,
       marketData,
       logger,
+      onPrivateCommitted,
     });
   }
 
@@ -198,5 +208,5 @@ async function processAccount(
     return;
   }
 
-  await liquidateCrossAccount({ paperAccountId, marketData, logger });
+  await liquidateCrossAccount({ paperAccountId, marketData, logger, onPrivateCommitted });
 }

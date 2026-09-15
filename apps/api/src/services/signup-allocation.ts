@@ -14,17 +14,33 @@ import {
   type FinancialTransaction,
   type PaperAccount,
 } from "@notional/db";
+import { silentLogger, type Logger } from "../market-data/types.js";
+import {
+  accountInitializedEffect,
+  safeOnPrivateCommitted,
+  type CommittedPrivateEffect,
+} from "../realtime/effects.js";
 
 export async function provisionSignupAllocation(
   userId: string,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
+  logger: Logger = silentLogger,
 ): Promise<PaperAccount> {
-  return db.transaction((tx) => provisionSignupAllocationInTx(tx, userId));
+  const result = await db.transaction((tx) => provisionSignupAllocationInTx(tx, userId));
+  if (result.credited) {
+    safeOnPrivateCommitted(
+      onPrivateCommitted,
+      accountInitializedEffect(result.account.id),
+      logger,
+    );
+  }
+  return result.account;
 }
 
 export async function provisionSignupAllocationInTx(
   tx: FinancialTransaction,
   userId: string,
-): Promise<PaperAccount> {
+): Promise<{ account: PaperAccount; credited: boolean }> {
   await ensurePaperAccount(tx, userId);
   const account = await lockPaperAccountByUserId(tx, userId);
   const userCash = await ensureUserCashLedgerAccount(tx, account.id);
@@ -33,7 +49,7 @@ export async function provisionSignupAllocationInTx(
   const existing = await findSignupAllocationFundingEvent(tx, account.id);
 
   if (existing) {
-    return account;
+    return { account, credited: false };
   }
 
   const idempotencyKey = signupAllocationIdempotencyKey(userId);
@@ -65,5 +81,8 @@ export async function provisionSignupAllocationInTx(
     SIGNUP_ALLOCATION_AMOUNT,
   );
 
-  return updatePaperAccountBalance(tx, account.id, nextBalance);
+  return {
+    account: await updatePaperAccountBalance(tx, account.id, nextBalance),
+    credited: true,
+  };
 }

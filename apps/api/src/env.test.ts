@@ -72,6 +72,16 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...process.env, FUNDING_SCAN_INTERVAL_MS: "-1" })).toThrow();
   });
 
+  it("defaults WebSocket coalesce and idle timeouts", () => {
+    const source = { ...process.env };
+    delete source.WS_MARKET_COALESCE_MS;
+    delete source.WS_IDLE_TIMEOUT_MS;
+    expect(parseEnv(source).WS_MARKET_COALESCE_MS).toBe(100);
+    expect(parseEnv(source).WS_IDLE_TIMEOUT_MS).toBe(45_000);
+    expect(() => parseEnv({ ...process.env, WS_MARKET_COALESCE_MS: "0" })).toThrow();
+    expect(() => parseEnv({ ...process.env, WS_IDLE_TIMEOUT_MS: "-1" })).toThrow();
+  });
+
   it("rejects invalid Binance URLs", () => {
     expect(() =>
       parseEnv({ ...process.env, BINANCE_FAPI_REST_BASE_URL: "not-a-url" }),

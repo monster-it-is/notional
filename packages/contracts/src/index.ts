@@ -73,3 +73,20 @@ export type {
   PositionNotFoundError,
   PositionResponse,
 } from "./position.js";
+export type {
+  HelloMessage,
+  MarketBboMessage,
+  MarketMarkMessage,
+  MarketSubscribeMessage,
+  MarketUnsubscribeMessage,
+  PingMessage,
+  PongMessage,
+  PrivateInvalidateMessage,
+  PrivateInvalidateReason,
+  PrivateResource,
+  RealtimeChannel,
+  RealtimeClientMessage,
+  RealtimeErrorMessage,
+  RealtimeServerMessage,
+} from "./realtime.js";
+export { REALTIME_PROTOCOL_VERSION } from "./realtime.js";

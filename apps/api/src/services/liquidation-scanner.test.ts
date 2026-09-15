@@ -165,6 +165,33 @@ describe("liquidation scanner", () => {
     ).toHaveLength(1);
   });
 
+  it("keeps scanning after a committed liquidation if realtime publication throws", async () => {
+    const { accountId } = await initializeUser(app, "scan-rt-throw@example.com");
+    const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    seedQuote(store, "BTCUSDT", { mark: "100", bid: "99", ask: "101", id: 1 });
+    await seedOpenPosition({
+      accountId,
+      instrumentId: btc.id,
+      marginMode: "CROSS",
+      leverage: 20,
+      quantity: "1",
+      entryPrice: "100",
+      isolatedMargin: "0",
+      walletBalance: "0.5",
+    });
+    const scanner = createLiquidationScanner({
+      marketData,
+      intervalMs: 1_000,
+      onPrivateCommitted: () => {
+        throw new Error("ws down");
+      },
+    });
+    await scanner.scanOnce();
+    expect(
+      await listLiquidationEventsByPaperAccountId(db, accountId, { limit: 10, offset: 0 }),
+    ).toHaveLength(1);
+  });
+
   it("logs an unexpected account error and continues the next account", async () => {
     const first = await initializeUser(app, "err-a@example.com");
     const second = await initializeUser(app, "err-b@example.com");
@@ -251,6 +278,8 @@ describe("liquidation scanner", () => {
     const source = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "../app.ts"), "utf8");
     expect(source).not.toContain("createLiquidationScanner");
     expect(source).not.toContain("liquidation-scanner");
+    expect(source).not.toContain("createRealtimeRuntime");
+    expect(source).not.toContain("createMarketDataRuntime");
   });
 });
 

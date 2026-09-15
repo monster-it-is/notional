@@ -73,6 +73,7 @@ export function createMarketDataRuntime(options: {
   logger?: Logger;
   connectionMaxMs?: number;
   onAcceptedBook?: (symbol: string) => void;
+  onAcceptedMark?: (symbol: string) => void;
 }): MarketDataRuntime {
   const env = options.env;
   const logger = options.logger ?? silentLogger;
@@ -128,8 +129,8 @@ export function createMarketDataRuntime(options: {
       ]);
 
       for (const tick of parsePremiumIndexTicks(premium)) {
-        if (catalogSymbols.has(tick.symbol)) {
-          store.applyMark(tick);
+        if (catalogSymbols.has(tick.symbol) && store.applyMark(tick)) {
+          options.onAcceptedMark?.(tick.symbol);
         }
       }
 
@@ -222,8 +223,8 @@ export function createMarketDataRuntime(options: {
           }
 
           for (const tick of parseMarkTicks(payload)) {
-            if (catalogSymbols.has(tick.symbol)) {
-              store.applyMark(tick);
+            if (catalogSymbols.has(tick.symbol) && store.applyMark(tick)) {
+              options.onAcceptedMark?.(tick.symbol);
             }
           }
         },

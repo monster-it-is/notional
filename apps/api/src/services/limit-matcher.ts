@@ -18,6 +18,7 @@ import { reduceOnlyAllows } from "../orders/validate-order.js";
 import { ISOLATED_TRADING_ENABLED } from "./isolated-trading.js";
 import { completeMatcherFillInTx, OrderPlacementError } from "./order-placement.js";
 import { FundingDataUnavailableError, settleDueFundingForAccountInTx } from "./funding-settlement.js";
+import { matcherEffect, safeOnPrivateCommitted, type CommittedPrivateEffect } from "../realtime/effects.js";
 
 const MATCHER_RETRY_CODES = new Set([
   "INSUFFICIENT_MARGIN",
@@ -31,9 +32,16 @@ export type LimitOrderMatcher = {
   processSymbol(symbol: string): Promise<void>;
 };
 
+export type MatchCandidateResult = {
+  paperAccountId: string;
+  filled: boolean;
+  settledFunding: boolean;
+};
+
 export function createLimitOrderMatcher(options: {
   marketData: MarketDataAccess;
   logger?: Logger;
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
 }): LimitOrderMatcher {
   const logger = options.logger ?? silentLogger;
   const inFlight = new Set<string>();
@@ -45,7 +53,14 @@ export function createLimitOrderMatcher(options: {
 
     for (const candidate of candidates) {
       try {
-        await db.transaction((tx) => matchCandidateInTx(tx, candidate, options.marketData));
+        const result = await db.transaction((tx) =>
+          matchCandidateInTx(tx, candidate, options.marketData),
+        );
+        safeOnPrivateCommitted(
+          options.onPrivateCommitted,
+          matcherEffect(result),
+          logger,
+        );
       } catch (error) {
         if (
           error instanceof OrderPlacementError &&
@@ -116,7 +131,7 @@ async function matchCandidateInTx(
   tx: FinancialTransaction,
   candidate: { order: Order; symbol: string },
   marketData: MarketDataAccess,
-): Promise<void> {
+): Promise<MatchCandidateResult> {
   const lockedAccount = await lockPaperAccountById(tx, candidate.order.paperAccountId);
   let barrier;
   try {
@@ -131,30 +146,37 @@ async function matchCandidateInTx(
     throw error;
   }
 
+  const settledFunding = barrier.settledBatches.length > 0;
+  const none: MatchCandidateResult = {
+    paperAccountId: lockedAccount.id,
+    filled: false,
+    settledFunding,
+  };
+
   const position = barrier.positions.find((row) => row.instrumentId === candidate.order.instrumentId);
 
   if (!position) {
-    return;
+    return none;
   }
 
   const locked = await lockOrderById(tx, barrier.account.id, candidate.order.id);
 
   if (!locked || locked.status !== "OPEN" || locked.orderType !== "LIMIT") {
-    return;
+    return none;
   }
 
   const instrument = await findInstrumentBySymbol(tx, candidate.symbol);
 
   if (!instrument) {
-    return;
+    return none;
   }
 
   if (!ISOLATED_TRADING_ENABLED && position.marginMode !== "CROSS") {
-    return;
+    return none;
   }
 
   if (instrument.status !== "ACTIVE" && !locked.reduceOnly) {
-    return;
+    return none;
   }
 
   const transition = classifyPositionTransition({
@@ -164,21 +186,21 @@ async function matchCandidateInTx(
   });
 
   if (position.marginMode === "ISOLATED" && transition === "REVERSE") {
-    return;
+    return none;
   }
 
   if (instrument.status !== "ACTIVE" && !reduceOnlyAllows(transition)) {
-    return;
+    return none;
   }
 
   const book = marketData.getFreshBook(instrument.symbol);
 
   if (book === null) {
-    return;
+    return none;
   }
 
   if (locked.limitPrice === null) {
-    return;
+    return none;
   }
 
   if (
@@ -189,7 +211,7 @@ async function matchCandidateInTx(
       bestAskPrice: book.bestAskPrice,
     })
   ) {
-    return;
+    return none;
   }
 
   const executionPrice = getLimitExecutionPrice({
@@ -200,11 +222,11 @@ async function matchCandidateInTx(
   });
 
   if (executionPrice === null) {
-    return;
+    return none;
   }
 
   if (locked.reduceOnly && !reduceOnlyAllows(transition)) {
-    return;
+    return none;
   }
 
   await completeMatcherFillInTx(tx, {
@@ -215,4 +237,10 @@ async function matchCandidateInTx(
     marketData,
     financialNow: barrier.financialNow,
   });
+
+  return {
+    paperAccountId: lockedAccount.id,
+    filled: true,
+    settledFunding,
+  };
 }

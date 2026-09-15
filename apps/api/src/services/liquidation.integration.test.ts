@@ -71,7 +71,11 @@ describe("liquidation transactions", () => {
     });
 
     const result = await liquidateCrossAccount({ paperAccountId: accountId, marketData });
-    expect(result).toEqual({ kind: "liquidated", eventId: expect.any(String) });
+    expect(result).toEqual({
+      kind: "liquidated",
+      eventId: expect.any(String),
+      settledFunding: expect.any(Boolean),
+    });
 
     const position = await findPositionByAccountAndInstrument(db, accountId, btc.id);
     expect(position?.quantity).toBe("0");
@@ -98,6 +102,38 @@ describe("liquidation transactions", () => {
     expect(events[0]?.instrumentId).toBeNull();
     const account = (await db.select().from(paperAccount)).find((row) => row.id === accountId);
     expect(toCanonicalDecimalString(account?.balance ?? "0")).toBe("0");
+  });
+
+  it("keeps a committed liquidation successful if realtime publication throws", async () => {
+    const { accountId } = await initializeUser(app, "liq-rt-throw@example.com");
+    const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    seedQuote(store, "BTCUSDT", { mark: "1", bid: "50", ask: "51", id: 1 });
+    await seedOpenPosition({
+      accountId,
+      instrumentId: btc.id,
+      marginMode: "CROSS",
+      leverage: 20,
+      quantity: "1",
+      entryPrice: "100",
+      isolatedMargin: "0",
+      walletBalance: "0.5",
+    });
+    const events: Array<{ reason: string }> = [];
+    const result = await liquidateCrossAccount({
+      paperAccountId: accountId,
+      marketData,
+      onPrivateCommitted: (effect) => {
+        events.push(effect);
+        throw new Error("ws down");
+      },
+    });
+    expect(result.kind).toBe("liquidated");
+    expect(events).toEqual([
+      expect.objectContaining({
+        paperAccountId: accountId,
+        reason: "LIQUIDATION",
+      }),
+    ]);
   });
 
   it("closes every CROSS position in one event with one aggregate REALIZED_PNL ledger", async () => {
@@ -234,7 +270,7 @@ describe("liquidation transactions", () => {
     });
 
     const result = await liquidateCrossAccount({ paperAccountId: accountId, marketData });
-    expect(result).toEqual({ kind: "noop", reason: "stale_bbo" });
+    expect(result).toEqual({ kind: "noop", reason: "stale_bbo", settledFunding: expect.any(Boolean) });
     expect((await findPositionByAccountAndInstrument(db, accountId, btc.id))?.quantity).toBe("1");
     expect((await findPositionByAccountAndInstrument(db, accountId, eth.id))?.quantity).toBe("1");
     expect(

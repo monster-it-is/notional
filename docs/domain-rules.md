@@ -525,7 +525,13 @@ Retries must not create another financial effect.
 
 The React frontend must not use Binance directly for trading decisions.
 
-Market data flows through the backend.
+Market data flows through the backend. Browser UIs may consume Notional `GET /ws/market` or authenticated REST market-data; they must not open a Binance socket of their own.
+
+WebSockets are not financially authoritative. REST remains the source of truth for persisted account, order, position, execution, funding, and liquidation state. After reconnect the client must REST-resync. Private sockets stream invalidation hints, not authoritative DTO copies.
+
+Opening or reconnecting `GET /ws/account` is not an initialization path. It must not create a paper account, allocate signup credit, claim faucet, or write the ledger. Uninitialized users are rejected with `409 ACCOUNT_NOT_INITIALIZED`.
+
+A committed financial transaction stays committed even if realtime publication fails. Realtime is best-effort notification.
 
 Stale market data must not be used to:
 

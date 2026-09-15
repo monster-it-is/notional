@@ -19,6 +19,8 @@ import {
 
 import { env } from "../env.js";
 import { FundingDataUnavailableError, settleDueFundingForAccountInTx } from "./funding-settlement.js";
+import { faucetEffect, safeOnPrivateCommitted, type CommittedPrivateEffect } from "../realtime/effects.js";
+import { silentLogger, type Logger } from "../market-data/types.js";
 
 export class FaucetClaimError extends Error {
   readonly code:
@@ -43,14 +45,27 @@ export class FaucetClaimError extends Error {
   }
 }
 
-export async function claimFaucet(userId: string): Promise<PaperAccount> {
-  return db.transaction((tx) => claimFaucetInTx(tx, userId));
+export async function claimFaucet(
+  userId: string,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
+  logger: Logger = silentLogger,
+): Promise<PaperAccount> {
+  const result = await db.transaction((tx) => claimFaucetInTx(tx, userId));
+  safeOnPrivateCommitted(
+    onPrivateCommitted,
+    faucetEffect({
+      paperAccountId: result.account.id,
+      settledFunding: result.settledFunding,
+    }),
+    logger,
+  );
+  return result.account;
 }
 
 export async function claimFaucetInTx(
   tx: FinancialTransaction,
   userId: string,
-): Promise<PaperAccount> {
+): Promise<{ account: PaperAccount; settledFunding: boolean }> {
   const existing = await findPaperAccountByUserId(tx, userId);
 
   if (!existing) {
@@ -121,9 +136,14 @@ export async function claimFaucetInTx(
 
   const nextBalance = fromDbDecimal(funded.account.balance).plus(faucetAmount);
 
-  return applyFaucetClaim(tx, {
+  const updated = await applyFaucetClaim(tx, {
     paperAccountId: funded.account.id,
     balance: nextBalance,
     claimedAtUtc: cooldown.claimedAtUtc,
   });
+
+  return {
+    account: updated,
+    settledFunding: funded.settledBatches.length > 0,
+  };
 }

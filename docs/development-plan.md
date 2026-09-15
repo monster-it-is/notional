@@ -89,7 +89,9 @@ Phase 15 adds deterministic, exactly-once perpetual funding settlement from Bina
 
 ## Phase 16 — WebSockets
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 16 adds backend-only browser WebSockets: public `GET /ws/market` (exact `WEB_ORIGIN`, catalog subscribe/unsubscribe, outbound 100ms coalesced BBO/mark from the existing coordinator store) and private `GET /ws/account` (Better Auth cookie session, read-only initialized-account bind, `private.invalidate` after COMMIT). One `RealtimeRuntime` is created in `server.ts` and injected into `buildApp`. Realtime failures after commit cannot fail the financial caller. No Redis, outbox, `apps/web` work, or trading mutations over WebSockets.
 
 ## Phase 17 — React Trading Interface
 

@@ -219,7 +219,11 @@ describe("perp funding HTTP and mutation integration", () => {
       updatePaperAccountBalance(tx, accountId, new MoneyDecimal("0.5")),
     );
     const skipped = await liquidateCrossAccount({ paperAccountId: accountId, marketData });
-    expect(skipped).toEqual({ kind: "noop", reason: "funding_data_unavailable" });
+    expect(skipped).toEqual({
+      kind: "noop",
+      reason: "funding_data_unavailable",
+      settledFunding: false,
+    });
     const stillOpen = await findPositionByAccountAndInstrument(db, accountId, btc.id);
     expect(fromDbDecimal(stillOpen?.quantity ?? "0").eq("1")).toBe(true);
 

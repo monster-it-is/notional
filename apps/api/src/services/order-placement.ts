@@ -57,6 +57,13 @@ import {
   FundingDataUnavailableError,
   settleDueFundingForAccountInTx,
 } from "./funding-settlement.js";
+import {
+  cancelOrderEffect,
+  placeOrderEffect,
+  safeOnPrivateCommitted,
+  type CommittedPrivateEffect,
+} from "../realtime/effects.js";
+import { silentLogger, type Logger } from "../market-data/types.js";
 
 const IDEMPOTENCY_KEY = /^[!-~]{1,128}$/;
 const CANONICAL_SYMBOL = /^[A-Z0-9]+$/;
@@ -119,6 +126,7 @@ export class OrderPlacementError extends Error {
 export type PlaceOrderResult = {
   created: boolean;
   order: OrderWithSymbol;
+  settledFunding: boolean;
 };
 
 export async function placeOrder(params: {
@@ -127,6 +135,8 @@ export async function placeOrder(params: {
   body: unknown;
   marketData: MarketDataAccess;
   onOpenOrderCommitted?: (symbol: string) => void;
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
+  logger?: Logger;
 }): Promise<PlaceOrderResult> {
   const idempotencyKey = parseIdempotencyKey(params.idempotencyKey);
   const request = parseCreateOrderRequest(params.body);
@@ -160,6 +170,17 @@ export async function placeOrder(params: {
   if (result.created && result.order.status === "OPEN") {
     params.onOpenOrderCommitted?.(result.order.symbol);
   }
+
+  safeOnPrivateCommitted(
+    params.onPrivateCommitted,
+    placeOrderEffect({
+      paperAccountId: account.id,
+      created: result.created,
+      status: result.order.status,
+      settledFunding: result.settledFunding,
+    }),
+    params.logger ?? silentLogger,
+  );
 
   return result;
 }
@@ -298,7 +319,7 @@ async function placeNewOrderInTx(
 
   try {
     if (params.request.type === "MARKET") {
-      return await placeMarketOrderInTx(tx, {
+      const placed = await placeMarketOrderInTx(tx, {
         account: barrier.account,
         position,
         instrument: params.instrument,
@@ -307,9 +328,10 @@ async function placeNewOrderInTx(
         marketData: params.marketData,
         financialNow: barrier.financialNow,
       });
+      return withSettledFunding(placed, barrier.settledBatches.length > 0);
     }
 
-    return await placeLimitOrderInTx(tx, {
+    const placed = await placeLimitOrderInTx(tx, {
       account: barrier.account,
       position,
       instrument: params.instrument,
@@ -318,6 +340,7 @@ async function placeNewOrderInTx(
       marketData: params.marketData,
       financialNow: barrier.financialNow,
     });
+    return withSettledFunding(placed, barrier.settledBatches.length > 0);
   } catch (error) {
     throw mapPlacementCause(error);
   }
@@ -514,6 +537,7 @@ async function placeLimitOrderInTx(
   return {
     created: inserted.kind === "created",
     order: await requireOrderResponse(tx, params.account.id, inserted.order.id),
+    settledFunding: false,
   };
 }
 
@@ -564,6 +588,7 @@ async function finishFilledPlacement(
     return {
       created: false,
       order: await requireOrderResponse(tx, account.id, fill.order.id),
+      settledFunding: false,
     };
   }
 
@@ -578,6 +603,7 @@ async function finishFilledPlacement(
   return {
     created: fill.kind === "created_filled",
     order: await requireOrderResponse(tx, account.id, fill.order.id),
+    settledFunding: false,
   };
 }
 
@@ -646,12 +672,14 @@ async function replayExistingOrder(
     throw new OrderPlacementError("INSTRUMENT_NOT_FOUND");
   }
 
-  return { created: false, order: withSymbol };
+  return { created: false, order: withSymbol, settledFunding: false };
 }
 
 export async function cancelUserOrder(params: {
   userId: string;
   orderId: string;
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
+  logger?: Logger;
 }): Promise<OrderWithSymbol> {
   const account = await loadInitializedAccount(params.userId);
 
@@ -660,13 +688,24 @@ export async function cancelUserOrder(params: {
   }
 
   try {
-    const cancelled = await db.transaction((tx) =>
-      cancelOpenLimitOrder(tx, account.id, params.orderId),
-    );
-    const withSymbol = await findAccountOrderById(db, account.id, cancelled.id);
+    const cancelled = await db.transaction(async (tx) => {
+      const current = await findAccountOrderById(tx, account.id, params.orderId);
+      const changed = current?.status === "OPEN";
+      const order = await cancelOpenLimitOrder(tx, account.id, params.orderId);
+      return { order, changed };
+    });
+    const withSymbol = await findAccountOrderById(db, account.id, cancelled.order.id);
 
     if (!withSymbol) {
       throw new OrderPlacementError("ORDER_NOT_FOUND");
+    }
+
+    if (cancelled.changed) {
+      safeOnPrivateCommitted(
+        params.onPrivateCommitted,
+        cancelOrderEffect(account.id),
+        params.logger ?? silentLogger,
+      );
     }
 
     return withSymbol;
@@ -677,6 +716,10 @@ export async function cancelUserOrder(params: {
 
     throw error;
   }
+}
+
+function withSettledFunding(result: PlaceOrderResult, settledFunding: boolean): PlaceOrderResult {
+  return { ...result, settledFunding };
 }
 
 async function requireOrderResponse(

@@ -9,6 +9,7 @@ import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { silentLogger, type Logger, type Scheduler, systemScheduler } from "../market-data/types.js";
 import { createFundingSync, type FundingRestClient } from "./funding-sync.js";
 import { FundingDataUnavailableError, settleDueFundingForAccountInTx } from "./funding-settlement.js";
+import { fundingSettledEffect, safeOnPrivateCommitted, type CommittedPrivateEffect } from "../realtime/effects.js";
 
 export type FundingScanner = {
   start(): void;
@@ -23,6 +24,7 @@ export function createFundingScanner(options: {
   logger?: Logger;
   scheduler?: Scheduler;
   onSettled?: () => void;
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
 }): FundingScanner {
   const logger = options.logger ?? silentLogger;
   const scheduler = options.scheduler ?? systemScheduler;
@@ -59,6 +61,13 @@ export function createFundingScanner(options: {
             sampleNow: async () => batch.fundingTime,
           });
         });
+        if (result.settledBatches.length > 0) {
+          safeOnPrivateCommitted(
+            options.onPrivateCommitted,
+            fundingSettledEffect(batch.paperAccountId),
+            logger,
+          );
+        }
         if (result.needsLiquidationRecheck || result.settledBatches.length > 0) {
           moved = moved || result.needsLiquidationRecheck;
         }

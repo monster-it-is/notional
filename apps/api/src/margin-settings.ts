@@ -13,6 +13,7 @@ import {
   readMarginSettings,
   updateMarginSettings,
 } from "./services/margin-settings.js";
+import type { CommittedPrivateEffect } from "./realtime/effects.js";
 
 const CANONICAL_SYMBOL = /^[A-Z0-9]+$/;
 
@@ -44,6 +45,7 @@ export async function getMarginSettings(
 export async function putMarginSettings(
   request: FastifyRequest,
   reply: FastifyReply,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
 ): Promise<
   | MarginSettingsResponse
   | AccountNotInitializedError
@@ -66,7 +68,7 @@ export async function putMarginSettings(
 
   try {
     const input = parseUpdateMarginSettingsRequest(request.body);
-    return await updateMarginSettings(session.user.id, symbol, input);
+    return await updateMarginSettings(session.user.id, symbol, input, onPrivateCommitted);
   } catch (error) {
     return sendMarginSettingsError(reply, error);
   }

@@ -23,10 +23,15 @@ import {
 } from "./market-data/coordinator.js";
 import { getOrderById, getOrders, postOrder, cancelOrder } from "./orders.js";
 import { getPositionBySymbol, getPositions } from "./positions.js";
+import type { CommittedPrivateEffect } from "./realtime/effects.js";
+import { registerRealtimeRoutes } from "./realtime/plugin.js";
+import type { RealtimeRuntime } from "./realtime/runtime.js";
 
 export type BuildAppOptions = {
   marketData?: MarketDataAccess;
   onOpenOrderCommitted?: (symbol: string) => void;
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
+  realtime?: RealtimeRuntime;
 };
 
 export async function buildApp(options: BuildAppOptions = {}) {
@@ -34,6 +39,11 @@ export async function buildApp(options: BuildAppOptions = {}) {
     logger: process.env.NODE_ENV !== "test",
   });
   const marketData = options.marketData ?? unavailableMarketDataAccess();
+  const onPrivateCommitted =
+    options.onPrivateCommitted ??
+    (options.realtime
+      ? (effect: CommittedPrivateEffect) => options.realtime?.onPrivateCommitted(effect)
+      : undefined);
 
   await app.register(cors, {
     origin: env.WEB_ORIGIN,
@@ -44,6 +54,10 @@ export async function buildApp(options: BuildAppOptions = {}) {
 
   await registerAuth(app);
 
+  if (options.realtime) {
+    await registerRealtimeRoutes(app, options.realtime);
+  }
+
   app.get("/health", async () => {
     await checkDatabaseHealth();
     return {
@@ -52,8 +66,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
   });
 
   app.get("/api/account", { preHandler: requireAuth }, getAccount);
-  app.post("/api/account/initialize", { preHandler: requireAuth }, initializeAccount);
-  app.post("/api/account/faucet", { preHandler: requireAuth }, claimAccountFaucet);
+  app.post("/api/account/initialize", { preHandler: requireAuth }, (request, reply) =>
+    initializeAccount(request, reply, onPrivateCommitted),
+  );
+  app.post("/api/account/faucet", { preHandler: requireAuth }, (request, reply) =>
+    claimAccountFaucet(request, reply, onPrivateCommitted),
+  );
   app.get("/api/account/funding", { preHandler: requireAuth }, getFundingHistory);
   app.get("/api/funding", { preHandler: requireAuth }, getPerpFundingHistory);
   app.get("/api/instruments", { preHandler: requireAuth }, getInstruments);
@@ -66,17 +84,21 @@ export async function buildApp(options: BuildAppOptions = {}) {
   );
   app.get("/api/orders", { preHandler: requireAuth }, getOrders);
   app.post("/api/orders", { preHandler: requireAuth }, (request, reply) =>
-    postOrder(request, reply, marketData, options.onOpenOrderCommitted),
+    postOrder(request, reply, marketData, options.onOpenOrderCommitted, onPrivateCommitted),
   );
   app.get("/api/orders/:id", { preHandler: requireAuth }, getOrderById);
-  app.post("/api/orders/:id/cancel", { preHandler: requireAuth }, cancelOrder);
+  app.post("/api/orders/:id/cancel", { preHandler: requireAuth }, (request, reply) =>
+    cancelOrder(request, reply, onPrivateCommitted),
+  );
   app.get("/api/executions", { preHandler: requireAuth }, getExecutions);
   app.get("/api/executions/:id", { preHandler: requireAuth }, getExecutionById);
   app.get("/api/liquidations", { preHandler: requireAuth }, getLiquidations);
   app.get("/api/positions", { preHandler: requireAuth }, getPositions);
   app.get("/api/positions/:symbol", { preHandler: requireAuth }, getPositionBySymbol);
   app.get("/api/margin-settings/:symbol", { preHandler: requireAuth }, getMarginSettings);
-  app.put("/api/margin-settings/:symbol", { preHandler: requireAuth }, putMarginSettings);
+  app.put("/api/margin-settings/:symbol", { preHandler: requireAuth }, (request, reply) =>
+    putMarginSettings(request, reply, onPrivateCommitted),
+  );
 
   app.get("/api/me", { preHandler: requireAuth }, async (request, reply): Promise<MeResponse | { error: string }> => {
     const session = request.auth;

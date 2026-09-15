@@ -26,6 +26,7 @@ import {
   FundingDataUnavailableError,
   settleDueFundingForAccountInTx,
 } from "./funding-settlement.js";
+import { liquidationEffect, safeOnPrivateCommitted, type CommittedPrivateEffect } from "../realtime/effects.js";
 import {
   calculateCrossLiquidationRisk,
   calculateIsolatedLiquidationRisk,
@@ -42,24 +43,47 @@ export type LiquidationResult =
   | {
       kind: "noop";
       reason: "safe" | "stale_mark" | "stale_bbo" | "flat" | "funding_data_unavailable";
+      settledFunding: boolean;
     }
-  | { kind: "liquidated"; eventId: string };
+  | { kind: "liquidated"; eventId: string; settledFunding: boolean };
 
 export async function liquidateIsolatedPosition(params: {
   paperAccountId: string;
   instrumentId: string;
   marketData: MarketDataAccess;
   logger?: Logger;
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
 }): Promise<LiquidationResult> {
-  return db.transaction((tx) => liquidateIsolatedPositionInTx(tx, params));
+  const result = await db.transaction((tx) => liquidateIsolatedPositionInTx(tx, params));
+  safeOnPrivateCommitted(
+    params.onPrivateCommitted,
+    liquidationEffect({
+      paperAccountId: params.paperAccountId,
+      liquidated: result.kind === "liquidated",
+      settledFunding: result.settledFunding,
+    }),
+    params.logger ?? silentLogger,
+  );
+  return result;
 }
 
 export async function liquidateCrossAccount(params: {
   paperAccountId: string;
   marketData: MarketDataAccess;
   logger?: Logger;
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
 }): Promise<LiquidationResult> {
-  return db.transaction((tx) => liquidateCrossAccountInTx(tx, params));
+  const result = await db.transaction((tx) => liquidateCrossAccountInTx(tx, params));
+  safeOnPrivateCommitted(
+    params.onPrivateCommitted,
+    liquidationEffect({
+      paperAccountId: params.paperAccountId,
+      liquidated: result.kind === "liquidated",
+      settledFunding: result.settledFunding,
+    }),
+    params.logger ?? silentLogger,
+  );
+  return result;
 }
 
 async function liquidateIsolatedPositionInTx(
@@ -81,28 +105,29 @@ async function liquidateIsolatedPositionInTx(
     });
   } catch (error) {
     if (error instanceof FundingDataUnavailableError) {
-      return { kind: "noop", reason: "funding_data_unavailable" };
+      return { kind: "noop", reason: "funding_data_unavailable", settledFunding: false };
     }
     throw error;
   }
 
+  const settledFunding = barrier.settledBatches.length > 0;
   const position = barrier.positions.find((row) => row.instrumentId === params.instrumentId);
   const instrument = await findInstrumentById(tx, params.instrumentId);
 
   if (!instrument || !position) {
-    return { kind: "noop", reason: "flat" };
+    return { kind: "noop", reason: "flat", settledFunding };
   }
 
   const account = barrier.account;
 
   if (position.marginMode !== "ISOLATED" || fromDbDecimal(position.quantity).isZero()) {
-    return { kind: "noop", reason: "flat" };
+    return { kind: "noop", reason: "flat", settledFunding };
   }
 
   const mark = params.marketData.getFreshMark(instrument.symbol);
   if (mark === null) {
     logger.warn("isolated liquidation skipped: stale mark", { symbol: instrument.symbol });
-    return { kind: "noop", reason: "stale_mark" };
+    return { kind: "noop", reason: "stale_mark", settledFunding };
   }
 
   const risk = calculateIsolatedLiquidationRisk({
@@ -113,13 +138,13 @@ async function liquidateIsolatedPositionInTx(
   });
 
   if (!risk.breached) {
-    return { kind: "noop", reason: "safe" };
+    return { kind: "noop", reason: "safe", settledFunding };
   }
 
   const book = params.marketData.getFreshBook(instrument.symbol);
   if (book === null) {
     logger.warn("isolated liquidation skipped: stale BBO", { symbol: instrument.symbol });
-    return { kind: "noop", reason: "stale_bbo" };
+    return { kind: "noop", reason: "stale_bbo", settledFunding };
   }
 
   const event = await createLiquidationEvent(tx, {
@@ -167,7 +192,7 @@ async function liquidateIsolatedPositionInTx(
     }).protectedBalance,
   });
 
-  return { kind: "liquidated", eventId: event.id };
+  return { kind: "liquidated", eventId: event.id, settledFunding };
 }
 
 async function liquidateCrossAccountInTx(
@@ -197,17 +222,18 @@ async function liquidateCrossAccountInTx(
     });
   } catch (error) {
     if (error instanceof FundingDataUnavailableError) {
-      return { kind: "noop", reason: "funding_data_unavailable" };
+      return { kind: "noop", reason: "funding_data_unavailable", settledFunding: false };
     }
     throw error;
   }
 
+  const settledFunding = barrier.settledBatches.length > 0;
   const account = barrier.account;
   const lockedPositions = await listOpenPositionsByPaperAccountId(tx, account.id);
   const crossPositions = lockedPositions.filter((row) => row.marginMode === "CROSS");
 
   if (crossPositions.length === 0) {
-    return { kind: "noop", reason: "flat" };
+    return { kind: "noop", reason: "flat", settledFunding };
   }
 
   const marks: Array<PositionWithSymbol & { markPrice: string }> = [];
@@ -215,7 +241,7 @@ async function liquidateCrossAccountInTx(
     const mark = params.marketData.getFreshMark(position.symbol);
     if (mark === null) {
       logger.warn("cross liquidation skipped: stale mark", { symbol: position.symbol });
-      return { kind: "noop", reason: "stale_mark" };
+      return { kind: "noop", reason: "stale_mark", settledFunding };
     }
 
     marks.push({ ...position, markPrice: mark.markPrice });
@@ -233,7 +259,7 @@ async function liquidateCrossAccountInTx(
   });
 
   if (!risk.breached) {
-    return { kind: "noop", reason: "safe" };
+    return { kind: "noop", reason: "safe", settledFunding };
   }
 
   const books = new Map<string, { bestBidPrice: string; bestAskPrice: string }>();
@@ -241,7 +267,7 @@ async function liquidateCrossAccountInTx(
     const book = params.marketData.getFreshBook(position.symbol);
     if (book === null) {
       logger.warn("cross liquidation skipped: stale BBO", { symbol: position.symbol });
-      return { kind: "noop", reason: "stale_bbo" };
+      return { kind: "noop", reason: "stale_bbo", settledFunding };
     }
 
     books.set(position.instrumentId, {
@@ -303,7 +329,7 @@ async function liquidateCrossAccountInTx(
     idempotencyKey: liquidationRealizedLedgerIdempotencyKey(event.id),
   });
 
-  return { kind: "liquidated", eventId: event.id };
+  return { kind: "liquidated", eventId: event.id, settledFunding };
 }
 
 async function cancelOpenOrders(

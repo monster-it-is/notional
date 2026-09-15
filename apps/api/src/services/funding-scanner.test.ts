@@ -88,6 +88,7 @@ describe("funding scanner", () => {
     );
     expect(source).not.toContain("createFundingScanner");
     expect(source).not.toContain("fundingScanner.start");
+    expect(source).not.toContain("createRealtimeRuntime");
   });
 
   it("continues after a source failure", async () => {
@@ -210,6 +211,59 @@ describe("funding scanner", () => {
     await scanner.scanOnce();
     expect(await findAccountSettlementByAccountAndTime(db, accountId, t1)).not.toBeNull();
     expect(rechecks).toBeGreaterThan(0);
+  });
+
+  it("keeps a committed funding settlement if realtime publication throws", async () => {
+    const { accountId, btcId } = await seedScannerAccount("scan-rt@example.com");
+    const t1 = new Date("2026-09-14T08:00:00.000Z");
+    const cursor = new Date("2026-09-14T00:00:00.000Z");
+    await db.transaction(async (tx) => {
+      const position = await ensurePosition(tx, accountId, btcId);
+      await updatePositionState(tx, position.id, {
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "0",
+        fundingCursorAt: cursor,
+      });
+      await ensurePerpFundingSourceState(tx, {
+        instrumentId: btcId,
+        activationFloorAt: cursor,
+      });
+    });
+    await db.transaction((tx) =>
+      insertReadyFundingCycle(tx, {
+        instrumentId: btcId,
+        fundingTime: t1,
+        fundingRate: "0.01",
+        markPrice: "100",
+      }),
+    );
+    await db.transaction((tx) => advanceLastRealizedFundingTime(tx, btcId, t1));
+    const events: Array<{ reason: string }> = [];
+    const scanner = createFundingScanner({
+      rest: {
+        async getFundingRate() {
+          return [];
+        },
+        async getMarkPriceKlines() {
+          return [];
+        },
+      },
+      marketData: emptyMarketData(),
+      intervalMs: 5_000,
+      onPrivateCommitted: (effect) => {
+        events.push(effect);
+        throw new Error("ws down");
+      },
+    });
+    await scanner.scanOnce();
+    expect(await findAccountSettlementByAccountAndTime(db, accountId, t1)).not.toBeNull();
+    expect(events).toEqual([
+      expect.objectContaining({
+        paperAccountId: accountId,
+        reason: "FUNDING_SETTLED",
+      }),
+    ]);
   });
 
   it("continues after an account data-unavailable skip", async () => {

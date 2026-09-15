@@ -342,6 +342,38 @@ describe("in-process LIMIT matcher", () => {
     ).toHaveLength(1);
   });
 
+  it("continues matching after a committed fill if realtime publication throws", async () => {
+    const { cookies, accountId } = await initializeUser(app, "match-rt-throw@example.com");
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    const marketable = await postOrder(app, cookies, "buy-90", {
+      type: "LIMIT",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.1",
+      limitPrice: "90",
+    });
+    expect((marketable.json() as OrderResponse).status).toBe("OPEN");
+    seedQuote(store, "BTCUSDT", { mark: "100", bid: "89", ask: "90", id: 2 });
+    const events: Array<{ reason: string }> = [];
+    const matcher = createLimitOrderMatcher({
+      marketData,
+      onPrivateCommitted: (effect) => {
+        events.push(effect);
+        throw new Error("ws down");
+      },
+    });
+    await matcher.processSymbol("BTCUSDT");
+    expect(events).toEqual([
+      expect.objectContaining({
+        paperAccountId: accountId,
+        reason: "LIMIT_MATCHED",
+      }),
+    ]);
+    expect(
+      (await findOrderById(db, accountId, (marketable.json() as OrderResponse).id))?.status,
+    ).toBe("FILLED");
+  });
+
   it("logs unexpected cycle errors and stays usable for a later tick", async () => {
     const { cookies, accountId } = await initializeUser(app, "matcher-log@example.com");
     await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));

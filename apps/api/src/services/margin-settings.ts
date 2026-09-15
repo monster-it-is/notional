@@ -31,6 +31,12 @@ import {
   MAX_LEVERAGE,
   MIN_LEVERAGE,
 } from "@notional/trading";
+import { silentLogger, type Logger } from "../market-data/types.js";
+import {
+  marginSettingsEffect,
+  safeOnPrivateCommitted,
+  type CommittedPrivateEffect,
+} from "../realtime/effects.js";
 
 export class MarginSettingsError extends Error {
   readonly code:
@@ -102,8 +108,17 @@ export async function updateMarginSettings(
   userId: string,
   symbol: string,
   input: UpdateMarginSettingsRequest,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
+  logger: Logger = silentLogger,
 ): Promise<MarginSettingsResponse> {
-  return db.transaction((tx) => updateMarginSettingsInTx(tx, userId, symbol, input));
+  const result = await db.transaction((tx) => updateMarginSettingsInTx(tx, userId, symbol, input));
+  const account = await findPaperAccountByUserId(db, userId);
+
+  if (account) {
+    safeOnPrivateCommitted(onPrivateCommitted, marginSettingsEffect(account.id), logger);
+  }
+
+  return result;
 }
 
 export async function updateMarginSettingsInTx(

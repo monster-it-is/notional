@@ -19,6 +19,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 
 import type { MarketDataAccess } from "./market-data/coordinator.js";
 import { cancelUserOrder, OrderPlacementError, placeOrder } from "./services/order-placement.js";
+import type { CommittedPrivateEffect } from "./realtime/effects.js";
 
 const DEFAULT_ORDER_LIMIT = 50;
 const MAX_ORDER_LIMIT = 100;
@@ -100,6 +101,7 @@ export async function postOrder(
   reply: FastifyReply,
   marketData: MarketDataAccess,
   onOpenOrderCommitted?: (symbol: string) => void,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
 ): Promise<OrderResponse | { error: string; reason?: string }> {
   const session = request.auth;
 
@@ -114,6 +116,7 @@ export async function postOrder(
       body: request.body,
       marketData,
       onOpenOrderCommitted,
+      onPrivateCommitted,
     });
 
     return reply.status(result.created ? 201 : 200).send(toOrderResponse(result.order));
@@ -125,6 +128,7 @@ export async function postOrder(
 export async function cancelOrder(
   request: FastifyRequest,
   reply: FastifyReply,
+  onPrivateCommitted?: (effect: CommittedPrivateEffect) => void,
 ): Promise<OrderResponse | OrderNotFoundError | { error: string }> {
   const session = request.auth;
 
@@ -142,6 +146,7 @@ export async function cancelOrder(
     const order = await cancelUserOrder({
       userId: session.user.id,
       orderId,
+      onPrivateCommitted,
     });
     return toOrderResponse(order);
   } catch (error) {
