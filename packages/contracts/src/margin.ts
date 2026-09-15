@@ -1,3 +1,6 @@
+export const MIN_LEVERAGE = 1;
+export const MAX_LEVERAGE = 100;
+
 export type MarginMode = "CROSS" | "ISOLATED";
 
 export type MarginSettingsResponse = {

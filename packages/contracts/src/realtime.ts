@@ -1,5 +1,10 @@
 export const REALTIME_PROTOCOL_VERSION = 1 as const;
 
+export const WS_CLOSE_AUTH_EXPIRED = 4401;
+export const WS_CLOSE_HEARTBEAT_TIMEOUT = 4408;
+export const WS_CLOSE_PRIVATE_BACKPRESSURE = 4429;
+export const WS_CLOSE_REASON_AUTH_EXPIRED = "AUTH_EXPIRED";
+
 export type RealtimeChannel = "market" | "account";
 
 export type PrivateResource =

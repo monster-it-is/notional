@@ -529,7 +529,10 @@ Market data flows through the backend. Browser UIs may consume Notional `GET /ws
 
 WebSockets are not financially authoritative. REST remains the source of truth for persisted account, order, position, execution, funding, and liquidation state. After reconnect the client must REST-resync. Private sockets stream invalidation hints, not authoritative DTO copies.
 
-Opening or reconnecting `GET /ws/account` is not an initialization path. It must not create a paper account, allocate signup credit, claim faucet, or write the ledger. Uninitialized users are rejected with `409 ACCOUNT_NOT_INITIALIZED`.
+Opening or reconnecting `GET /ws/account` is not an initialization path. It must not create a paper account, allocate signup credit, claim faucet, or write the ledger. Uninitialized users are rejected with `409 ACCOUNT_NOT_INITIALIZED`. The React SPA bootstraps the paper account with REST (`GET /api/account`, then `POST /api/account/initialize` on that 409) and must not treat `/ws/account` handshake HTTP statuses as a control flow; the browser cannot read them.
+
+The React frontend must not compute margin, unrealized PnL, liquidation price, available balance, equity, or tick/step financial arithmetic. Signed position quantity is displayed from the decimal string (`-` prefix is SHORT). Wallet `balance` is labeled as wallet balance, not equity.
+
 
 A committed financial transaction stays committed even if realtime publication fails. Realtime is best-effort notification.
 

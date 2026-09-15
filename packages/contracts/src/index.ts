@@ -37,6 +37,7 @@ export type {
   InstrumentInactiveError,
   InvalidOrderError,
   InvalidOrderReason,
+  InvalidPaginationError,
   InvalidQueryError,
   IsolatedReverseNotSupportedError,
   IsolatedTradingNotAvailableError,
@@ -50,6 +51,7 @@ export type {
   OrderType,
   ReduceOnlyViolationError,
 } from "./order.js";
+export { IDEMPOTENCY_KEY_HEADER } from "./order.js";
 export type {
   LiquidationListResponse,
   LiquidationResponse,
@@ -68,6 +70,7 @@ export type {
   PositionNotFlatError,
   UpdateMarginSettingsRequest,
 } from "./margin.js";
+export { MAX_LEVERAGE, MIN_LEVERAGE } from "./margin.js";
 export type {
   PositionListResponse,
   PositionNotFoundError,
@@ -89,4 +92,10 @@ export type {
   RealtimeErrorMessage,
   RealtimeServerMessage,
 } from "./realtime.js";
-export { REALTIME_PROTOCOL_VERSION } from "./realtime.js";
+export {
+  REALTIME_PROTOCOL_VERSION,
+  WS_CLOSE_AUTH_EXPIRED,
+  WS_CLOSE_HEARTBEAT_TIMEOUT,
+  WS_CLOSE_PRIVATE_BACKPRESSURE,
+  WS_CLOSE_REASON_AUTH_EXPIRED,
+} from "./realtime.js";

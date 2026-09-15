@@ -1,3 +1,5 @@
+export const IDEMPOTENCY_KEY_HEADER = "Idempotency-Key";
+
 export type OrderSide = "BUY" | "SELL";
 
 export type OrderType = "MARKET" | "LIMIT";
@@ -47,6 +49,10 @@ export type OrderNotFoundError = {
 
 export type InvalidQueryError = {
   error: "INVALID_QUERY";
+};
+
+export type InvalidPaginationError = {
+  error: "INVALID_PAGINATION";
 };
 
 export type InvalidOrderReason = "INVALID_QUANTITY" | "INVALID_PRICE" | "MIN_NOTIONAL";

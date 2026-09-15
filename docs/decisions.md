@@ -1104,6 +1104,21 @@ Private invalidations publish only after `db.transaction` resolves. Rollback emi
 
 Browser market coalescing is outbound-only (~100ms) and must not delay store mutation, matcher scheduling, or trading freshness. A slow market socket may skip a coalesced frame; healthy sockets are not delayed. Private backpressure closes that connection (`4429`) instead of silently dropping. Protocol version is 1. No Redis, outbox, JWT, or multi-process fanout.
 
+## ADR-037 — Frontend server-state and realtime ownership
+
+Status: Accepted
+
+Phase 17 implements the React SPA in `apps/web`. Financial authority does not move to the browser.
+
+- Better Auth (cookie session, `credentials: "include"`) is the only frontend authentication source. The SPA does not cache `GET /api/me` as a second session. No JWT or localStorage tokens.
+- REST is the source of truth for persisted financial state. TanStack Query holds those reads. Zustand holds only ephemeral market quotes and socket/protocol status, in memory, without persistence.
+- Paper-account bootstrap is REST: `GET /api/account`, then `POST /api/account/initialize` once on `409 ACCOUNT_NOT_INITIALIZED`. Sign-in and sign-up only authenticate and navigate. `/ws/account` is not an initialization path.
+- The browser WebSocket API cannot inspect rejected-upgrade HTTP 401/403/409. The SPA must not branch on those handshake statuses. Pre-protocol-ready account socket failures re-check Better Auth session and `GET /api/account`, then sign out, REST-bootstrap, or back off.
+- Native WebSocket `open` is not application-ready. Both sockets wait for `hello` with `protocolVersion === 1` and the expected channel before READY. Account reconnect resync (invalidate all private query groups) and market subscribe/resubscribe happen only after that hello. Protocol mismatch stops normal use.
+- `/ws/account` is invalidation-only (`private.invalidate` → query prefixes). `/ws/market` stores latest BBO/mark/index/funding/nextFundingTime in Zustand. Reconnect has no replay.
+- `web` depends on `@notional/contracts` only. It must not import `@notional/trading`, `@notional/db`, or `apps/api` internals. The browser does not compute PnL, margin, liquidation price, available balance, equity, or tick/step arithmetic. Displayed money/qty/price values remain decimal strings.
+
+
 
 
 

@@ -5,4 +5,9 @@ export default defineConfig({
   use: {
     baseURL: "http://localhost:5173",
   },
+  webServer: {
+    command: "pnpm --filter web dev",
+    url: "http://localhost:5173",
+    reuseExistingServer: true,
+  },
 });

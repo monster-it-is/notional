@@ -48,6 +48,11 @@ Redis must never be authoritative for:
 
 The frontend is never authoritative for financial decisions.
 
+`apps/web` is a React + TypeScript + Vite SPA. Better Auth cookie sessions are the only browser authentication source. TanStack Query caches persisted REST reads. Zustand holds ephemeral `/ws/market` quotes and socket protocol status only. Local React state holds forms and UI. The SPA never imports `@notional/trading`, `@notional/db`, or API internals.
+
+Authenticated bootstrap is REST: `GET /api/account`, then `POST /api/account/initialize` if uninitialized. `/ws/account` connects only after that bootstrap is READY. Native WebSocket `open` is not application-ready; both sockets wait for `hello` (`protocolVersion === 1`). Account reconnect invalidates private REST queries after hello because Phase 16 has no replay. Market reconnect resubscribes after hello. Browser JavaScript cannot inspect rejected WebSocket upgrade HTTP statuses.
+
+
 ## Dependency Direction
 
 web -> contracts

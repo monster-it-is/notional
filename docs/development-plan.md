@@ -95,7 +95,9 @@ Phase 16 adds backend-only browser WebSockets: public `GET /ws/market` (exact `W
 
 ## Phase 17 — React Trading Interface
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 17 replaces the Vite template in `apps/web` with the paper-trading SPA. Better Auth cookie sessions authenticate. REST remains persisted financial truth (TanStack Query). `/ws/account` is invalidation-only after REST account bootstrap. `/ws/market` is ephemeral Zustand quotes. Protocol-READY requires a valid `hello` (`protocolVersion === 1`). The browser does not import `@notional/trading` and does not compute margin/PnL/liquidation formulas.
 
 ## Phase 18 — Testing, Hardening, and Deployment
 
