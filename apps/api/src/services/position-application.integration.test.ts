@@ -15,10 +15,11 @@ import {
   pool,
   updateMarginSettingsForFlatPosition,
   user,
-  upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables } from "@notional/db/test";
 import { afterAll, beforeEach, describe, expect, it } from "vitest";
+
+import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./funding-test-fixtures.js";
 
 import {
   applyCreatedExecutionToPosition,

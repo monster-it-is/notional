@@ -67,7 +67,36 @@ export function createBinanceRestClient(options: {
     getExchangeInfo: () => getJson("/fapi/v1/exchangeInfo"),
     getPremiumIndex: () => getJson("/fapi/v1/premiumIndex"),
     getBookTicker: () => getJson("/fapi/v1/ticker/bookTicker"),
+    getFundingRate: (query: {
+      symbol: string;
+      startTime?: number;
+      endTime?: number;
+      limit?: number;
+    }) => getJson(withQuery("/fapi/v1/fundingRate", query)),
+    getMarkPriceKlines: (query: {
+      symbol: string;
+      interval: "1m";
+      startTime?: number;
+      endTime?: number;
+      limit?: number;
+    }) => getJson(withQuery("/fapi/v1/markPriceKlines", query)),
   };
+}
+
+function withQuery(
+  path: string,
+  query: Record<string, string | number | undefined>,
+): string {
+  const search = new URLSearchParams();
+
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined) {
+      search.set(key, String(value));
+    }
+  }
+
+  const encoded = search.toString();
+  return encoded === "" ? path : `${path}?${encoded}`;
 }
 
 function abortAfter(timeoutMs: number, parent?: AbortSignal): AbortSignal {

@@ -345,7 +345,7 @@ Permanent roles:
 - paper MARKET BUY → fresh best ask
 - paper MARKET SELL → fresh best bid
 - unrealized PnL, liquidation, and margin/risk → fresh mark price
-- funding settlement → Binance funding rate and next funding time, with mark semantics
+- funding settlement → Binance USD-M realized `fundingRate` history plus the exact preceding 1-minute mark-price kline (`expectedCloseTime`); live mark-stream `nextFundingTime` is a schedule hint only
 - index price → reference only
 
 Phase 7 records these sources in the in-memory store. It does not execute orders or compute PnL.
@@ -726,11 +726,11 @@ Combined CHECK `trading_position_isolated_margin_by_mode`:
 
 - `CROSS` → `isolated_margin = 0`
 - `ISOLATED` AND `quantity = 0` → `isolated_margin = 0`
-- `ISOLATED` AND `quantity <> 0` → `isolated_margin > 0`
+- `ISOLATED` AND `quantity <> 0` → `isolated_margin >= 0`
 
 Existing Phase 11 rows migrate as `CROSS / 1 / 0`. Quantity/entry invariants are unchanged.
 
-`ensurePosition` relies on those defaults. `updatePositionState` writes quantity, entry, realized PnL, and `isolated_margin` in one UPDATE. CROSS always persists `isolated_margin = 0`. Isolated non-flat persists a positive ROUND_UP allocation; isolated flat persists 0.
+`ensurePosition` relies on those defaults. `updatePositionState` writes quantity, entry, realized PnL, and `isolated_margin` in one UPDATE. CROSS always persists `isolated_margin = 0`. Isolated OPEN still allocates positive ROUND_UP initial margin. After Phase 15 funding, an already-open isolated position may sit at zero collateral; negative isolated margin remains forbidden.
 
 PostgreSQL CHECKs are immediate. Isolated fill persistence, when enabled, must write quantity/entry/realized PnL and `isolated_margin` in one `UPDATE`.
 
@@ -998,7 +998,7 @@ No nonzero CROSS positions: no CROSS liquidation event even if equity `<= 0`. Ev
 
 ### Isolated allocation
 
-Isolated margin is reserved existing wallet collateral. Non-flat: `ROUND_UP(abs(qty) × persisted HALF_EVEN entry / leverage)` to `NUMERIC(38,18)`. Flat: `0`. CROSS always `0`. One SQL UPDATE writes quantity, entry, realized PnL, and `isolated_margin`. Mark ticks do not rewrite isolated margin. Isolated REVERSE is unsupported (`409 ISOLATED_REVERSE_NOT_SUPPORTED`). A resting isolated order that later becomes REVERSE stays OPEN.
+Isolated margin is actual current isolated collateral. OPEN starts at ROUND_UP required IM. Later funding credits/debits move it. Fills use required-margin delta rather than resetting to required IM. Flat: `0`. CROSS always `0`. One SQL UPDATE writes quantity, entry, realized PnL, and `isolated_margin` (and OPEN also writes `funding_cursor_at`). Mark ticks do not rewrite isolated margin. Isolated REVERSE is unsupported (`409 ISOLATED_REVERSE_NOT_SUPPORTED`). A resting isolated order that later becomes REVERSE stays OPEN. Isolated INCREASE is rejected with `INSUFFICIENT_MARGIN` when actual collateral is below required IM.
 
 Isolated OPEN/INCREASE: post-fill CROSS `available >= 0` using the new total isolated reserve. Wallet is not mutated merely because margin is reserved. Isolated REDUCE/CLOSE: `lossCapacity = current - next`; `protectedBalance = wallet - lossCapacity`; insurance absorbs excess; no CROSS affordability sweep.
 
@@ -1041,6 +1041,53 @@ Authenticated `GET /api/liquidations`, account-scoped, newest first, default 50 
 ### Out of scope
 
 Funding settlement, fees, liquidation fee, partial liquidation, tiers, Binance brackets, ADL, manual isolated margin, isolated reverse, TP/SL, partial fills, Redis locks, multi-process liquidation coordination, frontend, Binance order placement, live public risk API.
+
+## ADR-035 — Perpetual Funding Settlement
+
+Status: Accepted
+
+Phase 15 settles Binance USD-M realized funding exactly once, restart-recoverably, without computing a premium/index formula. Binance remains market data only. Existing `funding_event` / `GET /api/account/funding` stay paper-wallet credits.
+
+### Rate and mark
+
+Authoritative rate: `GET /fapi/v1/fundingRate`. Persist HALF_EVEN `NUMERIC(38,18)` with `abs(rate) < 1` before and after quantization. Do not use live `r`, REST `lastFundingRate`, or a hardcoded 8h grid. Do not use Binance history `markPrice`.
+
+Settlement mark is the 1-minute mark-price candle with `closeTime === floor(fundingTimeMs / 60000) * 60000 - 1`. Require `closeTime - openTime + 1 === 60000`. No older-candle fallback.
+
+`fundingPayment = -(signedQuantity × settlementMarkPrice × fundingRate)` then HALF_EVEN persist. Overflow rolls back the whole account/time batch.
+
+### Cursor and economic boundary
+
+`trading_position.funding_cursor_at` is an eligibility cursor: cycles with `funding_time <= cursor` are not payable. OPEN from flat sets cursor to `financialNow`. Settlement advances it to `cycle.funding_time`. Migration default is PostgreSQL UTC now (no pre-Phase-15 backfill).
+
+After `paper_account FOR UPDATE`, immediately sample `financialNow = clock_timestamp() AT TIME ZONE 'UTC'`. That sample is the economic boundary, not lock-acquisition time. No Binance HTTP while financial locks are held.
+
+### Window proof
+
+Prove `(funding_cursor_at, financialNow]` for every currently nonzero position. Enumerating known cycles is not enough.
+
+```
+effectiveProofBase = last_realized_funding_time ?? activation_floor_at
+LiveScheduleProof { validFrom, nextFundingTime, observedAt }
+```
+
+`activation_floor_at` is the Phase-15 cutover floor, not Binance-history evidence. `last_realized_funding_time` advances only to a returned realized `fundingTime`. Restart clears every in-process `LiveScheduleProof`. Proof B may be established only after this process reconciles history from `effectiveProofBase` and then observes `nextFundingTime`; `validFrom` is that base. A post-downtime snapshot of `24:00` at `16:05` cannot prove `(08:00, 16:05]`. Proof A and B compose.
+
+Unresolved `SCHEDULED` in the window fails closed (`FUNDING_DATA_UNAVAILABLE` / 503). No publication-finality timer.
+
+Account/time completeness at `T` applies only to currently nonzero positions with `cursor < T`. A position opened after `T` is not liable and must not block `(A, T)`.
+
+### Settlement and ledger
+
+CROSS payments at one timestamp net, then one `calculateProtectedWalletSettlement` against post-isolated wallet and isolated reserves. Isolated funding moves wallet and `isolated_margin` together; free CROSS cash is unchanged. Different `funding_time` values never net.
+
+Ledger: `SYSTEM_FUNDING` and `FUNDING_PAYMENT`. Idempotency `funding-payment:<accountSettlementId>`. Skip ledger when every amount is zero. Never add funding to `trading_position.realized_pnl`.
+
+READY snapshots are immutable. Identical payload replay is a no-op; a different payload is a hard conflict.
+
+### Runtime
+
+Funding scanner (`FUNDING_SCAN_INTERVAL_MS` default 5000) starts from `server.ts` `onReady` after market data, not `buildApp`. `GET /api/funding` is authenticated history. Predicted rate stays on `GET /api/market-data/:symbol`. Funding commits before liquidation recheck; the funding kline mark is not the liquidation trigger or BBO.
 
 
 

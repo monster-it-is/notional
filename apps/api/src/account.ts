@@ -89,6 +89,10 @@ export async function claimAccountFaucet(
         });
       }
 
+      if (error.code === "FUNDING_DATA_UNAVAILABLE") {
+        return reply.status(503).send({ error: error.code });
+      }
+
       return reply.status(409).send({ error: error.code });
     }
 

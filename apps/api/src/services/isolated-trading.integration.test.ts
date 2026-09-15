@@ -10,7 +10,6 @@ import {
   ledgerTransaction,
   listExecutionsByPaperAccountId,
   paperAccount,
-  upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables } from "@notional/db/test";
 import { toCanonicalDecimalString } from "@notional/trading";
@@ -20,6 +19,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { createMarketDataStore, type MarketDataStore } from "../market-data/market-data-store.js";
+import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./funding-test-fixtures.js";
 import { createLimitOrderMatcher } from "./limit-matcher.js";
 
 const password = "correct-horse-battery";

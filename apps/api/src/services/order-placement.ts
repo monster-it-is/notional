@@ -11,7 +11,6 @@ import {
   cancelOpenLimitOrder,
   completeOpenLimitOrder,
   db,
-  ensurePosition,
   findAccountOrderById,
   findInstrumentById,
   findInstrumentBySymbol,
@@ -20,9 +19,7 @@ import {
   findSignupAllocationFundingEvent,
   insertFilledOrderWithExecution,
   insertOpenLimitOrder,
-  lockInstrumentByIdForTrading,
   lockPaperAccountById,
-  lockPositionByAccountAndInstrument,
   OrderMutationError,
   sameRequestFingerprint,
   sumIsolatedMarginByPaperAccountId,
@@ -53,9 +50,13 @@ import {
 } from "../orders/validate-order.js";
 import { applyPositionForFillResult } from "./position-application.js";
 import { calculateCrossPortfolioRisk, CrossRiskError } from "./cross-risk.js";
-import { isolatedReduceSettlementProtection } from "./isolated-fill.js";
+import { IsolatedIncreaseBlockedError, isolatedReduceSettlementProtection } from "./isolated-fill.js";
 import { ISOLATED_TRADING_ENABLED } from "./isolated-trading.js";
 import { settleCreatedFillRealizedPnlInTx } from "./realized-settlement.js";
+import {
+  FundingDataUnavailableError,
+  settleDueFundingForAccountInTx,
+} from "./funding-settlement.js";
 
 const IDEMPOTENCY_KEY = /^[!-~]{1,128}$/;
 const CANONICAL_SYMBOL = /^[A-Z0-9]+$/;
@@ -92,6 +93,7 @@ export type OrderPlacementCode =
   | "INSTRUMENT_NOT_FOUND"
   | "INSTRUMENT_INACTIVE"
   | "MARKET_DATA_UNAVAILABLE"
+  | "FUNDING_DATA_UNAVAILABLE"
   | "REDUCE_ONLY_VIOLATION"
   | "INSUFFICIENT_MARGIN"
   | "ISOLATED_TRADING_NOT_AVAILABLE"
@@ -169,13 +171,19 @@ export async function applyCreatedFillEffectsInTx(
     lockedPosition: Position;
     fill: Extract<InsertFilledOrderResult, { kind: "created_filled" | "replayed_filled" }>;
     marketData: MarketDataAccess;
+    financialNow: Date;
   },
 ): Promise<void> {
   if (params.fill.kind === "replayed_filled") {
     return;
   }
 
-  const applied = await applyPositionForFillResult(tx, params.lockedPosition, params.fill);
+  const applied = await applyPositionForFillResult(
+    tx,
+    params.lockedPosition,
+    params.fill,
+    params.financialNow,
+  );
 
   if (applied.kind === "replayed") {
     return;
@@ -251,55 +259,64 @@ async function placeNewOrderInTx(
     marketData: MarketDataAccess;
   },
 ): Promise<PlaceOrderResult> {
-  const account = await lockPaperAccountById(tx, params.accountId);
-  const allocation = await findSignupAllocationFundingEvent(tx, account.id);
+  const lockedAccount = await lockPaperAccountById(tx, params.accountId);
+  const allocation = await findSignupAllocationFundingEvent(tx, lockedAccount.id);
 
   if (!allocation) {
     throw new OrderPlacementError("ACCOUNT_NOT_INITIALIZED");
   }
 
-  if (account.status === "SUSPENDED") {
+  if (lockedAccount.status === "SUSPENDED") {
     throw new OrderPlacementError("ACCOUNT_SUSPENDED");
   }
 
-  const instrument = await lockInstrumentByIdForTrading(tx, params.instrument.id);
+  const existing = await findOrderByIdempotencyKey(tx, lockedAccount.id, params.idempotencyKey);
 
-  if (!instrument) {
-    throw new OrderPlacementError("INSTRUMENT_NOT_FOUND");
+  if (existing) {
+    return replayExistingOrder(existing, params.request, params.instrument);
   }
 
-  await ensurePosition(tx, account.id, instrument.id);
-  const position = await lockPositionByAccountAndInstrument(tx, account.id, instrument.id);
+  let barrier;
+  try {
+    barrier = await settleDueFundingForAccountInTx(tx, {
+      accountId: lockedAccount.id,
+      extraInstrumentIds: [params.instrument.id],
+    });
+  } catch (error) {
+    throw mapPlacementCause(error);
+  }
+
+  const position = barrier.positions.find((row) => row.instrumentId === params.instrument.id);
+
+  if (!position) {
+    throw new Error("trading_position missing after funding barrier");
+  }
 
   if (!ISOLATED_TRADING_ENABLED && position.marginMode === "ISOLATED") {
     throw new OrderPlacementError("ISOLATED_TRADING_NOT_AVAILABLE");
   }
 
-  const existing = await findOrderByIdempotencyKey(tx, account.id, params.idempotencyKey);
-
-  if (existing) {
-    return replayExistingOrder(existing, params.request, instrument);
-  }
-
   try {
     if (params.request.type === "MARKET") {
       return await placeMarketOrderInTx(tx, {
-        account,
+        account: barrier.account,
         position,
-        instrument,
+        instrument: params.instrument,
         request: params.request,
         idempotencyKey: params.idempotencyKey,
         marketData: params.marketData,
+        financialNow: barrier.financialNow,
       });
     }
 
     return await placeLimitOrderInTx(tx, {
-      account,
+      account: barrier.account,
       position,
-      instrument,
+      instrument: params.instrument,
       request: params.request,
       idempotencyKey: params.idempotencyKey,
       marketData: params.marketData,
+      financialNow: barrier.financialNow,
     });
   } catch (error) {
     throw mapPlacementCause(error);
@@ -315,6 +332,7 @@ async function placeMarketOrderInTx(
     request: Extract<CreateOrderRequest, { type: "MARKET" }>;
     idempotencyKey: string;
     marketData: MarketDataAccess;
+    financialNow: Date;
   },
 ): Promise<PlaceOrderResult> {
   const reduceOnly = params.request.reduceOnly ?? false;
@@ -370,7 +388,14 @@ async function placeMarketOrderInTx(
     executionPrice,
   });
 
-  return finishFilledPlacement(tx, params.account, params.position, fill, params.marketData);
+  return finishFilledPlacement(
+    tx,
+    params.account,
+    params.position,
+    fill,
+    params.marketData,
+    params.financialNow,
+  );
 }
 
 async function placeLimitOrderInTx(
@@ -382,6 +407,7 @@ async function placeLimitOrderInTx(
     request: Extract<CreateOrderRequest, { type: "LIMIT" }>;
     idempotencyKey: string;
     marketData: MarketDataAccess;
+    financialNow: Date;
   },
 ): Promise<PlaceOrderResult> {
   const reduceOnly = params.request.reduceOnly ?? false;
@@ -449,7 +475,14 @@ async function placeLimitOrderInTx(
       executionPrice,
     });
 
-    return finishFilledPlacement(tx, params.account, params.position, fill, params.marketData);
+    return finishFilledPlacement(
+      tx,
+      params.account,
+      params.position,
+      fill,
+      params.marketData,
+      params.financialNow,
+    );
   }
 
   const reservedMargin = exit
@@ -521,6 +554,7 @@ async function finishFilledPlacement(
   position: Position,
   fill: InsertFilledOrderResult,
   marketData: MarketDataAccess,
+  financialNow: Date,
 ): Promise<PlaceOrderResult> {
   if (fill.kind === "key_reused") {
     throw new OrderPlacementError("IDEMPOTENCY_KEY_REUSED");
@@ -538,6 +572,7 @@ async function finishFilledPlacement(
     lockedPosition: position,
     fill,
     marketData,
+    financialNow,
   });
 
   return {
@@ -554,6 +589,7 @@ export async function completeMatcherFillInTx(
     order: Order;
     executionPrice: string;
     marketData: MarketDataAccess;
+    financialNow: Date;
   },
 ): Promise<void> {
   try {
@@ -569,6 +605,7 @@ export async function completeMatcherFillInTx(
       lockedPosition: params.position,
       fill,
       marketData: params.marketData,
+      financialNow: params.financialNow,
     });
   } catch (error) {
     throw mapPlacementCause(error);
@@ -722,6 +759,14 @@ function assertInstrumentEligibility(
 function mapPlacementCause(error: unknown): unknown {
   if (error instanceof OrderPlacementError) {
     return error;
+  }
+
+  if (error instanceof FundingDataUnavailableError) {
+    return new OrderPlacementError("FUNDING_DATA_UNAVAILABLE");
+  }
+
+  if (error instanceof IsolatedIncreaseBlockedError) {
+    return new OrderPlacementError("INSUFFICIENT_MARGIN");
   }
 
   if (error instanceof OrderValidationError) {

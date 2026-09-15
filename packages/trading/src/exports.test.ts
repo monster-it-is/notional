@@ -34,6 +34,14 @@ describe("public package boundary", () => {
     expect(typeof trading.sumDecimalValues).toBe("function");
     expect(typeof trading.isDecimalGte).toBe("function");
     expect(typeof trading.calculateWalletRealizedSettlement).toBe("function");
+    expect(typeof trading.calculateProtectedWalletSettlement).toBe("function");
+    expect(typeof trading.calculateFundingPayment).toBe("function");
+    expect(typeof trading.calculateIsolatedFundingSettlement).toBe("function");
+    expect(typeof trading.calculateNextIsolatedCollateralAfterFill).toBe("function");
+    expect(typeof trading.persistFundingRateToNumeric3818).toBe("function");
+    expect(typeof trading.windowProven).toBe("function");
+    expect(typeof trading.expectedMarkCandleCloseTimeMs).toBe("function");
+    expect(typeof trading.effectiveProofBase).toBe("function");
     expect(typeof trading.TradingMathError).toBe("function");
     expect(typeof trading.getMarketExecutionPrice).toBe("function");
     expect(typeof trading.getLimitExecutionPrice).toBe("function");

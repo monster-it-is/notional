@@ -3,7 +3,9 @@ import { env } from "./env.js";
 import { createMarketDataRuntime } from "./market-data/coordinator.js";
 import type { Logger } from "./market-data/types.js";
 import { createLimitOrderMatcher } from "./services/limit-matcher.js";
+import { createFundingScanner } from "./services/funding-scanner.js";
 import { createLiquidationScanner } from "./services/liquidation-scanner.js";
+import { createBinanceRestClient } from "./market-data/rest-client.js";
 
 const logger: Logger = {
   info() {},
@@ -29,6 +31,16 @@ const start = async () => {
     intervalMs: env.LIQUIDATION_SCAN_INTERVAL_MS,
     logger,
   });
+  const fundingScanner = createFundingScanner({
+    rest: createBinanceRestClient({
+      restBaseUrl: env.BINANCE_FAPI_REST_BASE_URL,
+      timeoutMs: env.BINANCE_HTTP_TIMEOUT_MS,
+    }),
+    marketData,
+    intervalMs: env.FUNDING_SCAN_INTERVAL_MS,
+    logger,
+    onSettled: () => scanner.requestScan(),
+  });
   notifyAcceptedBook = (symbol) => matcher.schedule(symbol);
   const app = await buildApp({
     marketData,
@@ -38,9 +50,11 @@ const start = async () => {
   app.addHook("onReady", async () => {
     await marketData.start();
     scanner.start();
+    fundingScanner.start();
   });
 
   app.addHook("onClose", async () => {
+    fundingScanner.stop();
     scanner.stop();
     await marketData.stop();
   });

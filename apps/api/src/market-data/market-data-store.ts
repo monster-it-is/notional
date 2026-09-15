@@ -6,6 +6,7 @@ import { systemClock } from "./types.js";
 export type FreshMark = {
   symbol: string;
   markPrice: string;
+  nextFundingTime: number;
 };
 
 export type FreshBook = {
@@ -99,6 +100,7 @@ export function createMarketDataStore(clock: Clock = systemClock): MarketDataSto
       return {
         symbol,
         markPrice: mark.markPrice,
+        nextFundingTime: mark.nextFundingTime,
       };
     },
 

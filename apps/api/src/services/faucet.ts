@@ -18,16 +18,22 @@ import {
 } from "@notional/db";
 
 import { env } from "../env.js";
+import { FundingDataUnavailableError, settleDueFundingForAccountInTx } from "./funding-settlement.js";
 
 export class FaucetClaimError extends Error {
   readonly code:
     | "ACCOUNT_NOT_INITIALIZED"
     | "ACCOUNT_SUSPENDED"
-    | "FAUCET_COOLDOWN";
+    | "FAUCET_COOLDOWN"
+    | "FUNDING_DATA_UNAVAILABLE";
   readonly nextClaimAt: Date | null;
 
   constructor(
-    code: "ACCOUNT_NOT_INITIALIZED" | "ACCOUNT_SUSPENDED" | "FAUCET_COOLDOWN",
+    code:
+      | "ACCOUNT_NOT_INITIALIZED"
+      | "ACCOUNT_SUSPENDED"
+      | "FAUCET_COOLDOWN"
+      | "FUNDING_DATA_UNAVAILABLE",
     nextClaimAt: Date | null = null,
   ) {
     super(code);
@@ -62,7 +68,20 @@ export async function claimFaucetInTx(
     throw new FaucetClaimError("ACCOUNT_SUSPENDED");
   }
 
-  const cooldown = await readFaucetCooldownState(tx, account.id);
+  let funded;
+  try {
+    funded = await settleDueFundingForAccountInTx(tx, {
+      accountId: account.id,
+      extraInstrumentIds: [],
+    });
+  } catch (error) {
+    if (error instanceof FundingDataUnavailableError) {
+      throw new FaucetClaimError("FUNDING_DATA_UNAVAILABLE");
+    }
+    throw error;
+  }
+
+  const cooldown = await readFaucetCooldownState(tx, funded.account.id);
 
   if (!cooldown.eligible) {
     if (!cooldown.nextClaimAt) {
@@ -72,10 +91,10 @@ export async function claimFaucetInTx(
     throw new FaucetClaimError("FAUCET_COOLDOWN", cooldown.nextClaimAt);
   }
 
-  const userCash = await ensureUserCashLedgerAccount(tx, account.id);
+  const userCash = await ensureUserCashLedgerAccount(tx, funded.account.id);
   const systemFunding = await ensureSystemVirtualFundingAccount(tx);
   const faucetAmount = env.FAUCET_AMOUNT;
-  const idempotencyKey = faucetClaimIdempotencyKey(account.id, randomUUID());
+  const idempotencyKey = faucetClaimIdempotencyKey(funded.account.id, randomUUID());
 
   const ledgerTxn = await postLedgerTransaction(tx, {
     eventType: "FAUCET_CLAIM",
@@ -93,17 +112,17 @@ export async function claimFaucetInTx(
   });
 
   await insertFundingEvent(tx, {
-    paperAccountId: account.id,
+    paperAccountId: funded.account.id,
     eventType: "FAUCET_CLAIM",
     amount: faucetAmount,
     idempotencyKey,
     ledgerTransactionId: ledgerTxn.id,
   });
 
-  const nextBalance = fromDbDecimal(account.balance).plus(faucetAmount);
+  const nextBalance = fromDbDecimal(funded.account.balance).plus(faucetAmount);
 
   return applyFaucetClaim(tx, {
-    paperAccountId: account.id,
+    paperAccountId: funded.account.id,
     balance: nextBalance,
     claimedAtUtc: cooldown.claimedAtUtc,
   });

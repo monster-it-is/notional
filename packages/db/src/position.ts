@@ -5,6 +5,7 @@ import type { FinancialTransaction } from "./executor.js";
 import { fromDbDecimal, toDbDecimal } from "./money.js";
 import { instrument } from "./schema/instrument.js";
 import { tradingPosition } from "./schema/position.js";
+import { fromUtcTimestamp, utcTimestampFromDate } from "./time.js";
 
 export type MarginMode = "CROSS" | "ISOLATED";
 
@@ -18,6 +19,7 @@ export type Position = {
   marginMode: MarginMode;
   leverage: number;
   isolatedMargin: string;
+  fundingCursorAt: Date;
   createdAt: Date;
   updatedAt: Date;
 };
@@ -29,6 +31,7 @@ export type UpdatePositionStateInput = {
   entryPrice: string | null;
   realizedPnl: string;
   isolatedMargin?: string;
+  fundingCursorAt?: Date;
 };
 
 export type UpdateMarginSettingsInput = {
@@ -52,6 +55,9 @@ const createdAtUtc = sql<Date>`${tradingPosition.createdAt} AT TIME ZONE 'UTC'`.
 const updatedAtUtc = sql<Date>`${tradingPosition.updatedAt} AT TIME ZONE 'UTC'`.as(
   "updated_at_utc",
 );
+const fundingCursorAtUtc = sql<Date>`${tradingPosition.fundingCursorAt} AT TIME ZONE 'UTC'`.as(
+  "funding_cursor_at_utc",
+);
 
 const positionColumns = {
   id: tradingPosition.id,
@@ -63,6 +69,7 @@ const positionColumns = {
   marginMode: tradingPosition.marginMode,
   leverage: tradingPosition.leverage,
   isolatedMargin: tradingPosition.isolatedMargin,
+  fundingCursorAt: fundingCursorAtUtc,
   createdAt: createdAtUtc,
   updatedAt: updatedAtUtc,
 };
@@ -258,6 +265,9 @@ export async function updatePositionState(
       entryPrice,
       realizedPnl,
       isolatedMargin,
+      ...(input.fundingCursorAt
+        ? { fundingCursorAt: utcTimestampFromDate(input.fundingCursorAt) }
+        : {}),
       updatedAt: sql`clock_timestamp() AT TIME ZONE 'UTC'`,
     })
     .where(eq(tradingPosition.id, positionId))
@@ -299,6 +309,67 @@ export async function updateMarginSettingsForFlatPosition(
   return loadPositionById(executor, positionId);
 }
 
+export async function advancePositionFundingCursor(
+  executor: FinancialTransaction,
+  positionId: string,
+  fundingCursorAt: Date,
+): Promise<Position> {
+  const [updated] = await executor
+    .update(tradingPosition)
+    .set({
+      fundingCursorAt: utcTimestampFromDate(fundingCursorAt),
+      updatedAt: sql`clock_timestamp() AT TIME ZONE 'UTC'`,
+    })
+    .where(
+      and(
+        eq(tradingPosition.id, positionId),
+        sql`${tradingPosition.fundingCursorAt} <= ${utcTimestampFromDate(fundingCursorAt)}`,
+      ),
+    )
+    .returning({ id: tradingPosition.id });
+
+  if (!updated) {
+    const existing = await loadPositionById(executor, positionId);
+    if (existing.fundingCursorAt.getTime() > fundingCursorAt.getTime()) {
+      throw new Error("funding cursor is forward-only");
+    }
+    throw new Error("trading_position missing after funding cursor update");
+  }
+
+  return loadPositionById(executor, positionId);
+}
+
+export async function updateIsolatedFundingState(
+  executor: FinancialTransaction,
+  positionId: string,
+  input: { isolatedMargin: string; fundingCursorAt: Date },
+): Promise<Position> {
+  const [updated] = await executor
+    .update(tradingPosition)
+    .set({
+      isolatedMargin: toPersistedDecimal(input.isolatedMargin),
+      fundingCursorAt: utcTimestampFromDate(input.fundingCursorAt),
+      updatedAt: sql`clock_timestamp() AT TIME ZONE 'UTC'`,
+    })
+    .where(
+      and(
+        eq(tradingPosition.id, positionId),
+        sql`${tradingPosition.fundingCursorAt} <= ${utcTimestampFromDate(input.fundingCursorAt)}`,
+      ),
+    )
+    .returning({ id: tradingPosition.id });
+
+  if (!updated) {
+    const existing = await loadPositionById(executor, positionId);
+    if (existing.fundingCursorAt.getTime() > input.fundingCursorAt.getTime()) {
+      throw new Error("funding cursor is forward-only");
+    }
+    throw new Error("trading_position missing after isolated funding update");
+  }
+
+  return loadPositionById(executor, positionId);
+}
+
 async function loadPositionById(
   executor: FinancialTransaction,
   positionId: string,
@@ -325,6 +396,7 @@ function fromPersistedPosition(row: {
   marginMode: string;
   leverage: number;
   isolatedMargin: string;
+  fundingCursorAt: Date | string;
   createdAt: Date | string;
   updatedAt: Date | string;
 }): Position {
@@ -338,8 +410,9 @@ function fromPersistedPosition(row: {
     marginMode: asMarginMode(row.marginMode),
     leverage: asLeverage(row.leverage),
     isolatedMargin: toPersistedDecimal(row.isolatedMargin),
-    createdAt: fromUtcTimestamptz(row.createdAt),
-    updatedAt: fromUtcTimestamptz(row.updatedAt),
+    fundingCursorAt: fromUtcTimestamp(row.fundingCursorAt),
+    createdAt: fromUtcTimestamp(row.createdAt),
+    updatedAt: fromUtcTimestamp(row.updatedAt),
   };
 }
 
@@ -354,6 +427,7 @@ function fromPersistedPositionWithSymbol(
     marginMode: string;
     leverage: number;
     isolatedMargin: string;
+    fundingCursorAt: Date | string;
     createdAt: Date | string;
     updatedAt: Date | string;
     symbol: string;
@@ -383,18 +457,4 @@ function asLeverage(value: number): number {
 
 function toPersistedDecimal(value: string): string {
   return toDbDecimal(fromDbDecimal(value));
-}
-
-function fromUtcTimestamptz(value: Date | string): Date {
-  if (value instanceof Date) {
-    return value;
-  }
-
-  const parsed = new Date(value);
-
-  if (Number.isNaN(parsed.getTime()) || !/[zZ]|[+-]\d{2}/.test(value)) {
-    throw new Error("trading_position timestamp must be timezone-aware");
-  }
-
-  return parsed;
 }

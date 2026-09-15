@@ -10,13 +10,13 @@ import {
   findPaperAccountByUserId,
   insertFilledOrderWithExecution,
   insertOpenLimitOrder,
-  upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables, setPaperAccountStatusForTests } from "@notional/db/test";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
+import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./services/funding-test-fixtures.js";
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

@@ -13,7 +13,6 @@ import {
   updateMarginSettingsForFlatPosition,
   updatePaperAccountBalance,
   updatePositionState,
-  upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables } from "@notional/db/test";
 import type { FastifyInstance } from "fastify";
@@ -23,6 +22,7 @@ import { buildApp } from "../app.js";
 import { syncInstrumentCatalog } from "../market-data/instrument-sync.js";
 import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { createMarketDataStore, type MarketDataStore } from "../market-data/market-data-store.js";
+import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./funding-test-fixtures.js";
 import { coin } from "../market-data/exchange-info-fixtures.js";
 import { createLimitOrderMatcher } from "./limit-matcher.js";
 import { liquidateCrossAccount } from "./liquidation.js";

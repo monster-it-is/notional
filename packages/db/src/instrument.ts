@@ -117,6 +117,13 @@ export async function listActiveInstruments(
   return rows.map(fromPersistedInstrument);
 }
 
+export async function listAllInstruments(
+  executor: Pick<NodePgDatabase, "select">,
+): Promise<Instrument[]> {
+  const rows = await executor.select().from(instrument).orderBy(asc(instrument.symbol));
+  return rows.map(fromPersistedInstrument);
+}
+
 export async function listInstrumentSymbols(
   executor: Pick<NodePgDatabase, "select">,
 ): Promise<string[]> {

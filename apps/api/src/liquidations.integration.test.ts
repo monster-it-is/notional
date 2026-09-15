@@ -10,7 +10,6 @@ import {
   updateMarginSettingsForFlatPosition,
   updatePaperAccountBalance,
   updatePositionState,
-  upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables } from "@notional/db/test";
 import type { FastifyInstance } from "fastify";
@@ -19,6 +18,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "./app.js";
 import type { MarketDataAccess } from "./market-data/coordinator.js";
 import { createMarketDataStore, type MarketDataStore } from "./market-data/market-data-store.js";
+import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./services/funding-test-fixtures.js";
 import { liquidateCrossAccount, liquidateIsolatedPosition } from "./services/liquidation.js";
 
 const password = "correct-horse-battery";

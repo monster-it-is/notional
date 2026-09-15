@@ -2,7 +2,7 @@ import type { Execution, FinancialTransaction, Order, Position } from "@notional
 import { fromDbDecimal, updatePositionState } from "@notional/db";
 import { applyFillToPosition, toPersistedFillState, type PositionTransition } from "@notional/trading";
 
-import { nextIsolatedMarginForFill } from "./isolated-fill.js";
+import { assertIsolatedIncreaseHealthy, nextIsolatedMarginForFill } from "./isolated-fill.js";
 
 export type CreatedFilledResult = {
   kind: "created_filled";
@@ -52,6 +52,7 @@ export async function applyPositionForFillResult(
   tx: FinancialTransaction,
   lockedPosition: Position,
   result: FillResultWithExecution,
+  financialNow?: Date,
 ): Promise<PositionApplicationResult> {
   if (result.kind === "replayed_filled") {
     return { kind: "replayed", position: lockedPosition };
@@ -60,6 +61,7 @@ export async function applyPositionForFillResult(
   return applyCreatedExecutionToPosition(tx, {
     position: lockedPosition,
     fill: result,
+    financialNow,
   });
 }
 
@@ -68,6 +70,7 @@ export async function applyCreatedExecutionToPosition(
   input: {
     position: Position;
     fill: CreatedFilledResult;
+    financialNow?: Date;
   },
 ): Promise<AppliedPositionTransition> {
   const { position, fill } = input;
@@ -97,22 +100,34 @@ export async function applyCreatedExecutionToPosition(
     throw new PositionApplicationError("MISMATCHED_FILL");
   }
 
-  const fillState = toPersistedFillState(
-    applyFillToPosition({
-      currentQty: position.quantity,
-      currentEntryPrice: position.entryPrice,
-      fillSide: order.side,
-      fillQty: execution.quantity,
-      fillPrice: execution.price,
-    }),
-    position.realizedPnl,
-  );
+  const appliedFill = applyFillToPosition({
+    currentQty: position.quantity,
+    currentEntryPrice: position.entryPrice,
+    fillSide: order.side,
+    fillQty: execution.quantity,
+    fillPrice: execution.price,
+  });
+  const fillState = toPersistedFillState(appliedFill, position.realizedPnl);
+
+  assertIsolatedIncreaseHealthy({
+    marginMode: position.marginMode,
+    currentIsolatedMargin: position.isolatedMargin,
+    currentQty: position.quantity,
+    currentEntryPrice: position.entryPrice,
+    leverage: position.leverage,
+    transition: fillState.transition,
+  });
 
   const nextIsolatedMargin = nextIsolatedMarginForFill({
     marginMode: position.marginMode,
-    quantity: fillState.quantity,
-    entryPrice: fillState.entryPrice,
+    currentQty: position.quantity,
+    currentEntryPrice: position.entryPrice,
+    currentIsolatedMargin: position.isolatedMargin,
+    nextQty: fillState.quantity,
+    nextEntryPrice: fillState.entryPrice,
     leverage: position.leverage,
+    fillSide: order.side,
+    fillQty: execution.quantity,
   });
 
   const next = await updatePositionState(tx, position.id, {
@@ -120,6 +135,9 @@ export async function applyCreatedExecutionToPosition(
     entryPrice: fillState.entryPrice,
     realizedPnl: fillState.realizedPnl,
     isolatedMargin: nextIsolatedMargin,
+    ...(fillState.transition === "OPEN" && input.financialNow
+      ? { fundingCursorAt: input.financialNow }
+      : {}),
   });
 
   return {

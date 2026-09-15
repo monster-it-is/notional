@@ -19,6 +19,11 @@ export type {
   InstrumentStatus,
 } from "./instrument.js";
 export type {
+  FundingDataUnavailableError,
+  PerpFundingHistoryItem,
+  PerpFundingHistoryResponse,
+} from "./funding.js";
+export type {
   MarketDataResponse,
   MarketDataStatusResponse,
   MarketDataUnavailableError,

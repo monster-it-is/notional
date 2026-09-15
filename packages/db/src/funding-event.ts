@@ -1,15 +1,16 @@
 import { and, desc, eq } from "drizzle-orm";
 
 import type { FinancialExecutor, FinancialTransaction } from "./executor.js";
-import type { FinancialEventType } from "./ledger.js";
 import { type MoneyDecimal, toDbDecimal } from "./money.js";
 import { fundingEvent } from "./schema/funding.js";
 
 export type FundingEvent = typeof fundingEvent.$inferSelect;
 
+export type PaperWalletFundingEventType = "SIGNUP_ALLOCATION" | "FAUCET_CLAIM";
+
 export type InsertFundingEventInput = {
   paperAccountId: string;
-  eventType: FinancialEventType;
+  eventType: PaperWalletFundingEventType;
   amount: MoneyDecimal;
   idempotencyKey: string;
   ledgerTransactionId: string;

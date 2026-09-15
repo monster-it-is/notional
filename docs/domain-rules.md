@@ -399,7 +399,7 @@ Initial margin primitive:
 
 `notional / leverage`
 
-`leverage` is a positive integer. The `calculateInitialMargin` primitive does not cap max leverage. Product settings persist integers `1..100` (Phase 12). OPEN LIMIT reservation, CROSS portfolio checks, isolated allocation, realized settlement, and liquidation are implemented. Funding settlement remains Phase 15.
+`leverage` is a positive integer. The `calculateInitialMargin` primitive does not cap max leverage. Product settings persist integers `1..100` (Phase 12). OPEN LIMIT reservation, CROSS portfolio checks, isolated allocation, realized settlement, liquidation, and perpetual funding settlement are implemented.
 
 Using signed quantity:
 
@@ -443,6 +443,20 @@ Liquidation orders are `origin = LIQUIDATION`, `MARKET`, `FILLED`, `reduceOnly`,
 Financial liquidation, cancellations, orders, executions, positions, wallet, and ledger live in one PostgreSQL transaction. Any failure rolls back with no trace. Risk is re-checked after locks. The in-process scanner is a trigger only.
 
 SUSPENDED accounts remain liquidatable. HTTP user cancel stays order-row-only. Liquidation locks the paper account first. There is no live public risk endpoint.
+
+## Perpetual funding
+
+Funding is a separate economic concept from trading realized PnL and from paper-wallet `funding_event` credits.
+
+```
+fundingPayment = -(signedQuantity × settlementMarkPrice × fundingRate)
+```
+
+The persisted HALF_EVEN rate and mark are authoritative. Longs pay when the rate is positive. Isolated funding moves wallet and isolated collateral together and never spends other positions' collateral. CROSS payments at one `funding_time` net, then settle once against remaining free cash. Different timestamps never net. Insurance absorbs CROSS and isolated shortfalls the same way as other protected settlement.
+
+`funding_cursor_at` is eligibility, not "last funded". OPEN from flat skips past cycles. The transaction samples `financialNow` after the account lock. The barrier must prove `(cursor, financialNow]` from realized history and/or this process's `LiveScheduleProof`. Restart clears prospective schedule proof.
+
+Authenticated `GET /api/funding` lists position-level perpetual funding history. `GET /api/account/funding` remains faucet/signup history.
 
 ## Ledger
 
@@ -526,7 +540,7 @@ Price sources are not interchangeable:
 - a future paper MARKET BUY uses a fresh best ask
 - a future paper MARKET SELL uses a fresh best bid
 - unrealized PnL, liquidation, and margin/risk use a fresh mark price
-- funding uses Binance funding rate / next funding time plus mark semantics
+- funding uses Binance USD-M realized `fundingRate` history and the exact preceding 1-minute mark-price kline; live `nextFundingTime` is a schedule hint only
 - index price is reference only and is never an execution price
 
 There is no generic authoritative `price`.

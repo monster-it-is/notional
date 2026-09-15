@@ -14,6 +14,7 @@ export { checkDatabaseHealth } from "./health.js";
 export { postLedgerTransaction } from "./ledger.js";
 export type { FinancialEventType, LedgerEntry, LedgerTransaction } from "./ledger.js";
 export {
+  ensureSystemFundingLedgerAccount,
   ensureSystemInsuranceAccount,
   ensureSystemTradingPnlAccount,
   ensureSystemVirtualFundingAccount,
@@ -33,6 +34,7 @@ export {
   findInstrumentById,
   findInstrumentBySymbol,
   listActiveInstruments,
+  listAllInstruments,
   listInstrumentSymbols,
   lockExistingInstrumentsForCatalogSync,
   lockInstrumentByIdForTrading,
@@ -105,6 +107,7 @@ export type {
   ListExecutionsPagination,
 } from "./execution.js";
 export {
+  advancePositionFundingCursor,
   ensurePosition,
   findOpenPositionByAccountAndSymbol,
   findPositionByAccountAndInstrument,
@@ -114,6 +117,7 @@ export {
   lockPositionsByAccountAndInstrumentIds,
   PositionMutationError,
   sumIsolatedMarginByPaperAccountId,
+  updateIsolatedFundingState,
   updateMarginSettingsForFlatPosition,
   updatePositionState,
 } from "./position.js";
@@ -135,3 +139,43 @@ export type {
   LiquidationEventWithSymbol,
   LiquidationMarginMode,
 } from "./liquidation-event.js";
+export {
+  advanceLastRealizedFundingTime,
+  deletePredictedScheduledCycle,
+  ensurePerpFundingSourceState,
+  findAccountSettlementByAccountAndTime,
+  findAccountSettlementById,
+  findFundingCycleById,
+  findFundingCycleByInstrumentAndTime,
+  findSourceStateByInstrumentId,
+  FundingCycleIntegrityError,
+  insertPerpFundingAccountSettlement,
+  insertPerpFundingSettlement,
+  insertReadyFundingCycle,
+  insertScheduledFundingCycle,
+  listDueReadyCyclesForAccount,
+  listPerpFundingHistoryByPaperAccountId,
+  listScheduledFundingCyclesBefore,
+  listUnpaidReadyFundingBatches,
+  listUnresolvedScheduledTimesInWindow,
+  markFundingCycleReady,
+  minOpenFundingCursorAt,
+  persistNextFundingTimeObservation,
+} from "./perp-funding.js";
+export type {
+  MarkFundingCycleReadyResult,
+  PerpFundingAccountSettlement,
+  PerpFundingCycle,
+  PerpFundingCycleStatus,
+  PerpFundingHistoryRow,
+  PerpFundingSettlement,
+  PerpFundingSourceState,
+  UnpaidFundingBatch,
+} from "./perp-funding.js";
+export {
+  fromUtcTimestamp,
+  sampleFinancialTransactionTime,
+  toIsoUtc,
+  utcTimestampFromDate,
+  utcTimestampFromEpochMs,
+} from "./time.js";

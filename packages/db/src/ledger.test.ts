@@ -5,6 +5,7 @@ import { postgresConstraint } from "./postgres-constraint.js";
 import {
   db,
   ensurePaperAccount,
+  ensureSystemFundingLedgerAccount,
   ensureSystemInsuranceAccount,
   ensureSystemTradingPnlAccount,
   ensureSystemVirtualFundingAccount,
@@ -503,6 +504,49 @@ describe("ledger and funding primitives", () => {
     await expectRejectedConstraint(
       db.insert(ledgerAccount).values({
         kind: "SYSTEM_TRADING_PNL",
+        paperAccountId: account.id,
+        currency: "USDT",
+      }),
+      "ledger_account_ownership",
+    );
+  });
+
+  it("accepts SYSTEM_FUNDING global accounts and FUNDING_PAYMENT events", async () => {
+    const createdUser = await insertUser("funding-ledger@example.com");
+    const account = await ensurePaperAccount(db, createdUser.id);
+    const userCash = await ensureUserCashLedgerAccount(db, account.id);
+    const funding = await ensureSystemFundingLedgerAccount(db);
+    const insurance = await ensureSystemInsuranceAccount(db);
+
+    expect(funding.paperAccountId).toBeNull();
+    expect((await ensureSystemFundingLedgerAccount(db)).id).toBe(funding.id);
+
+    const posted = await db.transaction((tx) =>
+      postLedgerTransaction(tx, {
+        eventType: "FUNDING_PAYMENT",
+        idempotencyKey: "funding-payment:test",
+        entries: [
+          { ledgerAccountId: userCash.id, amount: new MoneyDecimal("-100") },
+          { ledgerAccountId: funding.id, amount: new MoneyDecimal("150") },
+          { ledgerAccountId: insurance.id, amount: new MoneyDecimal("-50") },
+        ],
+      }),
+    );
+
+    expect(posted.eventType).toBe("FUNDING_PAYMENT");
+    const entries = await db
+      .select()
+      .from(ledgerEntry)
+      .where(eq(ledgerEntry.ledgerTransactionId, posted.id));
+    const sum = entries.reduce(
+      (total, entry) => total.plus(new MoneyDecimal(entry.amount)),
+      new MoneyDecimal("0"),
+    );
+    expect(sum.isZero()).toBe(true);
+
+    await expectRejectedConstraint(
+      db.insert(ledgerAccount).values({
+        kind: "SYSTEM_FUNDING",
         paperAccountId: account.id,
         currency: "USDT",
       }),

@@ -17,6 +17,7 @@ import {
   updatePositionState,
   user,
   upsertInstrumentBySymbol,
+  advancePositionFundingCursor,
 } from "./index.js";
 import { instrument } from "./schema/instrument.js";
 import { endTestPool, postgresConstraint, resetTestTables } from "./test.js";
@@ -46,6 +47,7 @@ describe("trading_position", () => {
     expect(position.marginMode).toBe("CROSS");
     expect(position.leverage).toBe(1);
     expect(position.isolatedMargin).toBe("0");
+    expect(position.fundingCursorAt).toBeInstanceOf(Date);
     expect(typeof position.quantity).toBe("string");
     expect(typeof position.realizedPnl).toBe("string");
     expect(typeof position.isolatedMargin).toBe("string");
@@ -515,7 +517,7 @@ describe("trading_position margin settings", () => {
       "trading_position_isolated_margin_by_mode",
     );
 
-    await expectRejectedConstraint(
+    await expect(
       db.insert(tradingPosition).values({
         paperAccountId: account.id,
         instrumentId: other.id,
@@ -523,10 +525,30 @@ describe("trading_position margin settings", () => {
         entryPrice: "100",
         realizedPnl: "0",
         marginMode: "ISOLATED",
-        isolatedMargin: "0",
+        isolatedMargin: "-1",
       }),
-      "trading_position_isolated_margin_by_mode",
-    );
+    ).rejects.toSatisfy((error: unknown) => {
+      const constraint = postgresConstraint(error);
+      return (
+        constraint === "trading_position_isolated_margin_non_negative" ||
+        constraint === "trading_position_isolated_margin_by_mode"
+      );
+    });
+
+    const [isolatedZero] = await db
+      .insert(tradingPosition)
+      .values({
+        paperAccountId: account.id,
+        instrumentId: other.id,
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "0",
+        marginMode: "ISOLATED",
+        isolatedMargin: "0",
+      })
+      .returning({ id: tradingPosition.id });
+
+    expect(isolatedZero).toBeDefined();
 
     const [isolatedOpen] = await db
       .insert(tradingPosition)
@@ -700,6 +722,39 @@ describe("trading_position margin settings", () => {
     expect(updated.realizedPnl).toBe("0");
     expect(updated.isolatedMargin).toBe("40");
     expect(updated.marginMode).toBe("ISOLATED");
+  });
+
+  it("sets funding_cursor_at on insert and only overwrites it when requested", async () => {
+    const { account, btcId } = await seed();
+    const created = await db.transaction((tx) => ensurePosition(tx, account.id, btcId));
+    expect(created.fundingCursorAt).toBeInstanceOf(Date);
+    const original = created.fundingCursorAt.getTime();
+
+    const unchanged = await db.transaction((tx) =>
+      updatePositionState(tx, created.id, {
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "0",
+      }),
+    );
+    expect(unchanged.fundingCursorAt.getTime()).toBe(original);
+
+    const nextCursor = new Date("2026-09-15T16:00:00.000Z");
+    const advanced = await db.transaction((tx) =>
+      updatePositionState(tx, created.id, {
+        quantity: "1",
+        entryPrice: "100",
+        realizedPnl: "0",
+        fundingCursorAt: nextCursor,
+      }),
+    );
+    expect(advanced.fundingCursorAt.toISOString()).toBe(nextCursor.toISOString());
+
+    await expect(
+      db.transaction((tx) =>
+        advancePositionFundingCursor(tx, created.id, new Date("2026-09-15T08:00:00.000Z")),
+      ),
+    ).rejects.toThrow("funding cursor is forward-only");
   });
 });
 

@@ -15,7 +15,6 @@ import {
   updateMarginSettingsForFlatPosition,
   updatePaperAccountBalance,
   updatePositionState,
-  upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables } from "@notional/db/test";
 import type { FastifyInstance } from "fastify";
@@ -23,6 +22,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "../app.js";
 import type { MarketDataAccess } from "../market-data/coordinator.js";
+import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./funding-test-fixtures.js";
 import { createMarketDataStore, type MarketDataStore } from "../market-data/market-data-store.js";
 import { FakeScheduler } from "../market-data/test-helpers.js";
 import { createLiquidationScanner } from "./liquidation-scanner.js";

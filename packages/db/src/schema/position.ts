@@ -41,6 +41,9 @@ export const tradingPosition = pgTable(
     })
       .notNull()
       .default("0"),
+    fundingCursorAt: timestamp("funding_cursor_at")
+      .notNull()
+      .default(sql`clock_timestamp() AT TIME ZONE 'UTC'`),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -72,7 +75,7 @@ export const tradingPosition = pgTable(
           AND (
             (${table.quantity} = 0 AND ${table.isolatedMargin} = 0)
             OR
-            (${table.quantity} <> 0 AND ${table.isolatedMargin} > 0)
+            (${table.quantity} <> 0 AND ${table.isolatedMargin} >= 0)
           )
         )
       )`,

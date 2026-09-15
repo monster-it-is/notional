@@ -1,13 +1,10 @@
 import type { FinancialTransaction, Order } from "@notional/db";
 import {
   db,
-  ensurePosition,
   findInstrumentBySymbol,
   listOpenLimitOrdersByInstrumentId,
-  lockInstrumentByIdForTrading,
   lockOrderById,
   lockPaperAccountById,
-  lockPositionByAccountAndInstrument,
 } from "@notional/db";
 import {
   classifyPositionTransition,
@@ -20,8 +17,13 @@ import { silentLogger, type Logger } from "../market-data/types.js";
 import { reduceOnlyAllows } from "../orders/validate-order.js";
 import { ISOLATED_TRADING_ENABLED } from "./isolated-trading.js";
 import { completeMatcherFillInTx, OrderPlacementError } from "./order-placement.js";
+import { FundingDataUnavailableError, settleDueFundingForAccountInTx } from "./funding-settlement.js";
 
-const MATCHER_RETRY_CODES = new Set(["INSUFFICIENT_MARGIN", "MARKET_DATA_UNAVAILABLE"]);
+const MATCHER_RETRY_CODES = new Set([
+  "INSUFFICIENT_MARGIN",
+  "MARKET_DATA_UNAVAILABLE",
+  "FUNDING_DATA_UNAVAILABLE",
+]);
 
 export type LimitOrderMatcher = {
   schedule(symbol: string): void;
@@ -115,18 +117,35 @@ async function matchCandidateInTx(
   candidate: { order: Order; symbol: string },
   marketData: MarketDataAccess,
 ): Promise<void> {
-  const account = await lockPaperAccountById(tx, candidate.order.paperAccountId);
-  const instrument = await lockInstrumentByIdForTrading(tx, candidate.order.instrumentId);
+  const lockedAccount = await lockPaperAccountById(tx, candidate.order.paperAccountId);
+  let barrier;
+  try {
+    barrier = await settleDueFundingForAccountInTx(tx, {
+      accountId: lockedAccount.id,
+      extraInstrumentIds: [candidate.order.instrumentId],
+    });
+  } catch (error) {
+    if (error instanceof FundingDataUnavailableError) {
+      throw new OrderPlacementError("FUNDING_DATA_UNAVAILABLE");
+    }
+    throw error;
+  }
 
-  if (!instrument) {
+  const position = barrier.positions.find((row) => row.instrumentId === candidate.order.instrumentId);
+
+  if (!position) {
     return;
   }
 
-  await ensurePosition(tx, account.id, instrument.id);
-  const position = await lockPositionByAccountAndInstrument(tx, account.id, instrument.id);
-  const locked = await lockOrderById(tx, account.id, candidate.order.id);
+  const locked = await lockOrderById(tx, barrier.account.id, candidate.order.id);
 
   if (!locked || locked.status !== "OPEN" || locked.orderType !== "LIMIT") {
+    return;
+  }
+
+  const instrument = await findInstrumentBySymbol(tx, candidate.symbol);
+
+  if (!instrument) {
     return;
   }
 
@@ -189,10 +208,11 @@ async function matchCandidateInTx(
   }
 
   await completeMatcherFillInTx(tx, {
-    account,
+    account: barrier.account,
     position,
     order: locked,
     executionPrice,
     marketData,
+    financialNow: barrier.financialNow,
   });
 }

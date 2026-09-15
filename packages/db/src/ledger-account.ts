@@ -8,7 +8,8 @@ export type LedgerAccount = typeof ledgerAccount.$inferSelect;
 export type SystemLedgerKind =
   | "SYSTEM_VIRTUAL_FUNDING"
   | "SYSTEM_TRADING_PNL"
-  | "SYSTEM_INSURANCE";
+  | "SYSTEM_INSURANCE"
+  | "SYSTEM_FUNDING";
 
 export async function ensureUserCashLedgerAccount(
   executor: FinancialExecutor,
@@ -61,6 +62,12 @@ export async function ensureSystemInsuranceAccount(
   executor: FinancialExecutor,
 ): Promise<LedgerAccount> {
   return ensureSystemLedgerAccount(executor, "SYSTEM_INSURANCE");
+}
+
+export async function ensureSystemFundingLedgerAccount(
+  executor: FinancialExecutor,
+): Promise<LedgerAccount> {
+  return ensureSystemLedgerAccount(executor, "SYSTEM_FUNDING");
 }
 
 async function ensureSystemLedgerAccount(

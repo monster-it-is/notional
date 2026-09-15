@@ -12,6 +12,7 @@ import {
 import { registerAuth, requireAuth } from "./auth-plugin.js";
 import { env } from "./env.js";
 import { getExecutionById, getExecutions } from "./executions.js";
+import { getPerpFundingHistory } from "./funding.js";
 import { getInstrumentBySymbol, getInstruments } from "./instruments.js";
 import { getLiquidations } from "./liquidations.js";
 import { getMarginSettings, putMarginSettings } from "./margin-settings.js";
@@ -54,6 +55,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.post("/api/account/initialize", { preHandler: requireAuth }, initializeAccount);
   app.post("/api/account/faucet", { preHandler: requireAuth }, claimAccountFaucet);
   app.get("/api/account/funding", { preHandler: requireAuth }, getFundingHistory);
+  app.get("/api/funding", { preHandler: requireAuth }, getPerpFundingHistory);
   app.get("/api/instruments", { preHandler: requireAuth }, getInstruments);
   app.get("/api/instruments/:symbol", { preHandler: requireAuth }, getInstrumentBySymbol);
   app.get("/api/market-data/status", { preHandler: requireAuth }, (request, reply) =>

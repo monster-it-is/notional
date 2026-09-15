@@ -3,17 +3,13 @@ import {
   cancelOpenLimitOrder,
   createLiquidationEvent,
   db,
-  ensurePosition,
+  findInstrumentById,
   fromDbDecimal,
   insertLiquidationFilledOrderWithExecution,
   listOpenCrossModeLimitOrdersByPaperAccountId,
   listOpenLimitOrdersByAccountAndInstrument,
   listOpenPositionsByPaperAccountId,
-  lockInstrumentByIdForTrading,
-  lockInstrumentsByIdsForTrading,
   lockPaperAccountById,
-  lockPositionByAccountAndInstrument,
-  lockPositionsByAccountAndInstrumentIds,
   sumIsolatedMarginByPaperAccountId,
   toDbDecimal,
 } from "@notional/db";
@@ -27,6 +23,10 @@ import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { silentLogger, type Logger } from "../market-data/types.js";
 import { isolatedReduceSettlementProtection } from "./isolated-fill.js";
 import {
+  FundingDataUnavailableError,
+  settleDueFundingForAccountInTx,
+} from "./funding-settlement.js";
+import {
   calculateCrossLiquidationRisk,
   calculateIsolatedLiquidationRisk,
   snapshotLiquidationRisk,
@@ -39,7 +39,10 @@ import {
 } from "./realized-settlement.js";
 
 export type LiquidationResult =
-  | { kind: "noop"; reason: "safe" | "stale_mark" | "stale_bbo" | "flat" }
+  | {
+      kind: "noop";
+      reason: "safe" | "stale_mark" | "stale_bbo" | "flat" | "funding_data_unavailable";
+    }
   | { kind: "liquidated"; eventId: string };
 
 export async function liquidateIsolatedPosition(params: {
@@ -69,15 +72,28 @@ async function liquidateIsolatedPositionInTx(
   },
 ): Promise<LiquidationResult> {
   const logger = params.logger ?? silentLogger;
-  const account = await lockPaperAccountById(tx, params.paperAccountId);
-  const instrument = await lockInstrumentByIdForTrading(tx, params.instrumentId);
+  const lockedAccount = await lockPaperAccountById(tx, params.paperAccountId);
+  let barrier;
+  try {
+    barrier = await settleDueFundingForAccountInTx(tx, {
+      accountId: lockedAccount.id,
+      extraInstrumentIds: [params.instrumentId],
+    });
+  } catch (error) {
+    if (error instanceof FundingDataUnavailableError) {
+      return { kind: "noop", reason: "funding_data_unavailable" };
+    }
+    throw error;
+  }
 
-  if (!instrument) {
+  const position = barrier.positions.find((row) => row.instrumentId === params.instrumentId);
+  const instrument = await findInstrumentById(tx, params.instrumentId);
+
+  if (!instrument || !position) {
     return { kind: "noop", reason: "flat" };
   }
 
-  await ensurePosition(tx, account.id, instrument.id);
-  const position = await lockPositionByAccountAndInstrument(tx, account.id, instrument.id);
+  const account = barrier.account;
 
   if (position.marginMode !== "ISOLATED" || fromDbDecimal(position.quantity).isZero()) {
     return { kind: "noop", reason: "flat" };
@@ -134,7 +150,11 @@ async function liquidateIsolatedPositionInTx(
     }),
   });
 
-  const applied = await applyCreatedExecutionToPosition(tx, { position, fill });
+  const applied = await applyCreatedExecutionToPosition(tx, {
+    position,
+    fill,
+    financialNow: barrier.financialNow,
+  });
   await settleCreatedFillRealizedPnlInTx(tx, {
     paperAccountId: account.id,
     walletBalance: account.balance,
@@ -159,9 +179,9 @@ async function liquidateCrossAccountInTx(
   },
 ): Promise<LiquidationResult> {
   const logger = params.logger ?? silentLogger;
-  const account = await lockPaperAccountById(tx, params.paperAccountId);
-  const openPositions = await listOpenPositionsByPaperAccountId(tx, account.id);
-  const crossOpenOrders = await listOpenCrossModeLimitOrdersByPaperAccountId(tx, account.id);
+  const lockedAccount = await lockPaperAccountById(tx, params.paperAccountId);
+  const openPositions = await listOpenPositionsByPaperAccountId(tx, lockedAccount.id);
+  const crossOpenOrders = await listOpenCrossModeLimitOrdersByPaperAccountId(tx, lockedAccount.id);
   const instrumentIds = [
     ...new Set([
       ...openPositions.filter((row) => row.marginMode === "CROSS").map((row) => row.instrumentId),
@@ -169,14 +189,20 @@ async function liquidateCrossAccountInTx(
     ]),
   ];
 
-  if (instrumentIds.length > 0) {
-    await lockInstrumentsByIdsForTrading(tx, instrumentIds);
-    for (const instrumentId of instrumentIds) {
-      await ensurePosition(tx, account.id, instrumentId);
+  let barrier;
+  try {
+    barrier = await settleDueFundingForAccountInTx(tx, {
+      accountId: lockedAccount.id,
+      extraInstrumentIds: instrumentIds,
+    });
+  } catch (error) {
+    if (error instanceof FundingDataUnavailableError) {
+      return { kind: "noop", reason: "funding_data_unavailable" };
     }
-    await lockPositionsByAccountAndInstrumentIds(tx, account.id, instrumentIds);
+    throw error;
   }
 
+  const account = barrier.account;
   const lockedPositions = await listOpenPositionsByPaperAccountId(tx, account.id);
   const crossPositions = lockedPositions.filter((row) => row.marginMode === "CROSS");
 
@@ -260,7 +286,11 @@ async function liquidateCrossAccountInTx(
         bestAskPrice: book.bestAskPrice,
       }),
     });
-    const applied = await applyCreatedExecutionToPosition(tx, { position, fill });
+    const applied = await applyCreatedExecutionToPosition(tx, {
+      position,
+      fill,
+      financialNow: barrier.financialNow,
+    });
     deltas.push(applied.realizedPnlDelta);
   }
 

@@ -13,9 +13,9 @@ export type WalletRealizedSettlement = {
   insuranceAbsorption: string;
 };
 
-export function calculateWalletRealizedSettlement(params: {
+export function calculateProtectedWalletSettlement(params: {
   walletBalance: string;
-  realizedPnlDelta: string;
+  cashDelta: string;
   protectedBalance: string;
 }): WalletRealizedSettlement {
   const walletBalance = parseNonNegativeValue(params.walletBalance, "walletBalance");
@@ -23,7 +23,7 @@ export function calculateWalletRealizedSettlement(params: {
     params.protectedBalance,
     "protectedBalance",
   );
-  const realizedPnlDelta = parsePlainDecimal(params.realizedPnlDelta);
+  const cashDelta = parsePlainDecimal(params.cashDelta);
 
   if (protectedBalance.gt(walletBalance)) {
     throw new TradingMathError(
@@ -32,7 +32,7 @@ export function calculateWalletRealizedSettlement(params: {
     );
   }
 
-  if (realizedPnlDelta.isZero()) {
+  if (cashDelta.isZero()) {
     return {
       nextWalletBalance: persistFit(walletBalance),
       userWalletDelta: "0",
@@ -40,15 +40,15 @@ export function calculateWalletRealizedSettlement(params: {
     };
   }
 
-  if (realizedPnlDelta.isPositive()) {
+  if (cashDelta.isPositive()) {
     return {
-      nextWalletBalance: persistFit(walletBalance.plus(realizedPnlDelta)),
-      userWalletDelta: persistFit(realizedPnlDelta),
+      nextWalletBalance: persistFit(walletBalance.plus(cashDelta)),
+      userWalletDelta: persistFit(cashDelta),
       insuranceAbsorption: "0",
     };
   }
 
-  const loss = realizedPnlDelta.abs();
+  const loss = cashDelta.abs();
   const spendable = walletBalance.minus(protectedBalance);
   const userLoss = loss.lte(spendable) ? loss : spendable;
   const insuranceAbsorption = loss.minus(userLoss);
@@ -58,6 +58,18 @@ export function calculateWalletRealizedSettlement(params: {
     userWalletDelta: userLoss.isZero() ? "0" : persistFit(userLoss.negated()),
     insuranceAbsorption: persistFit(insuranceAbsorption),
   };
+}
+
+export function calculateWalletRealizedSettlement(params: {
+  walletBalance: string;
+  realizedPnlDelta: string;
+  protectedBalance: string;
+}): WalletRealizedSettlement {
+  return calculateProtectedWalletSettlement({
+    walletBalance: params.walletBalance,
+    cashDelta: params.realizedPnlDelta,
+    protectedBalance: params.protectedBalance,
+  });
 }
 
 function persistFit(value: TradingDecimal): string {

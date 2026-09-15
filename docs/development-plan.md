@@ -83,7 +83,9 @@ Phase 14 added `MAINTENANCE_MARGIN_RATE = 0.005`, mark-triggered / BBO-executed 
 
 ## Phase 15 — Funding
 
-Status: NOT STARTED
+Status: COMPLETE
+
+Phase 15 adds deterministic, exactly-once perpetual funding settlement from Binance USD-M realized `fundingRate` history and the exact preceding 1-minute mark-price kline. New tables: `perp_funding_cycle`, `perp_funding_account_settlement`, `perp_funding_settlement`, `perp_funding_source_state`. Positions gain `funding_cursor_at`. Ledger adds `SYSTEM_FUNDING` / `FUNDING_PAYMENT`. Isolated `isolated_margin` becomes actual collateral with required-margin-delta fills. A funding barrier runs after `paper_account FOR UPDATE` and a PostgreSQL `financialNow` sample. The funding scanner starts from `server.ts` only. Authenticated `GET /api/funding` is the history API. There is no premium-index formula, no hardcoded 8h grid, and no retroactive pre-Phase-15 backfill.
 
 ## Phase 16 — WebSockets
 

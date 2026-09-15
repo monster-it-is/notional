@@ -18,13 +18,13 @@ import {
   lockPaperAccountById,
   lockPositionByAccountAndInstrument,
   tradingPosition,
-  upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables, setPaperAccountStatusForTests } from "@notional/db/test";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
+import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./services/funding-test-fixtures.js";
 import { applyPositionForFillResult } from "./services/position-application.js";
 
 const password = "correct-horse-battery";

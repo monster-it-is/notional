@@ -28,7 +28,7 @@ export const ledgerAccount = pgTable(
   (table) => [
     check(
       "ledger_account_kind_valid",
-      sql`${table.kind} in ('USER_CASH', 'SYSTEM_VIRTUAL_FUNDING', 'SYSTEM_TRADING_PNL', 'SYSTEM_INSURANCE')`,
+      sql`${table.kind} in ('USER_CASH', 'SYSTEM_VIRTUAL_FUNDING', 'SYSTEM_TRADING_PNL', 'SYSTEM_INSURANCE', 'SYSTEM_FUNDING')`,
     ),
     check("ledger_account_currency_usdt", sql`${table.currency} = 'USDT'`),
     check(
@@ -37,7 +37,7 @@ export const ledgerAccount = pgTable(
         (${table.kind} = 'USER_CASH' AND ${table.paperAccountId} IS NOT NULL)
         OR
         (
-          ${table.kind} in ('SYSTEM_VIRTUAL_FUNDING', 'SYSTEM_TRADING_PNL', 'SYSTEM_INSURANCE')
+          ${table.kind} in ('SYSTEM_VIRTUAL_FUNDING', 'SYSTEM_TRADING_PNL', 'SYSTEM_INSURANCE', 'SYSTEM_FUNDING')
           AND ${table.paperAccountId} IS NULL
         )
       )`,
@@ -64,7 +64,7 @@ export const ledgerTransaction = pgTable(
   (table) => [
     check(
       "ledger_transaction_event_type_valid",
-      sql`${table.eventType} in ('SIGNUP_ALLOCATION', 'FAUCET_CLAIM', 'REALIZED_PNL')`,
+      sql`${table.eventType} in ('SIGNUP_ALLOCATION', 'FAUCET_CLAIM', 'REALIZED_PNL', 'FUNDING_PAYMENT')`,
     ),
   ],
 );

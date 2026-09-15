@@ -64,6 +64,14 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...process.env, LIQUIDATION_SCAN_INTERVAL_MS: "-1" })).toThrow();
   });
 
+  it("defaults FUNDING_SCAN_INTERVAL_MS to 5000 and rejects non-positive values", () => {
+    const source = { ...process.env };
+    delete source.FUNDING_SCAN_INTERVAL_MS;
+    expect(parseEnv(source).FUNDING_SCAN_INTERVAL_MS).toBe(5_000);
+    expect(() => parseEnv({ ...process.env, FUNDING_SCAN_INTERVAL_MS: "0" })).toThrow();
+    expect(() => parseEnv({ ...process.env, FUNDING_SCAN_INTERVAL_MS: "-1" })).toThrow();
+  });
+
   it("rejects invalid Binance URLs", () => {
     expect(() =>
       parseEnv({ ...process.env, BINANCE_FAPI_REST_BASE_URL: "not-a-url" }),

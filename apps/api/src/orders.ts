@@ -260,7 +260,7 @@ function sendOrderMutationError(reply: FastifyReply, error: unknown) {
     return reply.status(404).send({ error: error.code });
   }
 
-  if (error.code === "MARKET_DATA_UNAVAILABLE") {
+  if (error.code === "MARKET_DATA_UNAVAILABLE" || error.code === "FUNDING_DATA_UNAVAILABLE") {
     return reply.status(503).send({ error: error.code });
   }
 

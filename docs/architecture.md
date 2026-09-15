@@ -66,6 +66,8 @@ The LIMIT matcher is in-process in the single API process. It runs only when the
 
 The liquidation scanner is in-process in the API server runtime only (`server.ts`), not `buildApp`. It coalesces to one global scan at a time. Unlocked scan state is a trigger; every real liquidation rechecks under locks.
 
+The funding scanner is also in-process in `server.ts` only, started after market data. It prepares realized history and `LiveScheduleProof` outside financial locks. User, matcher, liquidation, and faucet mutations SHARE-lock the union of funding-relevant and caller-target instruments `id ASC`, `ensurePosition` for first-ever targets, then lock positions `instrument_id ASC`. `financialNow` is sampled immediately after the account lock.
+
 Any transaction that locks or mutates multiple existing instrument rows acquires them `instrument.id ASC`. Financial multi-symbol order is `paper_account FOR UPDATE` → instruments `id ASC FOR SHARE` → positions in that instrument order → orders. Catalog sync prelocks existing instruments `id ASC FOR UPDATE` and never locks account, position, or order rows.
 
 Book-ticker subscriptions cover every known catalog symbol (ACTIVE and INACTIVE). Mark remains the all-catalog `!markPrice@arr@1s` stream. If Binance stops publishing a symbol, Notional has no BBO and liquidation/unwind fail closed.

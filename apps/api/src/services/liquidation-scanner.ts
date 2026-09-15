@@ -15,6 +15,7 @@ import {
 } from "./liquidation-risk.js";
 
 export type LiquidationScanner = {
+  requestScan(): void;
   start(): void;
   stop(): void;
   scanOnce(): Promise<void>;
@@ -107,6 +108,13 @@ export function createLiquidationScanner(options: {
       }
     },
     scanOnce,
+    requestScan() {
+      void scanOnce().catch((error: unknown) => {
+        logger.error("liquidation scanner request failed", {
+          detail: error instanceof Error ? error.message : "liquidation scanner request failed",
+        });
+      });
+    },
   };
 }
 

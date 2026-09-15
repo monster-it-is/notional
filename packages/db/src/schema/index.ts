@@ -7,3 +7,4 @@ export * from "./order.js";
 export * from "./execution.js";
 export * from "./position.js";
 export * from "./liquidation.js";
+export * from "./perp-funding.js";

@@ -1,0 +1,2239 @@
+{
+  "id": "7ee98206-660a-4178-81e2-e3e15eae142b",
+  "prevId": "9d326c14-f544-43b2-bc44-aa064edbbfc1",
+  "version": "7",
+  "dialect": "postgresql",
+  "tables": {
+    "public.account": {
+      "name": "account",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "account_id": {
+          "name": "account_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "provider_id": {
+          "name": "provider_id",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "access_token": {
+          "name": "access_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_token": {
+          "name": "refresh_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "id_token": {
+          "name": "id_token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "access_token_expires_at": {
+          "name": "access_token_expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "refresh_token_expires_at": {
+          "name": "refresh_token_expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "scope": {
+          "name": "scope",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "password": {
+          "name": "password",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "account_userId_idx": {
+          "name": "account_userId_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "account_user_id_user_id_fk": {
+          "name": "account_user_id_user_id_fk",
+          "tableFrom": "account",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.session": {
+      "name": "session",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "token": {
+          "name": "token",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ip_address": {
+          "name": "ip_address",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_agent": {
+          "name": "user_agent",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "session_userId_idx": {
+          "name": "session_userId_idx",
+          "columns": [
+            {
+              "expression": "user_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "session_user_id_user_id_fk": {
+          "name": "session_user_id_user_id_fk",
+          "tableFrom": "session",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "session_token_unique": {
+          "name": "session_token_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "token"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.user": {
+      "name": "user",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "name": {
+          "name": "name",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email": {
+          "name": "email",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "email_verified": {
+          "name": "email_verified",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "image": {
+          "name": "image",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "user_email_unique": {
+          "name": "user_email_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "email"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.verification": {
+      "name": "verification",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "identifier": {
+          "name": "identifier",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "value": {
+          "name": "value",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "expires_at": {
+          "name": "expires_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "verification_identifier_idx": {
+          "name": "verification_identifier_idx",
+          "columns": [
+            {
+              "expression": "identifier",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {},
+      "isRLSEnabled": false
+    },
+    "public.paper_account": {
+      "name": "paper_account",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'USDT'"
+        },
+        "balance": {
+          "name": "balance",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ACTIVE'"
+        },
+        "last_faucet_claim_at": {
+          "name": "last_faucet_claim_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "paper_account_user_id_user_id_fk": {
+          "name": "paper_account_user_id_user_id_fk",
+          "tableFrom": "paper_account",
+          "tableTo": "user",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "paper_account_user_id_unique": {
+          "name": "paper_account_user_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "user_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "paper_account_currency_usdt": {
+          "name": "paper_account_currency_usdt",
+          "value": "\"paper_account\".\"currency\" = 'USDT'"
+        },
+        "paper_account_balance_non_negative": {
+          "name": "paper_account_balance_non_negative",
+          "value": "\"paper_account\".\"balance\" >= 0"
+        },
+        "paper_account_status_valid": {
+          "name": "paper_account_status_valid",
+          "value": "\"paper_account\".\"status\" in ('ACTIVE', 'SUSPENDED')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.ledger_account": {
+      "name": "ledger_account",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "kind": {
+          "name": "kind",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "paper_account_id": {
+          "name": "paper_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'USDT'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ledger_account_user_cash_unique": {
+          "name": "ledger_account_user_cash_unique",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"ledger_account\".\"paper_account_id\" IS NOT NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ledger_account_system_kind_unique": {
+          "name": "ledger_account_system_kind_unique",
+          "columns": [
+            {
+              "expression": "kind",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"ledger_account\".\"paper_account_id\" IS NULL",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ledger_account_paper_account_id_paper_account_id_fk": {
+          "name": "ledger_account_paper_account_id_paper_account_id_fk",
+          "tableFrom": "ledger_account",
+          "tableTo": "paper_account",
+          "columnsFrom": [
+            "paper_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ledger_account_kind_valid": {
+          "name": "ledger_account_kind_valid",
+          "value": "\"ledger_account\".\"kind\" in ('USER_CASH', 'SYSTEM_VIRTUAL_FUNDING', 'SYSTEM_TRADING_PNL', 'SYSTEM_INSURANCE', 'SYSTEM_FUNDING')"
+        },
+        "ledger_account_currency_usdt": {
+          "name": "ledger_account_currency_usdt",
+          "value": "\"ledger_account\".\"currency\" = 'USDT'"
+        },
+        "ledger_account_ownership": {
+          "name": "ledger_account_ownership",
+          "value": "(\n        (\"ledger_account\".\"kind\" = 'USER_CASH' AND \"ledger_account\".\"paper_account_id\" IS NOT NULL)\n        OR\n        (\n          \"ledger_account\".\"kind\" in ('SYSTEM_VIRTUAL_FUNDING', 'SYSTEM_TRADING_PNL', 'SYSTEM_INSURANCE', 'SYSTEM_FUNDING')\n          AND \"ledger_account\".\"paper_account_id\" IS NULL\n        )\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.ledger_entry": {
+      "name": "ledger_entry",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "ledger_transaction_id": {
+          "name": "ledger_transaction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ledger_account_id": {
+          "name": "ledger_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "ledger_entry_transaction_idx": {
+          "name": "ledger_entry_transaction_idx",
+          "columns": [
+            {
+              "expression": "ledger_transaction_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "ledger_entry_account_idx": {
+          "name": "ledger_entry_account_idx",
+          "columns": [
+            {
+              "expression": "ledger_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "ledger_entry_ledger_transaction_id_ledger_transaction_id_fk": {
+          "name": "ledger_entry_ledger_transaction_id_ledger_transaction_id_fk",
+          "tableFrom": "ledger_entry",
+          "tableTo": "ledger_transaction",
+          "columnsFrom": [
+            "ledger_transaction_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "ledger_entry_ledger_account_id_ledger_account_id_fk": {
+          "name": "ledger_entry_ledger_account_id_ledger_account_id_fk",
+          "tableFrom": "ledger_entry",
+          "tableTo": "ledger_account",
+          "columnsFrom": [
+            "ledger_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "ledger_entry_amount_nonzero": {
+          "name": "ledger_entry_amount_nonzero",
+          "value": "\"ledger_entry\".\"amount\" <> 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.ledger_transaction": {
+      "name": "ledger_transaction",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "ledger_transaction_idempotency_key_unique": {
+          "name": "ledger_transaction_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "idempotency_key"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "ledger_transaction_event_type_valid": {
+          "name": "ledger_transaction_event_type_valid",
+          "value": "\"ledger_transaction\".\"event_type\" in ('SIGNUP_ALLOCATION', 'FAUCET_CLAIM', 'REALIZED_PNL', 'FUNDING_PAYMENT')"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.funding_event": {
+      "name": "funding_event",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "paper_account_id": {
+          "name": "paper_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "event_type": {
+          "name": "event_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "amount": {
+          "name": "amount",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "currency": {
+          "name": "currency",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'USDT'"
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ledger_transaction_id": {
+          "name": "ledger_transaction_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "funding_event_signup_allocation_unique": {
+          "name": "funding_event_signup_allocation_unique",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "where": "\"funding_event\".\"event_type\" = 'SIGNUP_ALLOCATION'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "funding_event_paper_account_created_at_idx": {
+          "name": "funding_event_paper_account_created_at_idx",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "funding_event_paper_account_id_paper_account_id_fk": {
+          "name": "funding_event_paper_account_id_paper_account_id_fk",
+          "tableFrom": "funding_event",
+          "tableTo": "paper_account",
+          "columnsFrom": [
+            "paper_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "funding_event_ledger_transaction_id_ledger_transaction_id_fk": {
+          "name": "funding_event_ledger_transaction_id_ledger_transaction_id_fk",
+          "tableFrom": "funding_event",
+          "tableTo": "ledger_transaction",
+          "columnsFrom": [
+            "ledger_transaction_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "funding_event_idempotency_key_unique": {
+          "name": "funding_event_idempotency_key_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "idempotency_key"
+          ]
+        },
+        "funding_event_ledger_transaction_id_unique": {
+          "name": "funding_event_ledger_transaction_id_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "ledger_transaction_id"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "funding_event_type_valid": {
+          "name": "funding_event_type_valid",
+          "value": "\"funding_event\".\"event_type\" in ('SIGNUP_ALLOCATION', 'FAUCET_CLAIM')"
+        },
+        "funding_event_amount_positive": {
+          "name": "funding_event_amount_positive",
+          "value": "\"funding_event\".\"amount\" > 0"
+        },
+        "funding_event_currency_usdt": {
+          "name": "funding_event_currency_usdt",
+          "value": "\"funding_event\".\"currency\" = 'USDT'"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.instrument": {
+      "name": "instrument",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "symbol": {
+          "name": "symbol",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "base_asset": {
+          "name": "base_asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quote_asset": {
+          "name": "quote_asset",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'USDT'"
+        },
+        "contract_type": {
+          "name": "contract_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'PERPETUAL'"
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'ACTIVE'"
+        },
+        "tick_size": {
+          "name": "tick_size",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_price": {
+          "name": "min_price",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_price": {
+          "name": "max_price",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "step_size": {
+          "name": "step_size",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_qty": {
+          "name": "min_qty",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "max_qty": {
+          "name": "max_qty",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "market_step_size": {
+          "name": "market_step_size",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "market_min_qty": {
+          "name": "market_min_qty",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "market_max_qty": {
+          "name": "market_max_qty",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "min_notional": {
+          "name": "min_notional",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {
+        "instrument_symbol_unique": {
+          "name": "instrument_symbol_unique",
+          "nullsNotDistinct": false,
+          "columns": [
+            "symbol"
+          ]
+        }
+      },
+      "policies": {},
+      "checkConstraints": {
+        "instrument_symbol_uppercase": {
+          "name": "instrument_symbol_uppercase",
+          "value": "\"instrument\".\"symbol\" = upper(\"instrument\".\"symbol\")"
+        },
+        "instrument_quote_asset_usdt": {
+          "name": "instrument_quote_asset_usdt",
+          "value": "\"instrument\".\"quote_asset\" = 'USDT'"
+        },
+        "instrument_contract_type_perpetual": {
+          "name": "instrument_contract_type_perpetual",
+          "value": "\"instrument\".\"contract_type\" = 'PERPETUAL'"
+        },
+        "instrument_status_valid": {
+          "name": "instrument_status_valid",
+          "value": "\"instrument\".\"status\" in ('ACTIVE', 'INACTIVE')"
+        },
+        "instrument_tick_size_non_negative": {
+          "name": "instrument_tick_size_non_negative",
+          "value": "\"instrument\".\"tick_size\" >= 0"
+        },
+        "instrument_min_price_non_negative": {
+          "name": "instrument_min_price_non_negative",
+          "value": "\"instrument\".\"min_price\" >= 0"
+        },
+        "instrument_max_price_non_negative": {
+          "name": "instrument_max_price_non_negative",
+          "value": "\"instrument\".\"max_price\" >= 0"
+        },
+        "instrument_step_size_positive": {
+          "name": "instrument_step_size_positive",
+          "value": "\"instrument\".\"step_size\" > 0"
+        },
+        "instrument_min_qty_positive": {
+          "name": "instrument_min_qty_positive",
+          "value": "\"instrument\".\"min_qty\" > 0"
+        },
+        "instrument_max_qty_positive": {
+          "name": "instrument_max_qty_positive",
+          "value": "\"instrument\".\"max_qty\" > 0"
+        },
+        "instrument_qty_range": {
+          "name": "instrument_qty_range",
+          "value": "\"instrument\".\"max_qty\" >= \"instrument\".\"min_qty\""
+        },
+        "instrument_market_step_size_positive": {
+          "name": "instrument_market_step_size_positive",
+          "value": "\"instrument\".\"market_step_size\" > 0"
+        },
+        "instrument_market_min_qty_positive": {
+          "name": "instrument_market_min_qty_positive",
+          "value": "\"instrument\".\"market_min_qty\" > 0"
+        },
+        "instrument_market_max_qty_positive": {
+          "name": "instrument_market_max_qty_positive",
+          "value": "\"instrument\".\"market_max_qty\" > 0"
+        },
+        "instrument_market_qty_range": {
+          "name": "instrument_market_qty_range",
+          "value": "\"instrument\".\"market_max_qty\" >= \"instrument\".\"market_min_qty\""
+        },
+        "instrument_min_notional_positive": {
+          "name": "instrument_min_notional_positive",
+          "value": "\"instrument\".\"min_notional\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.trade_order": {
+      "name": "trade_order",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "paper_account_id": {
+          "name": "paper_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instrument_id": {
+          "name": "instrument_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "side": {
+          "name": "side",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "order_type": {
+          "name": "order_type",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "limit_price": {
+          "name": "limit_price",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "reduce_only": {
+          "name": "reduce_only",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
+        },
+        "reserved_margin": {
+          "name": "reserved_margin",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "origin": {
+          "name": "origin",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'USER'"
+        },
+        "liquidation_event_id": {
+          "name": "liquidation_event_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "idempotency_key": {
+          "name": "idempotency_key",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "trade_order_paper_account_idempotency_key_unique": {
+          "name": "trade_order_paper_account_idempotency_key_unique",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "idempotency_key",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "trade_order_paper_account_created_at_id_idx": {
+          "name": "trade_order_paper_account_created_at_id_idx",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "trade_order_open_limit_by_instrument_idx": {
+          "name": "trade_order_open_limit_by_instrument_idx",
+          "columns": [
+            {
+              "expression": "instrument_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "side",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "where": "\"trade_order\".\"status\" = 'OPEN' AND \"trade_order\".\"order_type\" = 'LIMIT'",
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "trade_order_paper_account_id_paper_account_id_fk": {
+          "name": "trade_order_paper_account_id_paper_account_id_fk",
+          "tableFrom": "trade_order",
+          "tableTo": "paper_account",
+          "columnsFrom": [
+            "paper_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "trade_order_instrument_id_instrument_id_fk": {
+          "name": "trade_order_instrument_id_instrument_id_fk",
+          "tableFrom": "trade_order",
+          "tableTo": "instrument",
+          "columnsFrom": [
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "trade_order_liquidation_event_id_liquidation_event_id_fk": {
+          "name": "trade_order_liquidation_event_id_liquidation_event_id_fk",
+          "tableFrom": "trade_order",
+          "tableTo": "liquidation_event",
+          "columnsFrom": [
+            "liquidation_event_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "trade_order_side_valid": {
+          "name": "trade_order_side_valid",
+          "value": "\"trade_order\".\"side\" in ('BUY', 'SELL')"
+        },
+        "trade_order_type_valid": {
+          "name": "trade_order_type_valid",
+          "value": "\"trade_order\".\"order_type\" in ('MARKET', 'LIMIT')"
+        },
+        "trade_order_status_valid": {
+          "name": "trade_order_status_valid",
+          "value": "\"trade_order\".\"status\" in ('OPEN', 'FILLED', 'CANCELLED')"
+        },
+        "trade_order_quantity_positive": {
+          "name": "trade_order_quantity_positive",
+          "value": "\"trade_order\".\"quantity\" > 0"
+        },
+        "trade_order_limit_price_by_type": {
+          "name": "trade_order_limit_price_by_type",
+          "value": "(\n        (\"trade_order\".\"order_type\" = 'MARKET' AND \"trade_order\".\"limit_price\" IS NULL)\n        OR\n        (\"trade_order\".\"order_type\" = 'LIMIT' AND \"trade_order\".\"limit_price\" IS NOT NULL AND \"trade_order\".\"limit_price\" > 0)\n      )"
+        },
+        "trade_order_status_by_type": {
+          "name": "trade_order_status_by_type",
+          "value": "(\n        (\"trade_order\".\"order_type\" = 'MARKET' AND \"trade_order\".\"status\" = 'FILLED')\n        OR\n        (\"trade_order\".\"order_type\" = 'LIMIT' AND \"trade_order\".\"status\" in ('OPEN', 'FILLED', 'CANCELLED'))\n      )"
+        },
+        "trade_order_idempotency_key_shape": {
+          "name": "trade_order_idempotency_key_shape",
+          "value": "char_length(\"trade_order\".\"idempotency_key\") BETWEEN 1 AND 128\n        AND \"trade_order\".\"idempotency_key\" = btrim(\"trade_order\".\"idempotency_key\")"
+        },
+        "trade_order_origin_valid": {
+          "name": "trade_order_origin_valid",
+          "value": "\"trade_order\".\"origin\" in ('USER', 'LIQUIDATION')"
+        },
+        "trade_order_origin_event": {
+          "name": "trade_order_origin_event",
+          "value": "(\n        (\"trade_order\".\"origin\" = 'USER' AND \"trade_order\".\"liquidation_event_id\" IS NULL)\n        OR\n        (\"trade_order\".\"origin\" = 'LIQUIDATION' AND \"trade_order\".\"liquidation_event_id\" IS NOT NULL)\n      )"
+        },
+        "trade_order_reserved_margin_non_negative": {
+          "name": "trade_order_reserved_margin_non_negative",
+          "value": "\"trade_order\".\"reserved_margin\" >= 0"
+        },
+        "trade_order_reserved_margin_lifecycle": {
+          "name": "trade_order_reserved_margin_lifecycle",
+          "value": "(\n        (\"trade_order\".\"order_type\" = 'MARKET' AND \"trade_order\".\"reserved_margin\" = 0)\n        OR\n        (\"trade_order\".\"status\" in ('FILLED', 'CANCELLED') AND \"trade_order\".\"reserved_margin\" = 0)\n        OR\n        (\n          \"trade_order\".\"order_type\" = 'LIMIT'\n          AND \"trade_order\".\"status\" = 'OPEN'\n          AND \"trade_order\".\"reduce_only\" = true\n          AND \"trade_order\".\"reserved_margin\" = 0\n        )\n        OR\n        (\n          \"trade_order\".\"order_type\" = 'LIMIT'\n          AND \"trade_order\".\"status\" = 'OPEN'\n          AND \"trade_order\".\"reduce_only\" = false\n          AND \"trade_order\".\"reserved_margin\" > 0\n        )\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.execution": {
+      "name": "execution",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "order_id": {
+          "name": "order_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "price": {
+          "name": "price",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "executed_at": {
+          "name": "executed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "execution_order_id_unique": {
+          "name": "execution_order_id_unique",
+          "columns": [
+            {
+              "expression": "order_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "execution_order_id_trade_order_id_fk": {
+          "name": "execution_order_id_trade_order_id_fk",
+          "tableFrom": "execution",
+          "tableTo": "trade_order",
+          "columnsFrom": [
+            "order_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "execution_quantity_positive": {
+          "name": "execution_quantity_positive",
+          "value": "\"execution\".\"quantity\" > 0"
+        },
+        "execution_price_positive": {
+          "name": "execution_price_positive",
+          "value": "\"execution\".\"price\" > 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.trading_position": {
+      "name": "trading_position",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "paper_account_id": {
+          "name": "paper_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instrument_id": {
+          "name": "instrument_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "entry_price": {
+          "name": "entry_price",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "realized_pnl": {
+          "name": "realized_pnl",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "margin_mode": {
+          "name": "margin_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'CROSS'"
+        },
+        "leverage": {
+          "name": "leverage",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "default": 1
+        },
+        "isolated_margin": {
+          "name": "isolated_margin",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "'0'"
+        },
+        "funding_cursor_at": {
+          "name": "funding_cursor_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "clock_timestamp() AT TIME ZONE 'UTC'"
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "now()"
+        }
+      },
+      "indexes": {
+        "trading_position_paper_account_instrument_unique": {
+          "name": "trading_position_paper_account_instrument_unique",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "instrument_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "trading_position_paper_account_id_paper_account_id_fk": {
+          "name": "trading_position_paper_account_id_paper_account_id_fk",
+          "tableFrom": "trading_position",
+          "tableTo": "paper_account",
+          "columnsFrom": [
+            "paper_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "trading_position_instrument_id_instrument_id_fk": {
+          "name": "trading_position_instrument_id_instrument_id_fk",
+          "tableFrom": "trading_position",
+          "tableTo": "instrument",
+          "columnsFrom": [
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "trading_position_qty_entry_invariant": {
+          "name": "trading_position_qty_entry_invariant",
+          "value": "(\n        (\"trading_position\".\"quantity\" = 0 AND \"trading_position\".\"entry_price\" IS NULL)\n        OR\n        (\"trading_position\".\"quantity\" <> 0 AND \"trading_position\".\"entry_price\" IS NOT NULL AND \"trading_position\".\"entry_price\" > 0)\n      )"
+        },
+        "trading_position_margin_mode_valid": {
+          "name": "trading_position_margin_mode_valid",
+          "value": "\"trading_position\".\"margin_mode\" in ('CROSS', 'ISOLATED')"
+        },
+        "trading_position_leverage_bounds": {
+          "name": "trading_position_leverage_bounds",
+          "value": "\"trading_position\".\"leverage\" >= 1 AND \"trading_position\".\"leverage\" <= 100"
+        },
+        "trading_position_isolated_margin_non_negative": {
+          "name": "trading_position_isolated_margin_non_negative",
+          "value": "\"trading_position\".\"isolated_margin\" >= 0"
+        },
+        "trading_position_isolated_margin_by_mode": {
+          "name": "trading_position_isolated_margin_by_mode",
+          "value": "(\n        (\"trading_position\".\"margin_mode\" = 'CROSS' AND \"trading_position\".\"isolated_margin\" = 0)\n        OR\n        (\n          \"trading_position\".\"margin_mode\" = 'ISOLATED'\n          AND (\n            (\"trading_position\".\"quantity\" = 0 AND \"trading_position\".\"isolated_margin\" = 0)\n            OR\n            (\"trading_position\".\"quantity\" <> 0 AND \"trading_position\".\"isolated_margin\" >= 0)\n          )\n        )\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.liquidation_event": {
+      "name": "liquidation_event",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "paper_account_id": {
+          "name": "paper_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "margin_mode": {
+          "name": "margin_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "instrument_id": {
+          "name": "instrument_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "equity": {
+          "name": "equity",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "maintenance_margin": {
+          "name": "maintenance_margin",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "liquidation_event_paper_account_created_at_id_idx": {
+          "name": "liquidation_event_paper_account_created_at_id_idx",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "liquidation_event_paper_account_id_paper_account_id_fk": {
+          "name": "liquidation_event_paper_account_id_paper_account_id_fk",
+          "tableFrom": "liquidation_event",
+          "tableTo": "paper_account",
+          "columnsFrom": [
+            "paper_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "liquidation_event_instrument_id_instrument_id_fk": {
+          "name": "liquidation_event_instrument_id_instrument_id_fk",
+          "tableFrom": "liquidation_event",
+          "tableTo": "instrument",
+          "columnsFrom": [
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "liquidation_event_margin_mode_valid": {
+          "name": "liquidation_event_margin_mode_valid",
+          "value": "\"liquidation_event\".\"margin_mode\" in ('CROSS', 'ISOLATED')"
+        },
+        "liquidation_event_instrument_by_mode": {
+          "name": "liquidation_event_instrument_by_mode",
+          "value": "(\n        (\"liquidation_event\".\"margin_mode\" = 'CROSS' AND \"liquidation_event\".\"instrument_id\" IS NULL)\n        OR\n        (\"liquidation_event\".\"margin_mode\" = 'ISOLATED' AND \"liquidation_event\".\"instrument_id\" IS NOT NULL)\n      )"
+        },
+        "liquidation_event_maintenance_non_negative": {
+          "name": "liquidation_event_maintenance_non_negative",
+          "value": "\"liquidation_event\".\"maintenance_margin\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.perp_funding_account_settlement": {
+      "name": "perp_funding_account_settlement",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "paper_account_id": {
+          "name": "paper_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "funding_time": {
+          "name": "funding_time",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "total_funding_payment": {
+          "name": "total_funding_payment",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "user_wallet_delta": {
+          "name": "user_wallet_delta",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "insurance_absorption": {
+          "name": "insurance_absorption",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "perp_funding_account_settlement_account_time_unique": {
+          "name": "perp_funding_account_settlement_account_time_unique",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "funding_time",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "perp_funding_account_settlement_paper_account_id_paper_account_id_fk": {
+          "name": "perp_funding_account_settlement_paper_account_id_paper_account_id_fk",
+          "tableFrom": "perp_funding_account_settlement",
+          "tableTo": "paper_account",
+          "columnsFrom": [
+            "paper_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "perp_funding_account_settlement_insurance_non_negative": {
+          "name": "perp_funding_account_settlement_insurance_non_negative",
+          "value": "\"perp_funding_account_settlement\".\"insurance_absorption\" >= 0"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.perp_funding_cycle": {
+      "name": "perp_funding_cycle",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "instrument_id": {
+          "name": "instrument_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "funding_time": {
+          "name": "funding_time",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "status": {
+          "name": "status",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "funding_rate": {
+          "name": "funding_rate",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "mark_price": {
+          "name": "mark_price",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "ready_at": {
+          "name": "ready_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        }
+      },
+      "indexes": {
+        "perp_funding_cycle_instrument_funding_time_unique": {
+          "name": "perp_funding_cycle_instrument_funding_time_unique",
+          "columns": [
+            {
+              "expression": "instrument_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "funding_time",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "perp_funding_cycle_status_funding_time_idx": {
+          "name": "perp_funding_cycle_status_funding_time_idx",
+          "columns": [
+            {
+              "expression": "status",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "funding_time",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "perp_funding_cycle_instrument_id_instrument_id_fk": {
+          "name": "perp_funding_cycle_instrument_id_instrument_id_fk",
+          "tableFrom": "perp_funding_cycle",
+          "tableTo": "instrument",
+          "columnsFrom": [
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "perp_funding_cycle_status_valid": {
+          "name": "perp_funding_cycle_status_valid",
+          "value": "\"perp_funding_cycle\".\"status\" in ('SCHEDULED', 'READY')"
+        },
+        "perp_funding_cycle_payload_by_status": {
+          "name": "perp_funding_cycle_payload_by_status",
+          "value": "(\n        (\n          \"perp_funding_cycle\".\"status\" = 'SCHEDULED'\n          AND \"perp_funding_cycle\".\"funding_rate\" IS NULL\n          AND \"perp_funding_cycle\".\"mark_price\" IS NULL\n          AND \"perp_funding_cycle\".\"ready_at\" IS NULL\n        )\n        OR\n        (\n          \"perp_funding_cycle\".\"status\" = 'READY'\n          AND \"perp_funding_cycle\".\"funding_rate\" IS NOT NULL\n          AND abs(\"perp_funding_cycle\".\"funding_rate\") < 1\n          AND \"perp_funding_cycle\".\"mark_price\" IS NOT NULL\n          AND \"perp_funding_cycle\".\"mark_price\" > 0\n          AND \"perp_funding_cycle\".\"ready_at\" IS NOT NULL\n        )\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.perp_funding_settlement": {
+      "name": "perp_funding_settlement",
+      "schema": "",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true,
+          "default": "pg_catalog.gen_random_uuid()"
+        },
+        "funding_cycle_id": {
+          "name": "funding_cycle_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "paper_account_id": {
+          "name": "paper_account_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "position_id": {
+          "name": "position_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "funding_account_settlement_id": {
+          "name": "funding_account_settlement_id",
+          "type": "uuid",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "margin_mode": {
+          "name": "margin_mode",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "quantity": {
+          "name": "quantity",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "funding_payment": {
+          "name": "funding_payment",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "isolated_margin_before": {
+          "name": "isolated_margin_before",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "isolated_margin_after": {
+          "name": "isolated_margin_after",
+          "type": "numeric(38, 18)",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {
+        "perp_funding_settlement_cycle_account_unique": {
+          "name": "perp_funding_settlement_cycle_account_unique",
+          "columns": [
+            {
+              "expression": "funding_cycle_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
+        "perp_funding_settlement_account_created_at_id_idx": {
+          "name": "perp_funding_settlement_account_created_at_id_idx",
+          "columns": [
+            {
+              "expression": "paper_account_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "created_at",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": false,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        }
+      },
+      "foreignKeys": {
+        "perp_funding_settlement_funding_cycle_id_perp_funding_cycle_id_fk": {
+          "name": "perp_funding_settlement_funding_cycle_id_perp_funding_cycle_id_fk",
+          "tableFrom": "perp_funding_settlement",
+          "tableTo": "perp_funding_cycle",
+          "columnsFrom": [
+            "funding_cycle_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "perp_funding_settlement_paper_account_id_paper_account_id_fk": {
+          "name": "perp_funding_settlement_paper_account_id_paper_account_id_fk",
+          "tableFrom": "perp_funding_settlement",
+          "tableTo": "paper_account",
+          "columnsFrom": [
+            "paper_account_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "perp_funding_settlement_position_id_trading_position_id_fk": {
+          "name": "perp_funding_settlement_position_id_trading_position_id_fk",
+          "tableFrom": "perp_funding_settlement",
+          "tableTo": "trading_position",
+          "columnsFrom": [
+            "position_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        },
+        "perp_funding_settlement_funding_account_settlement_id_perp_funding_account_settlement_id_fk": {
+          "name": "perp_funding_settlement_funding_account_settlement_id_perp_funding_account_settlement_id_fk",
+          "tableFrom": "perp_funding_settlement",
+          "tableTo": "perp_funding_account_settlement",
+          "columnsFrom": [
+            "funding_account_settlement_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "perp_funding_settlement_margin_mode_valid": {
+          "name": "perp_funding_settlement_margin_mode_valid",
+          "value": "\"perp_funding_settlement\".\"margin_mode\" in ('CROSS', 'ISOLATED')"
+        },
+        "perp_funding_settlement_quantity_nonzero": {
+          "name": "perp_funding_settlement_quantity_nonzero",
+          "value": "\"perp_funding_settlement\".\"quantity\" <> 0"
+        },
+        "perp_funding_settlement_isolated_fields": {
+          "name": "perp_funding_settlement_isolated_fields",
+          "value": "(\n        (\n          \"perp_funding_settlement\".\"margin_mode\" = 'CROSS'\n          AND \"perp_funding_settlement\".\"isolated_margin_before\" IS NULL\n          AND \"perp_funding_settlement\".\"isolated_margin_after\" IS NULL\n        )\n        OR\n        (\n          \"perp_funding_settlement\".\"margin_mode\" = 'ISOLATED'\n          AND \"perp_funding_settlement\".\"isolated_margin_before\" IS NOT NULL\n          AND \"perp_funding_settlement\".\"isolated_margin_after\" IS NOT NULL\n        )\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    },
+    "public.perp_funding_source_state": {
+      "name": "perp_funding_source_state",
+      "schema": "",
+      "columns": {
+        "instrument_id": {
+          "name": "instrument_id",
+          "type": "uuid",
+          "primaryKey": true,
+          "notNull": true
+        },
+        "activation_floor_at": {
+          "name": "activation_floor_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        },
+        "last_realized_funding_time": {
+          "name": "last_realized_funding_time",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_funding_time": {
+          "name": "next_funding_time",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "next_funding_time_observed_at": {
+          "name": "next_funding_time_observed_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "updated_at": {
+          "name": "updated_at",
+          "type": "timestamp",
+          "primaryKey": false,
+          "notNull": true
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "perp_funding_source_state_instrument_id_instrument_id_fk": {
+          "name": "perp_funding_source_state_instrument_id_instrument_id_fk",
+          "tableFrom": "perp_funding_source_state",
+          "tableTo": "instrument",
+          "columnsFrom": [
+            "instrument_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "restrict",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "policies": {},
+      "checkConstraints": {
+        "perp_funding_source_state_next_observed": {
+          "name": "perp_funding_source_state_next_observed",
+          "value": "(\n        (\"perp_funding_source_state\".\"next_funding_time\" IS NULL AND \"perp_funding_source_state\".\"next_funding_time_observed_at\" IS NULL)\n        OR\n        (\"perp_funding_source_state\".\"next_funding_time\" IS NOT NULL AND \"perp_funding_source_state\".\"next_funding_time_observed_at\" IS NOT NULL)\n      )"
+        }
+      },
+      "isRLSEnabled": false
+    }
+  },
+  "enums": {},
+  "schemas": {},
+  "sequences": {},
+  "roles": {},
+  "policies": {},
+  "views": {},
+  "_meta": {
+    "columns": {},
+    "schemas": {},
+    "tables": {}
+  }
+}

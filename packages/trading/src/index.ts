@@ -69,7 +69,20 @@ export type {
   PositionTransition,
 } from "./position.js";
 export {
+  calculateFundingPayment,
+  calculateIsolatedFundingSettlement,
+  calculateNextIsolatedCollateralAfterFill,
+  effectiveProofBase,
+  expectedMarkCandleCloseTimeMs,
+  isolatedIncreaseRequiresHealthyCollateral,
+  persistFundingMarkToNumeric3818,
+  persistFundingRateToNumeric3818,
+  windowProven,
+} from "./funding.js";
+export type { IsolatedFundingSettlement, LiveScheduleProof } from "./funding.js";
+export {
   calculateIsolatedReduceProtectedBalance,
+  calculateProtectedWalletSettlement,
   calculateWalletRealizedSettlement,
 } from "./wallet-settlement.js";
 export type { WalletRealizedSettlement } from "./wallet-settlement.js";

@@ -21,7 +21,6 @@ import {
   paperAccount,
   updateMarginSettingsForFlatPosition,
   updatePositionState,
-  upsertInstrumentBySymbol,
 } from "@notional/db";
 import { endTestPool, resetTestTables, setPaperAccountStatusForTests } from "@notional/db/test";
 import { toCanonicalDecimalString } from "@notional/trading";
@@ -31,6 +30,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { buildApp } from "../app.js";
 import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { createMarketDataStore, type MarketDataStore } from "../market-data/market-data-store.js";
+import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./funding-test-fixtures.js";
 import { applyCreatedFillEffectsInTx } from "./order-placement.js";
 
 const password = "correct-horse-battery";
@@ -680,6 +680,7 @@ describe("atomic CROSS order placement", () => {
           lockedPosition: position,
           fill,
           marketData: accessFromStore(store),
+          financialNow: new Date("2026-09-15T12:00:00.000Z"),
         });
         throw new Error("forced rollback");
       }),
