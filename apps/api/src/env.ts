@@ -35,7 +35,7 @@ const envSchema = z.object({
 });
 
 export type NodeEnv = (typeof NODE_ENVS)[number];
-export type TrustProxySetting = boolean | number;
+export type TrustProxySetting = boolean;
 
 export type ApiEnv = Omit<
   z.infer<typeof envSchema>,
@@ -161,7 +161,7 @@ function assertProductionHttpsOrigin(value: string, name: string): void {
 }
 
 export function parseTrustProxy(value: string | undefined): TrustProxySetting {
-  if (value === undefined || value === "" || value === "false" || value === "0") {
+  if (value === undefined || value === "" || value === "false") {
     return false;
   }
 
@@ -169,11 +169,7 @@ export function parseTrustProxy(value: string | undefined): TrustProxySetting {
     return true;
   }
 
-  if (/^[1-9]\d*$/.test(value)) {
-    return Number(value);
-  }
-
-  throw new Error("TRUST_PROXY must be false, 0, true, or a positive hop count");
+  throw new Error("TRUST_PROXY must be false or true");
 }
 
 function parseEnableHsts(

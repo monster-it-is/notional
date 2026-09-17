@@ -85,10 +85,21 @@ Production is a static SPA + one API process + PostgreSQL + Binance public REST/
 
 - Session cookies are host-only SameSite=Lax. Deploy web and API same-site (same origin via reverse proxy, or sibling https subdomains).
 - HTTP CORS permits exactly the canonical `WEB_ORIGIN`. Better Auth `trustedOrigins` is exactly that origin. Browser WebSocket `Origin` must equal `WEB_ORIGIN`.
-- PostgreSQL TLS/SSL is configured in `DATABASE_URL` query options such as `sslmode`, according to the selected host. Phase 18A does not force a universal `sslmode`. Provider CA/TLS details remain Phase 18B.
+- PostgreSQL TLS/SSL is configured in `DATABASE_URL` query options such as `sslmode`, according to the selected host. Phase 18A does not force a universal `sslmode`. Render (Phase 18B) uses the same-region internal `connectionString` with no `sslmode` append, no `DATABASE_SSL`, and public database access disabled.
 - Production Node runs `node dist/server.js` after workspace `dist` builds. Compiled `migrate:prod` must run before start. Never `drizzle-kit push`.
 - The production API image is built from `apps/api/Dockerfile` (multi-stage, `pnpm --filter=api --prod --legacy deploy`, non-root, migrate then `exec node dist/server.js`). The SPA image is `apps/web/Dockerfile` (nginx with `index.html` fallback). Images are not coupled. `docker-compose.prod.yml` is local image/wiring validation only; it uses placeholder HTTPS origins, not localhost HTTP.
 - `GET /health` is liveness. `GET /ready` is traffic readiness (startup complete, not shutting down, Postgres reachable). Stale Binance data does not flip `/ready`; financial routes fail closed.
 - Reverse proxies must allow WebSocket Upgrade on `/ws/market` and `/ws/account` and must not buffer those connections.
 - SPA security headers (CSP, HSTS) are owned by the static/web host. Fastify applies API headers and optional HSTS when `ENABLE_HSTS` is on and `BETTER_AUTH_URL` is https.
 - Rate limits are abuse protection only. The faucet 24h database cooldown remains financial authority.
+
+## Render (Phase 18B)
+
+Phase 18B is **in progress**, not complete. Hosting is Render in **Singapore**: a static site (`notional-web`), one Docker web service (`notional-api` from `apps/api/Dockerfile`), and Render Postgres (`notional-db`). Redis is not provisioned.
+
+- Steady-state API count is **one instance** (`numInstances: 1`, no autoscaling). Matcher, scanners, market store, and WebSocket fanout stay in-process.
+- Render zero-downtime deploys may temporarily run the old API process and the new API process before traffic cutover and SIGTERM of the old process. `numInstances: 1` does not prevent that overlap. PostgreSQL locks and uniqueness remain financial authority.
+- `GET /ready` is the Render health check. Graceful shutdown delay is 30 seconds. Migrations run only from the API Docker entrypoint (no `preDeployCommand`).
+- `TRUST_PROXY` is `false` until provider `X-Forwarded-For` verification. Accepted values are `false` or `true` only (Fastify 5.12.4 does not support numeric hop counts).
+- Final browser cookie authentication requires sibling custom https domains (`notional.<DOMAIN>` and `api.notional.<DOMAIN>`). `*.onrender.com` hostnames are provisioning and testing only; `onrender.com` is a public suffix. Custom domains and disabling onrender subdomains are later 18B subphases.
+- Auto-deploy is off. GitHub Actions remains verification-only. `checksPass` is not enabled yet.

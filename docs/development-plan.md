@@ -101,6 +101,8 @@ Phase 17 replaces the Vite template in `apps/web` with the paper-trading SPA. Be
 
 ## Phase 18 — Testing, Hardening, and Deployment
 
-Status: COMPLETE (Phase 18A). Phase 18B (provider-specific hosting) is not started.
+Status: Phase 18A COMPLETE. Phase 18B IN PROGRESS (18B.1 repository Blueprint/config; not deployed).
 
-Phase 18A adds production packaging (compiled JS, workspace dist exports, compiled migrator), env/cookie/header/rate-limit hardening, liveness vs readiness, drain-safe shutdown, Docker artifacts, and CI. Financial domain behavior is unchanged. One API replica remains required. Redis remains unused. Provider manifests, `TRUST_PROXY` hop/IP, DNS/TLS, and auto-deploy are Phase 18B.
+Phase 18A adds production packaging (compiled JS, workspace dist exports, compiled migrator), env/cookie/header/rate-limit hardening, liveness vs readiness, drain-safe shutdown, Docker artifacts, and CI. Financial domain behavior is unchanged. One API replica remains required. Redis remains unused.
+
+Phase 18B is Render-specific hosting in Singapore: static site + Docker API + Render Postgres, one steady-state API instance, private internal `DATABASE_URL`, public DB access disabled, `TRUST_PROXY=false` until provider verification, custom sibling domains for the final cookie topology, onrender hostnames for provisioning/testing only, and auto-deploy off. Provider resources, DNS, and deploys start after 18B.1. See ADR-039.

@@ -1133,3 +1133,20 @@ Phase 18A makes the existing modular monolith production-operable without changi
 - Production Node runs compiled JavaScript. Workspace packages export `types`/`development` from source and `import`/`default` from `dist`. `tsx` is development-only. Migrations run from compiled `drizzle-orm` migrator against checked-in SQL, then the API starts. Never `drizzle-kit push`. The pruned API artifact is `pnpm --filter=api --prod --legacy deploy <dir>` (pnpm 12). That command can prune the workspace `node_modules`; restore with `pnpm install` after a local deploy test.
 - `/health` is process liveness. `/ready` requires startup complete, `shuttingDown === false`, and PostgreSQL. It is not gated on Binance freshness. Shutdown sets ready=false immediately, closes WebSockets, stops scheduling, drains scanners/catalog sync, finishes HTTP, drains the matcher, stops market-data, then `pool.end()` last.
 - Reverse proxies must forward WebSocket upgrades for `/ws/market` and `/ws/account`. `TRUST_PROXY` stays false until a provider is chosen.
+
+## ADR-039 — Render as the Phase 18B hosting provider
+
+Status: Accepted (implementation in progress)
+
+Phase 18B deploys the Phase 18A production topology to Render without changing financial or domain semantics. ADR-038 remains the operations architecture; this ADR records the provider choice and Render-specific constraints.
+
+- Services: Render Static Site (`notional-web`), Render Docker Web Service (`notional-api` from `apps/api/Dockerfile`), Render Postgres (`notional-db`). No Redis / Key Value.
+- Region: Singapore for API and Postgres (required for internal `connectionString`). The static site is CDN-backed and has no region field.
+- Compute: API `1c-2g`, Postgres `0.5c-1g`, `diskSizeGB: 1`, `connectionPool: none`, `storageAutoscalingEnabled: false`, `ipAllowList: []`.
+- `DATABASE_URL` comes from Blueprint `fromDatabase.property: connectionString` (same-region private URL). No `sslmode` append, no `DATABASE_SSL`, no `rejectUnauthorized: false`.
+- Steady-state API count is one instance (`numInstances: 1`, no autoscaling). Render zero-downtime deploys may still overlap old and new API processes before SIGTERM of the old process. That overlap is not a second replica in product terms; financial uniqueness stays in PostgreSQL.
+- Health: `healthCheckPath: /ready`. Shutdown: `maxShutdownDelaySeconds: 30`. Migrations stay in the Docker entrypoint only. No `preDeployCommand`.
+- `TRUST_PROXY` is `false` until Phase 18B.8 verifies Render `X-Forwarded-For` spoof behavior. The env parser accepts only `false` and `true` (Fastify 5.12.4 removed numeric hop-count `trustProxy` after CVE-2026-16732).
+- Session cookies remain host-only SameSite=Lax. Final production uses sibling custom domains. `*.onrender.com` is provisioning/testing only because `onrender.com` is a public suffix. Custom domains and `renderSubdomainPolicy: disabled` are later subphases.
+- `autoDeployTrigger: off`. GitHub Actions stays verification-only. `checksPass` is not enabled until production verification, including deploy-overlap idempotency.
+- Blueprint `sync: false` origins are Dashboard-managed after first create. First-sync placeholders are `https://web.invalid` / `https://api.invalid` and are not the cookie topology.

@@ -110,16 +110,16 @@ describe("parseEnv", () => {
     expect(() => parseEnv({ ...process.env, TRUST_PROXY: "yes" })).toThrow(/TRUST_PROXY/);
     expect(() => parseEnv({ ...process.env, TRUST_PROXY: "1.5" })).toThrow(/TRUST_PROXY/);
     expect(() => parseEnv({ ...process.env, TRUST_PROXY: "10.0.0.1" })).toThrow(/TRUST_PROXY/);
+    expect(() => parseEnv({ ...process.env, TRUST_PROXY: "0" })).toThrow(/TRUST_PROXY/);
+    expect(() => parseEnv({ ...process.env, TRUST_PROXY: "1" })).toThrow(/TRUST_PROXY/);
+    expect(() => parseEnv({ ...process.env, TRUST_PROXY: "2" })).toThrow(/TRUST_PROXY/);
   });
 
-  it("parses TRUST_PROXY as false, true, or hop count", () => {
+  it("parses TRUST_PROXY as false or true only", () => {
     expect(parseTrustProxy(undefined)).toBe(false);
     expect(parseTrustProxy("")).toBe(false);
     expect(parseEnv({ ...process.env, TRUST_PROXY: "false" }).TRUST_PROXY).toBe(false);
-    expect(parseEnv({ ...process.env, TRUST_PROXY: "0" }).TRUST_PROXY).toBe(false);
     expect(parseEnv({ ...process.env, TRUST_PROXY: "true" }).TRUST_PROXY).toBe(true);
-    expect(parseEnv({ ...process.env, TRUST_PROXY: "1" }).TRUST_PROXY).toBe(1);
-    expect(parseEnv({ ...process.env, TRUST_PROXY: "2" }).TRUST_PROXY).toBe(2);
   });
 
   it("rejects a short BETTER_AUTH_SECRET", () => {

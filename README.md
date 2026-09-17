@@ -57,7 +57,7 @@ Production start:
 3. `pnpm migrate:prod` (compiled Drizzle SQL migrator; never `drizzle-kit push`)
 4. `node apps/api/dist/server.js` or the API Docker image entrypoint (migrate then `exec node dist/server.js`)
 
-`TRUST_PROXY` defaults to false. Set it only after choosing a reverse-proxy provider (Phase 18B).
+`TRUST_PROXY` defaults to false and accepts only `false` or `true`. Phase 18B keeps it false on Render until provider `X-Forwarded-For` verification.
 
 `GET /health` — process liveness, no database.
 `GET /ready` — startup complete, not shutting down, Postgres reachable. Not gated on Binance freshness.
@@ -76,3 +76,15 @@ docker build -f apps/web/Dockerfile --build-arg VITE_API_BASE_URL=https://api.ex
 `docker compose -f docker-compose.prod.yml` is an API + PostgreSQL production-like wiring check. It builds the API image only; it does not build the web image. `up` uses placeholder HTTPS origins so production `parseEnv` can start; signing in through localhost is not a representative production auth flow.
 
 A local `pnpm --filter=api --prod --legacy deploy ./tmp-out` verifies the pruned artifact. Restore the workspace afterward with `pnpm install` (deploy `--prod` can prune local devDependencies).
+
+## Production (Phase 18B — Render)
+
+Status: **in progress**. Repository Blueprint/config only in 18B.1. This does not create Render resources, configure DNS, or deploy.
+
+Provider: Render. Region: Singapore (API + Postgres). Topology: static site `notional-web` + Docker API `notional-api` + Postgres `notional-db`. No Redis.
+
+- One **steady-state** API instance. Do not horizontally scale. Render zero-downtime deploys may temporarily run old and new API processes before SIGTERM of the old process.
+- `DATABASE_URL` is Render's same-region internal `connectionString`. Public database access is disabled. No `sslmode` append, no `DATABASE_SSL`.
+- `TRUST_PROXY=false` until provider verification. Auto-deploy is off.
+- Final cookie topology requires sibling custom domains (`https://notional.<DOMAIN>` and `https://api.notional.<DOMAIN>`). `*.onrender.com` hostnames are provisioning/testing only.
+- Manifest: [`render.yaml`](render.yaml). See ADR-039.
