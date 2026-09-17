@@ -281,6 +281,40 @@ describe("liquidation scanner", () => {
     expect(source).not.toContain("createRealtimeRuntime");
     expect(source).not.toContain("createMarketDataRuntime");
   });
+
+  it("does not start requestScan work after stop and drains an in-flight scan", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let cycles = 0;
+    const scanner = createLiquidationScanner({
+      marketData,
+      intervalMs: 1_000,
+      beforeScan: async () => {
+        cycles += 1;
+        await gate;
+      },
+    });
+    const running = scanner.scanOnce();
+    scanner.stop();
+    scanner.requestScan();
+    let idle = false;
+    const waiting = scanner.waitForIdle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    expect(cycles).toBe(1);
+    release();
+    await running;
+    await waiting;
+    expect(idle).toBe(true);
+    expect(cycles).toBe(1);
+    scanner.requestScan();
+    await scanner.waitForIdle();
+    expect(cycles).toBe(1);
+  });
 });
 
 async function seedOpenPosition(params: {

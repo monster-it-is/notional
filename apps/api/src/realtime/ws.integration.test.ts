@@ -9,11 +9,19 @@ import { WebSocket } from "ws";
 
 import { buildApp } from "../app.js";
 import { env } from "../env.js";
+import {
+  resetRateLimitPolicyForTests,
+  setRateLimitPolicyForTests,
+} from "../rate-limit.js";
 import { createMarketDataStore } from "../market-data/market-data-store.js";
 import { FakeScheduler } from "../market-data/test-helpers.js";
 import { createRealtimeRuntime, latestFromStore } from "./runtime.js";
 
 const password = "correct-horse-battery";
+
+afterAll(async () => {
+  await endTestPool();
+});
 
 describe("websocket http upgrade", () => {
   let app: FastifyInstance;
@@ -39,10 +47,6 @@ describe("websocket http upgrade", () => {
   afterEach(async () => {
     await runtime.shutdown();
     await app.close();
-  });
-
-  afterAll(async () => {
-    await endTestPool();
   });
 
   it("rejects missing and wrong Origin before upgrade", async () => {
@@ -159,6 +163,50 @@ describe("websocket http upgrade", () => {
       false,
     );
     second.ws.close();
+  });
+});
+
+describe("websocket upgrade rate limit", () => {
+  let app: FastifyInstance;
+  let runtime: ReturnType<typeof createRealtimeRuntime>;
+  let scheduler: FakeScheduler;
+  let store: ReturnType<typeof createMarketDataStore>;
+
+  beforeEach(async () => {
+    await resetTestTables();
+    setRateLimitPolicyForTests({ wsMax: 1, wsWindowMs: 60_000 });
+    scheduler = new FakeScheduler();
+    store = createMarketDataStore(scheduler);
+    runtime = createRealtimeRuntime({
+      latest: latestFromStore(store),
+      scheduler,
+      coalesceMs: 100,
+      idleTimeoutMs: 45_000,
+    });
+    app = await buildApp({ realtime: runtime, enableRateLimit: true });
+    await app.listen({ port: 0, host: "127.0.0.1" });
+    lastApp = app;
+  });
+
+  afterEach(async () => {
+    resetRateLimitPolicyForTests();
+    await runtime.shutdown();
+    await app.close();
+  });
+
+  it("exhausts the IP bucket on /ws/market and does not let /ws/account bypass it", async () => {
+    const first = await openSocket("/ws/market", { Origin: env.WEB_ORIGIN });
+    first.ws.close();
+
+    await expectStatus("/ws/market", { Origin: env.WEB_ORIGIN }, 429);
+    await expectStatus("/ws/account", { Origin: env.WEB_ORIGIN }, 429);
+
+    const user = await signUpAndInitialize(app, "rate-limit@example.com");
+    await expectStatus(
+      "/ws/account",
+      { Origin: env.WEB_ORIGIN, Cookie: user.cookies },
+      429,
+    );
   });
 });
 

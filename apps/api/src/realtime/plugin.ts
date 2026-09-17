@@ -1,6 +1,6 @@
 import websocket from "@fastify/websocket";
 import { fromNodeHeaders } from "better-auth/node";
-import type { FastifyInstance, FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest, preHandlerAsyncHookHandler } from "fastify";
 import type { WebSocket } from "ws";
 
 import { env } from "../env.js";
@@ -12,6 +12,7 @@ import type { RealtimeRuntime, RealtimeSocket } from "./runtime.js";
 export async function registerRealtimeRoutes(
   app: FastifyInstance,
   realtime: RealtimeRuntime,
+  wsRateLimit?: preHandlerAsyncHookHandler,
 ): Promise<void> {
   await app.register(websocket, {
     options: {
@@ -23,6 +24,7 @@ export async function registerRealtimeRoutes(
     "/ws/market",
     {
       websocket: true,
+      onRequest: wsRateLimit,
       async preValidation(request, reply) {
         if (!isExactWebOrigin(requestOrigin(request), env.WEB_ORIGIN)) {
           return reply.status(403).send({ error: "ORIGIN_REJECTED" });
@@ -38,6 +40,7 @@ export async function registerRealtimeRoutes(
     "/ws/account",
     {
       websocket: true,
+      onRequest: wsRateLimit,
       async preValidation(request, reply) {
         if (!isExactWebOrigin(requestOrigin(request), env.WEB_ORIGIN)) {
           return reply.status(403).send({ error: "ORIGIN_REJECTED" });

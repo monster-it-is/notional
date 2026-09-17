@@ -9,6 +9,9 @@ process.env.DATABASE_URL = process.env.TEST_DATABASE_URL;
 process.env.NODE_ENV = "test";
 
 export default defineConfig({
+  resolve: {
+    conditions: ["development", "import", "module", "default"],
+  },
   test: {
     include: ["src/**/*.test.ts"],
     globalSetup: resolve(import.meta.dirname, "../../packages/db/vitest.global-setup.ts"),

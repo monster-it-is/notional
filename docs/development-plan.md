@@ -101,4 +101,6 @@ Phase 17 replaces the Vite template in `apps/web` with the paper-trading SPA. Be
 
 ## Phase 18 — Testing, Hardening, and Deployment
 
-Status: NOT STARTED
+Status: COMPLETE (Phase 18A). Phase 18B (provider-specific hosting) is not started.
+
+Phase 18A adds production packaging (compiled JS, workspace dist exports, compiled migrator), env/cookie/header/rate-limit hardening, liveness vs readiness, drain-safe shutdown, Docker artifacts, and CI. Financial domain behavior is unchanged. One API replica remains required. Redis remains unused. Provider manifests, `TRUST_PROXY` hop/IP, DNS/TLS, and auto-deploy are Phase 18B.

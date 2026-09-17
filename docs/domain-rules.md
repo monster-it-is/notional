@@ -595,3 +595,10 @@ Eligible + Binance `TRADING` maps to `ACTIVE`. Any other Binance status maps to 
 
 Catalog synchronization must use a fully validated eligible snapshot. If any eligible candidate is missing or has malformed PRICE_FILTER, LOT_SIZE, MARKET_LOT_SIZE, or MIN_NOTIONAL (`notional`), abort the cycle and leave PostgreSQL unchanged. An empty mapped catalog also aborts. The catalog transaction must `SELECT` all existing instrument rows `ORDER BY id ASC FOR UPDATE` before mutating them, then upsert existing symbols, INSERT genuinely new symbols only after those locks, and mark already-locked existing rows absent from the snapshot `INACTIVE`. Catalog sync must not lock `paper_account`, `trading_position`, or `trade_order`.
 
+## Operational rules
+
+HTTP rate limits are abuse protection and are not financial authority. The faucet 24h cooldown remains a database rule.
+
+`GET /ready` does not mean Binance marks are fresh. Trading, matching, liquidation, and funding continue to fail closed when required market data is missing or stale.
+
+Production is paper trading only: no real money, no custody, no on-chain settlement. One API replica is required because matcher, scanners, catalog sync, market store, and WebSocket fanout are in-process. Production Node runs compiled JavaScript; `tsx` is development-only. Checked-in SQL migrations run via the compiled migrator before API start. Session cookies are host-only (no `Domain=`), HttpOnly, SameSite=Lax, Path=/. Web and API must be same-site for those cookies to be sent. HTTP CORS and Better Auth `trustedOrigins` permit exactly the canonical `WEB_ORIGIN`. Browser WebSocket `Origin` must match that origin exactly. Database TLS/SSL belongs in `DATABASE_URL` query options such as `sslmode`; Phase 18A does not force a universal `sslmode` because provider requirements differ.

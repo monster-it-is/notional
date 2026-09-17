@@ -25,7 +25,7 @@ Database:
 PostgreSQL + Drizzle ORM
 
 Cache / transient infrastructure:
-Redis
+Redis is present in local docker-compose but **unused** by the application runtime. It is reserved for later non-authoritative scaling and must never be financial authority.
 
 Repository:
 pnpm monorepo
@@ -78,3 +78,17 @@ Any transaction that locks or mutates multiple existing instrument rows acquires
 Book-ticker subscriptions cover every known catalog symbol (ACTIVE and INACTIVE). Mark remains the all-catalog `!markPrice@arr@1s` stream. If Binance stops publishing a symbol, Notional has no BBO and liquidation/unwind fail closed.
 
 Browser realtime is in-process only. `server.ts` creates one `RealtimeRuntime` and injects it into `buildApp`. `GET /ws/market` fans out coalesced store snapshots. `GET /ws/account` emits post-commit private invalidations. WebSockets are not financially authoritative; REST resync is required after reconnect. Redis is unused for realtime.
+
+## Production operations
+
+Production is a static SPA + one API process + PostgreSQL + Binance public REST/WS.
+
+- Session cookies are host-only SameSite=Lax. Deploy web and API same-site (same origin via reverse proxy, or sibling https subdomains).
+- HTTP CORS permits exactly the canonical `WEB_ORIGIN`. Better Auth `trustedOrigins` is exactly that origin. Browser WebSocket `Origin` must equal `WEB_ORIGIN`.
+- PostgreSQL TLS/SSL is configured in `DATABASE_URL` query options such as `sslmode`, according to the selected host. Phase 18A does not force a universal `sslmode`. Provider CA/TLS details remain Phase 18B.
+- Production Node runs `node dist/server.js` after workspace `dist` builds. Compiled `migrate:prod` must run before start. Never `drizzle-kit push`.
+- The production API image is built from `apps/api/Dockerfile` (multi-stage, `pnpm --filter=api --prod --legacy deploy`, non-root, migrate then `exec node dist/server.js`). The SPA image is `apps/web/Dockerfile` (nginx with `index.html` fallback). Images are not coupled. `docker-compose.prod.yml` is local image/wiring validation only; it uses placeholder HTTPS origins, not localhost HTTP.
+- `GET /health` is liveness. `GET /ready` is traffic readiness (startup complete, not shutting down, Postgres reachable). Stale Binance data does not flip `/ready`; financial routes fail closed.
+- Reverse proxies must allow WebSocket Upgrade on `/ws/market` and `/ws/account` and must not buffer those connections.
+- SPA security headers (CSP, HSTS) are owned by the static/web host. Fastify applies API headers and optional HSTS when `ENABLE_HSTS` is on and `BETTER_AUTH_URL` is https.
+- Rate limits are abuse protection only. The faucet 24h database cooldown remains financial authority.

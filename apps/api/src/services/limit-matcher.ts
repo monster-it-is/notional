@@ -14,6 +14,7 @@ import {
 
 import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { silentLogger, type Logger } from "../market-data/types.js";
+import { unknownErrorDiagnostic } from "../logging.js";
 import { reduceOnlyAllows } from "../orders/validate-order.js";
 import { ISOLATED_TRADING_ENABLED } from "./isolated-trading.js";
 import { completeMatcherFillInTx, OrderPlacementError } from "./order-placement.js";
@@ -28,6 +29,7 @@ const MATCHER_RETRY_CODES = new Set([
 
 export type LimitOrderMatcher = {
   schedule(symbol: string): void;
+  stop(): void;
   waitForIdle(): Promise<void>;
   processSymbol(symbol: string): Promise<void>;
 };
@@ -47,6 +49,7 @@ export function createLimitOrderMatcher(options: {
   const inFlight = new Set<string>();
   const dirty = new Set<string>();
   const running = new Map<string, Promise<void>>();
+  let stopped = false;
 
   async function runCycle(symbol: string): Promise<void> {
     const candidates = await loadCandidates(symbol);
@@ -82,7 +85,11 @@ export function createLimitOrderMatcher(options: {
     }
   }
 
-  function schedule(symbol: string): void {
+  function schedule(symbol: string, internal = false): void {
+    if (stopped && !internal) {
+      return;
+    }
+
     if (inFlight.has(symbol)) {
       dirty.add(symbol);
       return;
@@ -93,7 +100,7 @@ export function createLimitOrderMatcher(options: {
       .catch((error: unknown) => {
         logger.error("limit matcher cycle failed", {
           symbol,
-          detail: error instanceof Error ? error.message : "limit matcher cycle failed",
+          ...unknownErrorDiagnostic(error),
         });
       })
       .finally(() => {
@@ -101,7 +108,7 @@ export function createLimitOrderMatcher(options: {
         running.delete(symbol);
 
         if (dirty.delete(symbol)) {
-          schedule(symbol);
+          schedule(symbol, true);
         }
       });
     running.set(symbol, done);
@@ -113,7 +120,11 @@ export function createLimitOrderMatcher(options: {
     }
   }
 
-  return { schedule, waitForIdle, processSymbol };
+  function stop(): void {
+    stopped = true;
+  }
+
+  return { schedule, stop, waitForIdle, processSymbol };
 }
 
 async function loadCandidates(symbol: string): Promise<{ order: Order; symbol: string }[]> {

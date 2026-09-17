@@ -2,6 +2,7 @@ import type { MarketDataResponse, MarketDataStatusResponse } from "@notional/con
 import { db, listInstrumentSymbols } from "@notional/db";
 
 import type { ApiEnv } from "../env.js";
+import { unknownErrorDiagnostic } from "../logging.js";
 import { createBookTickerFeed, type BookTickerFeed } from "./book-ticker-feed.js";
 import { syncInstrumentCatalog } from "./instrument-sync.js";
 import {
@@ -37,6 +38,8 @@ export type MarketDataAccess = {
 export type MarketDataRuntime = MarketDataAccess & {
   store: MarketDataStore;
   start(): Promise<void>;
+  stopScheduling(): void;
+  waitForSyncIdle(): Promise<void>;
   stop(): Promise<void>;
 };
 
@@ -72,6 +75,7 @@ export function createMarketDataRuntime(options: {
   random?: () => number;
   logger?: Logger;
   connectionMaxMs?: number;
+  afterSuccessfulCatalogSync?: () => Promise<void>;
   onAcceptedBook?: (symbol: string) => void;
   onAcceptedMark?: (symbol: string) => void;
 }): MarketDataRuntime {
@@ -92,10 +96,12 @@ export function createMarketDataRuntime(options: {
   let catalogSyncOk = false;
   let catalogSyncedAt: number | null = null;
   let syncing = false;
+  let syncRun: Promise<void> = Promise.resolve();
   let syncTimer: TimeoutHandle | undefined;
   let markWs: ReconnectingWsClient | undefined;
   let bookFeed: BookTickerFeed | undefined;
   let started = false;
+  let schedulingStopped = false;
 
   function getReadySnapshot(symbol: string): MarketDataResponse | null {
     return store.getReadySnapshot(
@@ -147,41 +153,66 @@ export function createMarketDataRuntime(options: {
   }
 
   async function syncOnce() {
-    if (syncing || abort.signal.aborted) {
+    if (syncing || abort.signal.aborted || schedulingStopped) {
       return;
     }
 
     syncing = true;
+    syncRun = (async () => {
+      try {
+        const result = await syncInstrumentCatalog({
+          fetchExchangeInfo: () => rest.getExchangeInfo(),
+          logger,
+        });
 
-    try {
-      const result = await syncInstrumentCatalog({
-        fetchExchangeInfo: () => rest.getExchangeInfo(),
-        logger,
-      });
+        if (!result.ok) {
+          catalogSyncOk = false;
+          return;
+        }
 
-      if (!result.ok) {
-        catalogSyncOk = false;
-        return;
+        catalogSyncOk = true;
+        catalogSyncedAt = scheduler.now();
+        await options.afterSuccessfulCatalogSync?.();
+        await refreshCatalogSymbols();
+        bookFeed?.setSymbols([...catalogSymbols]);
+        await bootstrapRest();
+      } finally {
+        syncing = false;
       }
-
-      catalogSyncOk = true;
-      catalogSyncedAt = scheduler.now();
-      await refreshCatalogSymbols();
-      bookFeed?.setSymbols([...catalogSymbols]);
-      await bootstrapRest();
-    } finally {
-      syncing = false;
-    }
+    })();
+    await syncRun;
   }
 
   function scheduleSync() {
+    if (schedulingStopped || abort.signal.aborted) {
+      return;
+    }
+
     syncTimer = scheduler.setTimeout(() => {
-      void syncOnce().then(() => {
-        if (!abort.signal.aborted) {
-          scheduleSync();
-        }
-      });
+      void syncOnce()
+        .catch((error: unknown) => {
+          logger.error("catalog sync cycle failed", unknownErrorDiagnostic(error));
+        })
+        .finally(() => {
+          if (!schedulingStopped && !abort.signal.aborted) {
+            scheduleSync();
+          }
+        });
     }, env.INSTRUMENT_SYNC_INTERVAL_MS);
+  }
+
+  function stopScheduling() {
+    schedulingStopped = true;
+    if (syncTimer) {
+      scheduler.clearTimeout(syncTimer);
+      syncTimer = undefined;
+    }
+  }
+
+  async function waitForSyncIdle() {
+    while (syncing) {
+      await syncRun.catch(() => undefined);
+    }
   }
 
   return {
@@ -207,6 +238,7 @@ export function createMarketDataRuntime(options: {
       }
 
       started = true;
+      schedulingStopped = false;
       markWs = createReconnectingWsClient({
         url: markPriceStreamUrl(env.BINANCE_FAPI_MARKET_WS_BASE_URL),
         transport,
@@ -250,14 +282,13 @@ export function createMarketDataRuntime(options: {
       bookFeed.start();
       scheduleSync();
     },
+    stopScheduling,
+    waitForSyncIdle,
     async stop() {
+      stopScheduling();
+      await waitForSyncIdle();
       abort.abort();
       started = false;
-
-      if (syncTimer) {
-        scheduler.clearTimeout(syncTimer);
-        syncTimer = undefined;
-      }
 
       markWs?.stop();
       bookFeed?.stop();

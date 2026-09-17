@@ -12,10 +12,14 @@ export default defineConfig({
     alias: {
       "@": path.resolve(dirname, "src"),
     },
+    conditions: ["development", "import", "module", "browser", "default"],
   },
   test: {
     environment: "jsdom",
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.ts", "src/**/*.test.tsx"],
+    env: {
+      VITE_API_BASE_URL: "http://localhost:3000",
+    },
   },
 });

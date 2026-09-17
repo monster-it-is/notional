@@ -1118,11 +1118,18 @@ Phase 17 implements the React SPA in `apps/web`. Financial authority does not mo
 - `/ws/account` is invalidation-only (`private.invalidate` → query prefixes). `/ws/market` stores latest BBO/mark/index/funding/nextFundingTime in Zustand. Reconnect has no replay.
 - `web` depends on `@notional/contracts` only. It must not import `@notional/trading`, `@notional/db`, or `apps/api` internals. The browser does not compute PnL, margin, liquidation price, available balance, equity, or tick/step arithmetic. Displayed money/qty/price values remain decimal strings.
 
+## ADR-038 — Production operations and deployment architecture
 
+Status: Accepted
 
+Phase 18A makes the existing modular monolith production-operable without changing financial domain semantics.
 
-
-
-
-
-
+- Production topology is a static React SPA, one Fastify API process, PostgreSQL, and Binance public market data. Redis remains unused and non-authoritative.
+- The API is a single replica. Matcher, funding scanner, liquidation scanner, in-process market store, and WebSocket fanout cannot be horizontally scaled.
+- Web and API are separate artifacts. Session cookies are host-only, HttpOnly, SameSite=Lax, Path=/, Secure when `BETTER_AUTH_URL` is https, with a 7-day session. Sibling subdomains do not set `Domain=.example.com`. Same-site (same eTLD+1, both https) is required; unrelated sites break Lax cookies.
+- Auth request URLs are built from canonical `BETTER_AUTH_URL`, not `request.protocol` or `Host`.
+- HTTP CORS `origin` is exactly canonical `WEB_ORIGIN`. Better Auth `trustedOrigins` is exactly `[WEB_ORIGIN]`. Browser WebSocket `Origin` must equal `WEB_ORIGIN`.
+- PostgreSQL TLS/SSL is configured through `DATABASE_URL` query options such as `sslmode`. Phase 18A does not force a universal `sslmode` because provider requirements differ. There is no `DATABASE_SSL` setting. Provider choice, CA files, DNS, TLS termination, and `TRUST_PROXY` hop/IP remain Phase 18B.
+- Production Node runs compiled JavaScript. Workspace packages export `types`/`development` from source and `import`/`default` from `dist`. `tsx` is development-only. Migrations run from compiled `drizzle-orm` migrator against checked-in SQL, then the API starts. Never `drizzle-kit push`. The pruned API artifact is `pnpm --filter=api --prod --legacy deploy <dir>` (pnpm 12). That command can prune the workspace `node_modules`; restore with `pnpm install` after a local deploy test.
+- `/health` is process liveness. `/ready` requires startup complete, `shuttingDown === false`, and PostgreSQL. It is not gated on Binance freshness. Shutdown sets ready=false immediately, closes WebSockets, stops scheduling, drains scanners/catalog sync, finishes HTTP, drains the matcher, stops market-data, then `pool.end()` last.
+- Reverse proxies must forward WebSocket upgrades for `/ws/market` and `/ws/account`. `TRUST_PROXY` stays false until a provider is chosen.

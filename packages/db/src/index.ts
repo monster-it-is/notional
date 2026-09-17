@@ -1,4 +1,4 @@
-export { db, pool } from "./client.js";
+export { closePool, db, pool } from "./client.js";
 export type { FinancialExecutor, FinancialTransaction } from "./executor.js";
 export {
   readFaucetCooldownState,

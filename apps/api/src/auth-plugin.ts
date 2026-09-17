@@ -1,9 +1,23 @@
 import { fromNodeHeaders } from "better-auth/node";
-import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
+import type {
+  FastifyInstance,
+  FastifyReply,
+  FastifyRequest,
+  preHandlerAsyncHookHandler,
+} from "fastify";
 
 import { auth } from "./auth.js";
+import { env } from "./env.js";
+import { unknownErrorLogFields } from "./logging.js";
 
 type AuthSession = typeof auth.$Infer.Session;
+
+const AUTH_AUTHORITY_HEADERS = new Set([
+  "host",
+  "x-forwarded-host",
+  "x-forwarded-proto",
+  "forwarded",
+]);
 
 declare module "fastify" {
   interface FastifyRequest {
@@ -26,29 +40,71 @@ export async function requireAuth(
   request.auth = session;
 }
 
-export async function registerAuth(app: FastifyInstance): Promise<void> {
+export function authHandlerUrl(requestTarget: string, canonicalOrigin: string): URL {
+  const { pathname, search } = pathAndSearch(requestTarget);
+  const url = new URL(canonicalOrigin);
+  url.pathname = pathname;
+  url.search = search;
+  url.hash = "";
+  return url;
+}
+
+export function authHandlerHeaders(
+  headers: FastifyRequest["headers"],
+): Headers {
+  const sanitized: Record<string, string | string[] | undefined> = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (AUTH_AUTHORITY_HEADERS.has(key.toLowerCase())) {
+      continue;
+    }
+    sanitized[key] = value;
+  }
+  return fromNodeHeaders(sanitized);
+}
+
+export function createAuthHandlerRequest(
+  request: {
+    url: string;
+    method: string;
+    headers: FastifyRequest["headers"];
+    body?: unknown;
+  },
+  canonicalOrigin: string,
+): Request {
+  const url = authHandlerUrl(request.url, canonicalOrigin);
+  const headers = authHandlerHeaders(request.headers);
+  const body =
+    request.body !== undefined && request.method !== "GET" && request.method !== "HEAD"
+      ? JSON.stringify(request.body)
+      : undefined;
+
+  return new Request(url, {
+    method: request.method,
+    headers,
+    body,
+  });
+}
+
+function pathAndSearch(requestTarget: string): { pathname: string; search: string } {
+  const extracted = new URL(requestTarget, "https://auth-request-target.invalid");
+  return { pathname: extracted.pathname, search: extracted.search };
+}
+
+export async function registerAuth(
+  app: FastifyInstance,
+  authRateLimit?: preHandlerAsyncHookHandler,
+  handleAuthRequest: (request: Request) => Promise<Response> = (request) => auth.handler(request),
+): Promise<void> {
   app.decorateRequest("auth", null);
 
   app.route({
     method: ["GET", "POST"],
     url: "/api/auth/*",
+    preHandler: authRateLimit,
     async handler(request, reply) {
       try {
-        const url = new URL(request.url, envBaseUrl(request));
-        const headers = fromNodeHeaders(request.headers);
-        const body =
-          request.body !== undefined &&
-          request.method !== "GET" &&
-          request.method !== "HEAD"
-            ? JSON.stringify(request.body)
-            : undefined;
-
-        const response = await auth.handler(
-          new Request(url, {
-            method: request.method,
-            headers,
-            body,
-          }),
+        const response = await handleAuthRequest(
+          createAuthHandlerRequest(request, env.BETTER_AUTH_URL),
         );
 
         reply.status(response.status);
@@ -83,14 +139,9 @@ export async function registerAuth(app: FastifyInstance): Promise<void> {
 
         return reply.send(text);
       } catch (error) {
-        request.log.error(error);
-        return reply.status(500).send({ error: "Internal authentication error" });
+        request.log.error(unknownErrorLogFields(error), "unhandled authentication error");
+        return reply.status(500).send({ error: "INTERNAL_ERROR" });
       }
     },
   });
-}
-
-function envBaseUrl(request: FastifyRequest): string {
-  const host = request.headers.host ?? "localhost";
-  return `${request.protocol}://${host}`;
 }

@@ -47,6 +47,14 @@ describe("authentication", () => {
     expect(response.statusCode).toBeGreaterThanOrEqual(200);
     expect(response.statusCode).toBeLessThan(300);
     expect(cookieHeader(response).length).toBeGreaterThan(0);
+    expect(response.cookies.length).toBeGreaterThan(0);
+    for (const cookie of response.cookies) {
+      expect(cookie.httpOnly).toBe(true);
+      expect(String(cookie.sameSite).toLowerCase()).toBe("lax");
+      expect(cookie.path).toBe("/");
+      expect(cookie.domain).toBeUndefined();
+      expect(cookie.secure).toBeFalsy();
+    }
 
     const payload = response.json() as {
       user?: { id?: string; email?: string; password?: unknown };
@@ -66,6 +74,51 @@ describe("authentication", () => {
     expect(accounts).toHaveLength(1);
     expect(accounts[0]?.password).toBeTruthy();
     expect(JSON.stringify(payload)).not.toContain(accounts[0]?.password);
+  });
+
+  it("keeps BETTER_AUTH_URL when Host and forwarded headers are spoofed", async () => {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/auth/sign-up/email",
+      headers: {
+        origin: process.env.WEB_ORIGIN,
+        host: "evil.example",
+        "x-forwarded-host": "evil.example",
+        "x-forwarded-proto": "https",
+        forwarded: "host=evil.example;proto=https",
+      },
+      payload: {
+        name: "Ada Lovelace",
+        email: "spoofed-host@example.com",
+        password,
+      },
+    });
+
+    expect(response.statusCode).toBeGreaterThanOrEqual(200);
+    expect(response.statusCode).toBeLessThan(300);
+    expect(cookieHeader(response).length).toBeGreaterThan(0);
+    for (const cookie of response.cookies) {
+      expect(cookie.httpOnly).toBe(true);
+      expect(String(cookie.sameSite).toLowerCase()).toBe("lax");
+      expect(cookie.path).toBe("/");
+      expect(cookie.domain).toBeUndefined();
+    }
+
+    const absoluteForm = await app.inject({
+      method: "POST",
+      url: "https://evil.example/api/auth/sign-up/email",
+      headers: {
+        origin: process.env.WEB_ORIGIN,
+        host: "evil.example",
+      },
+      payload: {
+        name: "Ada Lovelace",
+        email: "absolute-form@example.com",
+        password,
+      },
+    });
+    expect(absoluteForm.statusCode).toBeGreaterThanOrEqual(200);
+    expect(absoluteForm.statusCode).toBeLessThan(300);
   });
 
   it("rejects a duplicate signup", async () => {

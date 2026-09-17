@@ -7,6 +7,7 @@ import {
 
 import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { silentLogger, type Logger, type Scheduler, systemScheduler } from "../market-data/types.js";
+import { unknownErrorDiagnostic } from "../logging.js";
 import { createFundingSync, type FundingRestClient } from "./funding-sync.js";
 import { FundingDataUnavailableError, settleDueFundingForAccountInTx } from "./funding-settlement.js";
 import { fundingSettledEffect, safeOnPrivateCommitted, type CommittedPrivateEffect } from "../realtime/effects.js";
@@ -14,6 +15,7 @@ import { fundingSettledEffect, safeOnPrivateCommitted, type CommittedPrivateEffe
 export type FundingScanner = {
   start(): void;
   stop(): void;
+  waitForIdle(): Promise<void>;
   scanOnce(): Promise<void>;
 };
 
@@ -33,6 +35,7 @@ export function createFundingScanner(options: {
   let dirty = false;
   let timer: ReturnType<Scheduler["setTimeout"]> | undefined;
   let stopped = true;
+  let run: Promise<void> = Promise.resolve();
 
   async function runScan(): Promise<void> {
     const instruments = await listAllInstruments(db);
@@ -98,14 +101,17 @@ export function createFundingScanner(options: {
     }
 
     inFlight = true;
-    try {
-      do {
-        dirty = false;
-        await runScan();
-      } while (dirty);
-    } finally {
-      inFlight = false;
-    }
+    run = (async () => {
+      try {
+        do {
+          dirty = false;
+          await runScan();
+        } while (dirty && !stopped);
+      } finally {
+        inFlight = false;
+      }
+    })();
+    await run;
   }
 
   function schedule(): void {
@@ -116,9 +122,7 @@ export function createFundingScanner(options: {
     timer = scheduler.setTimeout(() => {
       void scanOnce()
         .catch((error: unknown) => {
-          logger.error("funding scanner cycle failed", {
-            detail: error instanceof Error ? error.message : "funding scanner cycle failed",
-          });
+          logger.error("funding scanner cycle failed", unknownErrorDiagnostic(error));
         })
         .finally(() => {
           schedule();
@@ -140,6 +144,11 @@ export function createFundingScanner(options: {
       if (timer) {
         scheduler.clearTimeout(timer);
         timer = undefined;
+      }
+    },
+    async waitForIdle() {
+      while (inFlight) {
+        await run;
       }
     },
     scanOnce,

@@ -413,7 +413,7 @@ describe("in-process LIMIT matcher", () => {
     expect(logs).toEqual([
       {
         message: "limit matcher cycle failed",
-        extra: { symbol: "BTCUSDT", detail: "matcher boom" },
+        extra: { symbol: "BTCUSDT", name: "Error" },
       },
     ]);
     expect((await findOrderById(db, accountId, (resting.json() as OrderResponse).id))?.status).toBe(
@@ -523,6 +523,27 @@ describe("in-process LIMIT matcher", () => {
       0,
     );
     expect(await listOrdersByPaperAccountId(db, accountId, { limit: 10, offset: 0 })).toHaveLength(1);
+  });
+
+  it("drains in-flight work after stop and ignores later schedules", async () => {
+    const { cookies, accountId } = await initializeUser(app, "matcher-stop@example.com");
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    await postOrder(app, cookies, "buy-90", {
+      type: "LIMIT",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.1",
+      limitPrice: "90",
+    });
+    seedQuote(store, "BTCUSDT", { mark: "100", bid: "89", ask: "90", id: 2 });
+    const matcher = createLimitOrderMatcher({ marketData });
+    matcher.schedule("BTCUSDT");
+    matcher.stop();
+    matcher.schedule("BTCUSDT");
+    await matcher.waitForIdle();
+    expect(await listExecutionsByPaperAccountId(db, accountId, { limit: 10, offset: 0 })).toHaveLength(
+      1,
+    );
   });
 });
 

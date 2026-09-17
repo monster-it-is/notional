@@ -9,6 +9,9 @@ if (process.env.TEST_DATABASE_URL) {
 }
 
 export default defineConfig({
+  resolve: {
+    conditions: ["development", "import", "module", "default"],
+  },
   test: {
     globalSetup: "./vitest.global-setup.ts",
     fileParallelism: false,

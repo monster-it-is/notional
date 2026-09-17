@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 
-import { db, pool } from "./client.js";
+import { closePool, db } from "./client.js";
 
 export async function resetTestTables(): Promise<void> {
   await db.execute(
@@ -27,9 +27,6 @@ export async function resetTestTables(): Promise<void> {
   );
 }
 
-let poolEnd: Promise<void> | undefined;
-
 export function endTestPool(): Promise<void> {
-  poolEnd ??= pool.end();
-  return poolEnd;
+  return closePool();
 }

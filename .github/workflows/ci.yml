@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: notional
+          POSTGRES_PASSWORD: notional
+          POSTGRES_DB: notional
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U notional -d notional"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://notional:notional@localhost:5433/notional
+      TEST_DATABASE_URL: postgresql://notional:notional@localhost:5433/notional_test
+      BETTER_AUTH_SECRET: ci-test-secret-value-at-least-32-chars
+      BETTER_AUTH_URL: http://localhost:3000
+      WEB_ORIGIN: http://localhost:5173
+      FAUCET_AMOUNT: "100"
+      VITE_API_BASE_URL: http://localhost:3000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.4.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - run: PGPASSWORD=notional psql -h localhost -p 5433 -U notional -d notional -c "CREATE DATABASE notional_test;"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Playwright smoke
+        run: pnpm test:e2e
+      - name: Production API deploy artifact
+        run: pnpm --filter=api --prod --legacy deploy ./tmp-out
+      - name: Production artifact smoke
+        run: node scripts/production-resolution-smoke.mjs ./tmp-out
+      - name: Production migration execution smoke
+        run: node scripts/migration-execution-smoke.mjs ./tmp-out

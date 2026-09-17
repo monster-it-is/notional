@@ -319,6 +319,38 @@ describe("funding scanner", () => {
     expect(warnings.some((row) => row.includes("data unavailable"))).toBe(true);
     expect(await findAccountSettlementByAccountAndTime(db, second.accountId, t)).not.toBeNull();
   });
+
+  it("drains an in-flight scan and does not start a new timer cycle after stop", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const scanner = createFundingScanner({
+      rest: {
+        async getFundingRate() {
+          await gate;
+          return [];
+        },
+        async getMarkPriceKlines() {
+          return [];
+        },
+      },
+      marketData: emptyMarketData(),
+      intervalMs: 5_000,
+    });
+    const running = scanner.scanOnce();
+    scanner.stop();
+    let idle = false;
+    const waiting = scanner.waitForIdle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    release();
+    await running;
+    await waiting;
+    expect(idle).toBe(true);
+  });
 });
 
 function emptyMarketData() {

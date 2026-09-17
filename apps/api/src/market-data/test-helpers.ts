@@ -10,6 +10,10 @@ export class FakeScheduler implements Scheduler {
     return this.nowMs;
   }
 
+  get pendingCount(): number {
+    return this.timers.size;
+  }
+
   setTimeout(callback: () => void, ms: number): TimeoutHandle {
     const id = this.nextId;
     this.nextId += 1;

@@ -1,33 +1,32 @@
+import { closePool } from "@notional/db";
 import { fromNodeHeaders } from "better-auth/node";
 
 import { buildApp } from "./app.js";
 import { auth } from "./auth.js";
 import { env } from "./env.js";
+import { createLoggerProxy, unknownErrorLogFields } from "./logging.js";
 import { createMarketDataRuntime } from "./market-data/coordinator.js";
-import type { Logger } from "./market-data/types.js";
 import { createBinanceRestClient } from "./market-data/rest-client.js";
 import { createRealtimeRuntime, latestFromStore } from "./realtime/runtime.js";
+import { markRuntimeReady } from "./runtime-status.js";
 import { createFundingScanner } from "./services/funding-scanner.js";
 import { createLimitOrderMatcher } from "./services/limit-matcher.js";
 import { createLiquidationScanner } from "./services/liquidation-scanner.js";
+import { bindFastifyLogger, shutdownOnce } from "./shutdown.js";
 
-const logger: Logger = {
-  info() {},
-  warn(message, extra) {
-    console.warn(message, extra ?? "");
-  },
-  error(message, extra) {
-    console.error(message, extra ?? "");
-  },
-};
+const logger = createLoggerProxy();
 
-const start = async () => {
+export async function startServer(): Promise<void> {
+  let tickSchedulingEnabled = true;
   let notifyAcceptedBook: (symbol: string) => void = () => {};
   let notifyAcceptedMark: (symbol: string) => void = () => {};
   const marketData = createMarketDataRuntime({
     env,
+    logger,
     onAcceptedBook(symbol) {
-      notifyAcceptedBook(symbol);
+      if (tickSchedulingEnabled) {
+        notifyAcceptedBook(symbol);
+      }
     },
     onAcceptedMark(symbol) {
       notifyAcceptedMark(symbol);
@@ -80,18 +79,40 @@ const start = async () => {
     onOpenOrderCommitted: (symbol) => matcher.schedule(symbol),
     onPrivateCommitted: (effect) => realtime.onPrivateCommitted(effect),
   });
+  bindFastifyLogger(logger, app);
 
   app.addHook("onReady", async () => {
     await marketData.start();
     scanner.start();
     fundingScanner.start();
+    markRuntimeReady();
+    app.log.info("runtime ready");
   });
 
-  app.addHook("onClose", async () => {
-    fundingScanner.stop();
-    scanner.stop();
-    await realtime.shutdown();
-    await marketData.stop();
+  const shutdown = () =>
+    shutdownOnce({
+      app,
+      matcher,
+      fundingScanner,
+      liquidationScanner: scanner,
+      realtime,
+      marketData,
+      disableTickScheduling: () => {
+        tickSchedulingEnabled = false;
+      },
+      timeoutMs: env.SHUTDOWN_TIMEOUT_MS,
+      logger,
+      closePool,
+      exit: (code) => {
+        process.exit(code);
+      },
+    });
+
+  process.once("SIGTERM", () => {
+    void shutdown();
+  });
+  process.once("SIGINT", () => {
+    void shutdown();
   });
 
   try {
@@ -99,10 +120,11 @@ const start = async () => {
       port: env.PORT,
       host: "0.0.0.0",
     });
+    app.log.info({ port: env.PORT }, "api listening");
   } catch (error) {
-    app.log.error(error);
+    app.log.error(unknownErrorLogFields(error), "api listen failed");
     process.exit(1);
   }
-};
+}
 
-start();
+void startServer();

@@ -8,6 +8,7 @@ import {
 
 import type { MarketDataAccess } from "../market-data/coordinator.js";
 import { silentLogger, type Logger, type Scheduler, systemScheduler } from "../market-data/types.js";
+import { unknownErrorDiagnostic } from "../logging.js";
 import { liquidateCrossAccount, liquidateIsolatedPosition } from "./liquidation.js";
 import {
   calculateCrossLiquidationRisk,
@@ -19,6 +20,7 @@ export type LiquidationScanner = {
   requestScan(): void;
   start(): void;
   stop(): void;
+  waitForIdle(): Promise<void>;
   scanOnce(): Promise<void>;
 };
 
@@ -28,6 +30,7 @@ export function createLiquidationScanner(options: {
   logger?: Logger;
   scheduler?: Scheduler;
   onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
+  beforeScan?: () => Promise<void>;
 }): LiquidationScanner {
   const logger = options.logger ?? silentLogger;
   const scheduler = options.scheduler ?? systemScheduler;
@@ -35,6 +38,7 @@ export function createLiquidationScanner(options: {
   let dirty = false;
   let timer: ReturnType<Scheduler["setTimeout"]> | undefined;
   let stopped = true;
+  let run: Promise<void> = Promise.resolve();
 
   async function runScan(): Promise<void> {
     const positions = await listOpenPositionsForLiquidation(db);
@@ -71,14 +75,18 @@ export function createLiquidationScanner(options: {
     }
 
     inFlight = true;
-    try {
-      do {
-        dirty = false;
-        await runScan();
-      } while (dirty);
-    } finally {
-      inFlight = false;
-    }
+    run = (async () => {
+      try {
+        await options.beforeScan?.();
+        do {
+          dirty = false;
+          await runScan();
+        } while (dirty && !stopped);
+      } finally {
+        inFlight = false;
+      }
+    })();
+    await run;
   }
 
   function schedule(): void {
@@ -89,9 +97,7 @@ export function createLiquidationScanner(options: {
     timer = scheduler.setTimeout(() => {
       void scanOnce()
         .catch((error: unknown) => {
-          logger.error("liquidation scanner cycle failed", {
-            detail: error instanceof Error ? error.message : "liquidation scanner cycle failed",
-          });
+          logger.error("liquidation scanner cycle failed", unknownErrorDiagnostic(error));
         })
         .finally(() => {
           schedule();
@@ -115,12 +121,19 @@ export function createLiquidationScanner(options: {
         timer = undefined;
       }
     },
+    async waitForIdle() {
+      while (inFlight) {
+        await run;
+      }
+    },
     scanOnce,
     requestScan() {
+      if (stopped) {
+        return;
+      }
+
       void scanOnce().catch((error: unknown) => {
-        logger.error("liquidation scanner request failed", {
-          detail: error instanceof Error ? error.message : "liquidation scanner request failed",
-        });
+        logger.error("liquidation scanner request failed", unknownErrorDiagnostic(error));
       });
     },
   };

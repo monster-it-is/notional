@@ -7,25 +7,27 @@
   "exports": {
     ".": {
       "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "development": "./src/index.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     },
     "./test": {
       "types": "./src/test.ts",
-      "import": "./src/test.ts",
-      "default": "./src/test.ts"
+      "development": "./src/test.ts"
     }
   },
-  "main": "./src/index.ts",
+  "main": "./dist/index.js",
   "types": "./src/index.ts",
+  "files": ["dist", "drizzle"],
   "scripts": {
-    "build": "tsc",
+    "build": "node ../../scripts/clean-dist.mjs && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
-    "test": "vitest run",
+    "test": "node --conditions=development ./node_modules/vitest/vitest.mjs run",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "migrate:prod": "node dist/migrate-entry.js"
   },
   "keywords": [],
   "author": "",

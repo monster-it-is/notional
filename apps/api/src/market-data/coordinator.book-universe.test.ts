@@ -70,6 +70,129 @@ describe("book ticker universe", () => {
     expect(new Set(subscribed).size).toBe(subscribed.length);
     await runtime.stop();
   });
+
+  it("drains an in-flight catalog sync and does not start another cycle after stopScheduling", async () => {
+    let release: () => void = () => {};
+    let markEntered: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const entered = new Promise<void>((resolve) => {
+      markEntered = resolve;
+    });
+    const runtime = createMarketDataRuntime({
+      env: parseEnv(process.env),
+      transport: new FakeTransport(),
+      scheduler: new FakeScheduler(),
+      random: () => 1,
+      fetchImpl: async (url) => {
+        const path = String(url);
+        if (path.includes("exchangeInfo")) {
+          markEntered();
+          await gate;
+          return jsonResponse({ symbols: [coin("BTCUSDT")] });
+        }
+
+        if (path.includes("premiumIndex") || path.includes("bookTicker")) {
+          return jsonResponse([]);
+        }
+
+        return jsonResponse({});
+      },
+    });
+
+    const started = runtime.start();
+    await entered;
+    runtime.stopScheduling();
+    let idle = false;
+    const waiting = runtime.waitForSyncIdle().then(() => {
+      idle = true;
+    });
+    await Promise.resolve();
+    expect(idle).toBe(false);
+    release();
+    await waiting;
+    expect(idle).toBe(true);
+    await started;
+    await runtime.stop();
+  });
+
+  it("contains a scheduled catalog rejection, logs a safe diagnostic, and reschedules until stopped", async () => {
+    const leaked: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      leaked.push(reason);
+    };
+    process.on("unhandledRejection", onUnhandled);
+
+    const logs: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const scheduler = new FakeScheduler();
+    let catalogPasses = 0;
+    const secret = "postgresql://probe-user:probe-pass@db.internal/notional";
+    const runtime = createMarketDataRuntime({
+      env: { ...parseEnv(process.env), INSTRUMENT_SYNC_INTERVAL_MS: 1_000 },
+      transport: new FakeTransport(),
+      scheduler,
+      random: () => 1,
+      logger: {
+        info() {},
+        warn() {},
+        error(message, extra) {
+          logs.push({ message, extra });
+        },
+      },
+      fetchImpl: async (url) => {
+        const path = String(url);
+        if (path.includes("exchangeInfo")) {
+          return jsonResponse({ symbols: [coin("BTCUSDT")] });
+        }
+        if (path.includes("premiumIndex") || path.includes("bookTicker")) {
+          return jsonResponse([]);
+        }
+        return jsonResponse({});
+      },
+      async afterSuccessfulCatalogSync() {
+        catalogPasses += 1;
+        if (catalogPasses >= 2) {
+          const error = new Error(secret);
+          error.name = "CatalogProbeError";
+          (error as Error & { code: string }).code = "CATALOG_PROBE";
+          throw error;
+        }
+      },
+    });
+
+    try {
+      await runtime.start();
+      expect(catalogPasses).toBe(1);
+      expect(scheduler.pendingCount).toBe(1);
+
+      scheduler.advance(1_000);
+      await runtime.waitForSyncIdle();
+      await Promise.resolve();
+
+      expect(catalogPasses).toBe(2);
+      expect(leaked).toEqual([]);
+      expect(logs).toEqual([
+        {
+          message: "catalog sync cycle failed",
+          extra: { name: "CatalogProbeError", code: "CATALOG_PROBE" },
+        },
+      ]);
+      expect(JSON.stringify(logs)).not.toContain(secret);
+      expect(scheduler.pendingCount).toBe(1);
+
+      runtime.stopScheduling();
+      expect(scheduler.pendingCount).toBe(0);
+      scheduler.advance(1_000);
+      await runtime.waitForSyncIdle();
+      await Promise.resolve();
+      expect(catalogPasses).toBe(2);
+      expect(leaked).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+      await runtime.stop();
+    }
+  });
 });
 
 function jsonResponse(body: unknown): Response {

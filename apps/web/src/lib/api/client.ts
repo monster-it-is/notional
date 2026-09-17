@@ -1,4 +1,5 @@
 import { ApiError, parseApiError } from "./errors.ts";
+import { apiBaseUrl } from "../env.ts";
 
 let unauthorizedHandler: (() => void) | null = null;
 
@@ -27,7 +28,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   let response: Response;
 
   try {
-    response = await fetch(path.startsWith("http") ? path : `${apiOrigin()}${path}`, {
+    response = await fetch(path.startsWith("http") ? path : `${apiBaseUrl()}${path}`, {
       method,
       credentials: "include",
       headers,
@@ -73,13 +74,4 @@ async function readBody(response: Response): Promise<unknown> {
   } catch {
     return text;
   }
-}
-
-function apiOrigin(): string {
-  const value = import.meta.env.VITE_API_BASE_URL;
-  if (typeof value === "string" && value.length > 0) {
-    return value.replace(/\/$/, "");
-  }
-
-  return "http://localhost:3000";
 }

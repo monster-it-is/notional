@@ -5,5 +5,11 @@
     "rootDir": "src"
   },
   "include": ["src"],
-  "exclude": ["src/**/*.test.ts"]
+  "exclude": [
+    "src/**/*.test.ts",
+    "src/market-data/test-helpers.ts",
+    "src/market-data/exchange-info-fixtures.ts",
+    "src/realtime/test-helpers.ts",
+    "src/services/funding-test-fixtures.ts"
+  ]
 }

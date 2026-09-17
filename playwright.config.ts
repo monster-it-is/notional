@@ -8,6 +8,10 @@ export default defineConfig({
   webServer: {
     command: "pnpm --filter web dev",
     url: "http://localhost:5173",
-    reuseExistingServer: true,
+    reuseExistingServer: !process.env.CI,
+    env: {
+      ...process.env,
+      VITE_API_BASE_URL: process.env.VITE_API_BASE_URL ?? "http://localhost:3000",
+    },
   },
 });

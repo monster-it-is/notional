@@ -1,0 +1,14 @@
+node_modules
+.git
+.env
+.env.*
+!.env.example
+**/dist
+coverage
+playwright-report
+test-results
+tmp-out
+.cursor
+apps/web/node_modules
+apps/api/node_modules
+packages/*/node_modules

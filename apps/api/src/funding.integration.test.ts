@@ -28,6 +28,11 @@ import { createLimitOrderMatcher } from "./services/limit-matcher.js";
 import { liquidateCrossAccount } from "./services/liquidation.js";
 import { settleDueFundingForAccountInTx } from "./services/funding-settlement.js";
 import {
+  futureFundingTimeFrom,
+  getDatabaseNow,
+  liveScheduleProofFrom,
+} from "./services/funding-test-fixtures.js";
+import {
   clearLiveScheduleProofs,
   setLiveScheduleProof,
 } from "./services/funding-sync.js";
@@ -48,7 +53,13 @@ describe("perp funding HTTP and mutation integration", () => {
     store = createMarketDataStore({ now: () => 1_000 });
     marketData = accessFromStore(store);
     app = await buildApp({ marketData });
-    seedQuote(store, "BTCUSDT", { mark: "100", bid: "99", ask: "101", id: 1 });
+    seedQuote(store, "BTCUSDT", {
+      mark: "100",
+      bid: "99",
+      ask: "101",
+      id: 1,
+      nextFundingTime: futureFundingTimeFrom(await getDatabaseNow()).getTime(),
+    });
   });
 
   afterEach(async () => {
@@ -101,8 +112,8 @@ describe("perp funding HTTP and mutation integration", () => {
         markPrice: "100",
       }),
     );
-    prove(btc.id);
-    prove(eth.id);
+    await prove(btc.id);
+    await prove(eth.id);
     await db.transaction(async (tx) => {
       await lockPaperAccountById(tx, accountId);
       return settleDueFundingForAccountInTx(tx, {
@@ -192,7 +203,7 @@ describe("perp funding HTTP and mutation integration", () => {
     expect(faucet.statusCode).toBe(503);
     expect(faucet.json()).toEqual({ error: "FUNDING_DATA_UNAVAILABLE" });
 
-    prove(btc.id);
+    await prove(btc.id);
     const resting = await postOrder(app, cookies, "rest", {
       type: "LIMIT",
       symbol: "BTCUSDT",
@@ -204,7 +215,13 @@ describe("perp funding HTTP and mutation integration", () => {
     expect(resting.statusCode).toBe(201);
     clearLiveScheduleProofs();
     const matcher = createLimitOrderMatcher({ marketData });
-    seedQuote(store, "BTCUSDT", { mark: "100", bid: "110", ask: "111", id: 2 });
+    seedQuote(store, "BTCUSDT", {
+      mark: "100",
+      bid: "110",
+      ask: "111",
+      id: 2,
+      nextFundingTime: futureFundingTimeFrom(await getDatabaseNow()).getTime(),
+    });
     await matcher.processSymbol("BTCUSDT");
     expect(await listExecutionsByPaperAccountId(db, accountId, { limit: 10, offset: 0 })).toHaveLength(
       0,
@@ -235,7 +252,7 @@ describe("perp funding HTTP and mutation integration", () => {
         markPrice: "100",
       }),
     );
-    prove(btc.id);
+    await prove(btc.id);
     const liquidated = await liquidateCrossAccount({ paperAccountId: accountId, marketData });
     expect(liquidated.kind).toBe("liquidated");
   });
@@ -252,7 +269,7 @@ describe("perp funding HTTP and mutation integration", () => {
         markPrice: "100",
       }),
     );
-    prove(btc.id);
+    await prove(btc.id);
     const claimed = await app.inject({
       method: "POST",
       url: "/api/account/faucet",
@@ -311,7 +328,7 @@ describe("perp funding HTTP and mutation integration", () => {
         markPrice: "100",
       }),
     );
-    prove(btc.id);
+    await prove(btc.id);
     const increased = await postOrder(app, cookies, "iso-inc", {
       type: "MARKET",
       symbol: "BTCUSDT",
@@ -352,12 +369,15 @@ async function seedOpen(
   });
 }
 
-function prove(instrumentId: string): void {
-  setLiveScheduleProof(instrumentId, {
-    validFrom: PAST_CURSOR.toISOString(),
-    nextFundingTime: "2026-09-17T00:00:00.000Z",
-    observedAt: PAST_T.toISOString(),
-  });
+async function prove(instrumentId: string): Promise<void> {
+  setLiveScheduleProof(
+    instrumentId,
+    liveScheduleProofFrom({
+      validFrom: PAST_CURSOR,
+      observedAt: PAST_T,
+      nextFundingTime: futureFundingTimeFrom(await getDatabaseNow()),
+    }),
+  );
 }
 
 function accessFromStore(store: MarketDataStore): MarketDataAccess {
@@ -386,14 +406,14 @@ function accessFromStore(store: MarketDataStore): MarketDataAccess {
 function seedQuote(
   store: MarketDataStore,
   symbol: string,
-  quote: { mark: string; bid: string; ask: string; id: number },
+  quote: { mark: string; bid: string; ask: string; id: number; nextFundingTime: number },
 ) {
   store.applyMark({
     symbol,
     markPrice: quote.mark,
     indexPrice: quote.mark,
     fundingRate: "0",
-    nextFundingTime: Date.parse("2026-09-17T00:00:00.000Z"),
+    nextFundingTime: quote.nextFundingTime,
     markEventTime: quote.id,
   });
   store.applyBook({

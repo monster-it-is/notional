@@ -1,0 +1,37 @@
+# Local production-like image/wiring check only. Not a cloud provider topology.
+# Placeholder HTTPS origins satisfy production parseEnv. They are not a real
+# public hostname. Signing in through localhost is not a representative
+# production auth flow.
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: notional
+      POSTGRES_PASSWORD: notional
+      POSTGRES_DB: notional
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U notional -d notional"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://notional:notional@postgres:5432/notional
+      PORT: "3000"
+      BETTER_AUTH_SECRET: local-prod-compose-secret-value-32ch
+      BETTER_AUTH_URL: https://api.example.test
+      WEB_ORIGIN: https://web.example.test
+      FAUCET_AMOUNT: "100"
+      ENABLE_HSTS: "false"
+      TRUST_PROXY: "false"
