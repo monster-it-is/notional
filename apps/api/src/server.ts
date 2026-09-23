@@ -9,7 +9,10 @@ import { createMarketDataRuntime } from "./market-data/coordinator.js";
 import { createBinanceRestClient } from "./market-data/rest-client.js";
 import { createRealtimeRuntime, latestFromStore } from "./realtime/runtime.js";
 import { createFundingScanner } from "./services/funding-scanner.js";
-import { createLimitOrderMatcher } from "./services/limit-matcher.js";
+import {
+  createLimitOrderMatcher,
+  DEFAULT_MAX_CONCURRENT_SYMBOL_CYCLES,
+} from "./services/limit-matcher.js";
 import { createLiquidationScanner } from "./services/liquidation-scanner.js";
 import { bindFastifyLogger, shutdownOnce } from "./shutdown.js";
 import { listenThenBootstrapRuntime } from "./startup.js";
@@ -47,6 +50,7 @@ export async function startServer(): Promise<void> {
   const matcher = createLimitOrderMatcher({
     marketData,
     logger,
+    maxConcurrentSymbols: DEFAULT_MAX_CONCURRENT_SYMBOL_CYCLES,
     onPrivateCommitted: (effect) => realtime.onPrivateCommitted(effect),
   });
   const scanner = createLiquidationScanner({

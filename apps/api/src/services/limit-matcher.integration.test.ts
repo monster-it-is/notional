@@ -625,6 +625,15 @@ describe("in-process LIMIT matcher", () => {
     expect(await listOrdersByPaperAccountId(db, accountId, { limit: 10, offset: 0 })).toHaveLength(1);
   });
 
+  it("rejects a non-positive maxConcurrentSymbols", () => {
+    expect(() => createLimitOrderMatcher({ marketData, maxConcurrentSymbols: 0 })).toThrow(
+      "maxConcurrentSymbols must be a positive integer",
+    );
+    expect(() => createLimitOrderMatcher({ marketData, maxConcurrentSymbols: 1.5 })).toThrow(
+      "maxConcurrentSymbols must be a positive integer",
+    );
+  });
+
   it("drains in-flight work after stop and ignores later schedules", async () => {
     const { cookies, accountId } = await initializeUser(app, "matcher-stop@example.com");
     await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));

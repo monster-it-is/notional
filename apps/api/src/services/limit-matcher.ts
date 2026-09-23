@@ -20,12 +20,18 @@ import { ISOLATED_TRADING_ENABLED } from "./isolated-trading.js";
 import { completeMatcherFillInTx, OrderPlacementError } from "./order-placement.js";
 import { FundingDataUnavailableError, settleDueFundingForAccountInTx } from "./funding-settlement.js";
 import { matcherEffect, safeOnPrivateCommitted, type CommittedPrivateEffect } from "../realtime/effects.js";
+import {
+  createSymbolCycleScheduler,
+  resolvePositiveInteger,
+} from "./symbol-cycle-scheduler.js";
 
 const MATCHER_RETRY_CODES = new Set([
   "INSUFFICIENT_MARGIN",
   "MARKET_DATA_UNAVAILABLE",
   "FUNDING_DATA_UNAVAILABLE",
 ]);
+
+export const DEFAULT_MAX_CONCURRENT_SYMBOL_CYCLES = 4;
 
 export type LimitOrderMatcher = {
   schedule(symbol: string): void;
@@ -44,12 +50,13 @@ export function createLimitOrderMatcher(options: {
   marketData: MarketDataAccess;
   logger?: Logger;
   onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
+  maxConcurrentSymbols?: number;
 }): LimitOrderMatcher {
   const logger = options.logger ?? silentLogger;
-  const inFlight = new Set<string>();
-  const dirty = new Set<string>();
-  const running = new Map<string, Promise<void>>();
-  let stopped = false;
+  const maxConcurrentSymbols = resolvePositiveInteger(
+    options.maxConcurrentSymbols ?? DEFAULT_MAX_CONCURRENT_SYMBOL_CYCLES,
+    "maxConcurrentSymbols",
+  );
 
   async function runCycle(symbol: string): Promise<void> {
     const candidates = await loadCandidates(symbol);
@@ -79,52 +86,25 @@ export function createLimitOrderMatcher(options: {
 
   async function processSymbol(symbol: string): Promise<void> {
     await runCycle(symbol);
-
-    if (dirty.delete(symbol)) {
-      await runCycle(symbol);
-    }
   }
 
-  function schedule(symbol: string, internal = false): void {
-    if (stopped && !internal) {
-      return;
-    }
-
-    if (inFlight.has(symbol)) {
-      dirty.add(symbol);
-      return;
-    }
-
-    inFlight.add(symbol);
-    const done = processSymbol(symbol)
-      .catch((error: unknown) => {
-        logger.error("limit matcher cycle failed", {
-          symbol,
-          ...unknownErrorDiagnostic(error),
-        });
-      })
-      .finally(() => {
-        inFlight.delete(symbol);
-        running.delete(symbol);
-
-        if (dirty.delete(symbol)) {
-          schedule(symbol, true);
-        }
+  const scheduler = createSymbolCycleScheduler({
+    maxConcurrent: maxConcurrentSymbols,
+    run: processSymbol,
+    onError(symbol, error) {
+      logger.error("limit matcher cycle failed", {
+        symbol,
+        ...unknownErrorDiagnostic(error),
       });
-    running.set(symbol, done);
-  }
+    },
+  });
 
-  async function waitForIdle(): Promise<void> {
-    while (inFlight.size > 0 || dirty.size > 0 || running.size > 0) {
-      await Promise.all([...running.values()]);
-    }
-  }
-
-  function stop(): void {
-    stopped = true;
-  }
-
-  return { schedule, stop, waitForIdle, processSymbol };
+  return {
+    schedule: scheduler.schedule,
+    stop: scheduler.stop,
+    waitForIdle: scheduler.waitForIdle,
+    processSymbol,
+  };
 }
 
 async function loadCandidates(symbol: string): Promise<{ order: Order; symbol: string }[]> {
