@@ -4,15 +4,15 @@ import { fromNodeHeaders } from "better-auth/node";
 import { buildApp } from "./app.js";
 import { auth } from "./auth.js";
 import { env } from "./env.js";
-import { createLoggerProxy, unknownErrorLogFields } from "./logging.js";
+import { createLoggerProxy } from "./logging.js";
 import { createMarketDataRuntime } from "./market-data/coordinator.js";
 import { createBinanceRestClient } from "./market-data/rest-client.js";
 import { createRealtimeRuntime, latestFromStore } from "./realtime/runtime.js";
-import { markRuntimeReady } from "./runtime-status.js";
 import { createFundingScanner } from "./services/funding-scanner.js";
 import { createLimitOrderMatcher } from "./services/limit-matcher.js";
 import { createLiquidationScanner } from "./services/liquidation-scanner.js";
 import { bindFastifyLogger, shutdownOnce } from "./shutdown.js";
+import { listenThenBootstrapRuntime } from "./startup.js";
 
 const logger = createLoggerProxy();
 
@@ -81,14 +81,9 @@ export async function startServer(): Promise<void> {
   });
   bindFastifyLogger(logger, app);
 
-  app.addHook("onReady", async () => {
-    await marketData.start();
-    scanner.start();
-    fundingScanner.start();
-    markRuntimeReady();
-    app.log.info("runtime ready");
-  });
-
+  const exit = (code: number) => {
+    process.exit(code);
+  };
   const shutdown = () =>
     shutdownOnce({
       app,
@@ -103,9 +98,7 @@ export async function startServer(): Promise<void> {
       timeoutMs: env.SHUTDOWN_TIMEOUT_MS,
       logger,
       closePool,
-      exit: (code) => {
-        process.exit(code);
-      },
+      exit,
     });
 
   process.once("SIGTERM", () => {
@@ -115,16 +108,15 @@ export async function startServer(): Promise<void> {
     void shutdown();
   });
 
-  try {
-    await app.listen({
-      port: env.PORT,
-      host: "0.0.0.0",
-    });
-    app.log.info({ port: env.PORT }, "api listening");
-  } catch (error) {
-    app.log.error(unknownErrorLogFields(error), "api listen failed");
-    process.exit(1);
-  }
+  await listenThenBootstrapRuntime({
+    app,
+    port: env.PORT,
+    marketData,
+    liquidationScanner: scanner,
+    fundingScanner,
+    shutdown,
+    exit,
+  });
 }
 
 void startServer();
