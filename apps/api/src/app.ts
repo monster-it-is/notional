@@ -201,7 +201,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
 function fastifyOptions(destination?: NodeJS.WritableStream): FastifyServerOptions {
   const testLogger = process.env.NODE_ENV === "test" && !destination;
   return {
-    trustProxy: env.TRUST_PROXY as FastifyServerOptions["trustProxy"],
+    trustProxy: env.TRUST_PROXY,
     bodyLimit: JSON_BODY_LIMIT_BYTES,
     logController: new LogController({ disableRequestLogging: true }),
     logger: testLogger ? false : createPinoLoggerOptions(env.LOG_LEVEL, destination),

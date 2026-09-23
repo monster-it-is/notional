@@ -1136,7 +1136,18 @@ Phase 18A makes the existing modular monolith production-operable without changi
 
 ## ADR-039 — Render as the Phase 18B hosting provider
 
-Status: Accepted (implementation in progress)
+Status: Superseded
+
+Superseded by ADR-040. The original decision is kept below and is not rewritten as if it never happened.
+
+- Render was selected during the initial Phase 18B design.
+- Repository configuration was committed (`c7a6072`, `render.yaml`). Git history is not rewritten.
+- It was never deployed. No Render resources, DNS, or runtime were created.
+- It was superseded because recurring infrastructure cost was later made a hard `$0` requirement.
+- The planned Render API plan `1c-2g` and Postgres plan `0.5c-1g` were paid resources.
+- ADR-038 remains the valid provider-independent production operations architecture.
+
+Original decision:
 
 Phase 18B deploys the Phase 18A production topology to Render without changing financial or domain semantics. ADR-038 remains the operations architecture; this ADR records the provider choice and Render-specific constraints.
 
@@ -1150,3 +1161,22 @@ Phase 18B deploys the Phase 18A production topology to Render without changing f
 - Session cookies remain host-only SameSite=Lax. Final production uses sibling custom domains. `*.onrender.com` is provisioning/testing only because `onrender.com` is a public suffix. Custom domains and `renderSubdomainPolicy: disabled` are later subphases.
 - `autoDeployTrigger: off`. GitHub Actions stays verification-only. `checksPass` is not enabled until production verification, including deploy-overlap idempotency.
 - Blueprint `sync: false` origins are Dashboard-managed after first create. First-sync placeholders are `https://web.invalid` / `https://api.invalid` and are not the cookie topology.
+
+## ADR-040 — Northflank Developer Sandbox for zero-cost public demo deployment
+
+Status: Accepted (repository configuration in progress; not deployed)
+
+Phase 18B.2 records the hosting change after ADR-039. Phase 18A and ADR-038 remain the production-hardening and provider-independent operations architecture. This ADR does not change financial or domain behavior. Northflank Developer Sandbox is a public portfolio/demo environment. Provider documentation does not position that sandbox for production applications.
+
+- Recurring hosting cost is a hard `$0`.
+- Account plan is Developer Sandbox: at most 2 services (`notional-web`, `notional-api`), 1 PostgreSQL addon, 0 jobs, 0 extra volumes, 0 BYOC, one instance per service, and no autoscaling.
+- No Redis. No paid volumes. No paid networking. No purchased or custom domain.
+- `notional-api` listens on container port 3000, HTTP, private (`public=false`, `vpcAccessible=false`). `notional-web` listens on container port 80, HTTP, and is the only public browser endpoint. Docker `EXPOSE 3000` can be auto-detected as public; the API port must be confirmed private before the demo is treated as valid.
+- The browser reaches only the generated `notional-web` hostname. nginx proxies `/api`, `/health`, `/ready`, `/ws/market`, and `/ws/account` to the documented project-internal address `notional-api:3000`. The API has no browser-facing hostname.
+- Cookie topology is same-origin: host-only, HttpOnly, Secure, SameSite=Lax, Path=/, no `Domain` attribute. `WEB_ORIGIN`, `BETTER_AUTH_URL`, and build-time `VITE_API_BASE_URL` are `https://<northflank-web-dns>`.
+- The web DNS is unknown until the public port exists, and `VITE_API_BASE_URL` is required at image build. The first manual bootstrap uses `https://web.invalid` for the API runtime origins and the web build argument. After the real DNS is assigned, web is rebuilt and the API is restarted with `https://<actual-web-dns>`. `.invalid` is not committed as runtime config.
+- PostgreSQL is version 17, one replica, TLS on, public accessibility off. A runtime secret group scoped only to `notional-api` aliases provider `POSTGRES_URI` to `DATABASE_URL` when needed. Builds and `notional-web` do not inherit it. The application does not use `POSTGRES_URI_ADMIN`. The provider URI is used unchanged. Do not add `DATABASE_SSL`, `NODE_TLS_REJECT_UNAUTHORIZED`, `rejectUnauthorized: false`, or a hand-written `sslmode`. If the current `pg` client cannot consume that TLS URI with verification left on, stop.
+- `TRUST_PROXY` remains `false` (`false` or `true` only; numeric values stay rejected). nginx forwards `Host`, `Origin`, and `Cookie`, and strips `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `Forwarded`. A client-IP design is a separate reviewed change after Northflank edge behavior is measured.
+- Every resource creation screen must show `$0` or the included Sandbox allocation. A non-zero price means stop. Do not select a cheaper paid plan, upgrade, or switch to Pay-as-you-go. A payment card required for identity verification does not authorize paid resources. Final verification includes a billing page with projected provider spend `$0`.
+- If the free Sandbox resources cannot sustain Notional, stop rather than upgrade. OCI Always Free is only a later fallback decision. It is not selected.
+- 18B.2 does not add a Northflank template, API token, or provider credentials. Sandbox creation stays manual after local Docker/nginx behavior is proven.

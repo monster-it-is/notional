@@ -101,8 +101,8 @@ Phase 17 replaces the Vite template in `apps/web` with the paper-trading SPA. Be
 
 ## Phase 18 — Testing, Hardening, and Deployment
 
-Status: Phase 18A COMPLETE. Phase 18B IN PROGRESS (18B.1 repository Blueprint/config; not deployed).
+Status: Phase 18A COMPLETE. Phase 18B IN PROGRESS (Northflank zero-cost public portfolio/demo; 18B.2 repository config only; not deployed).
 
-Phase 18A adds production packaging (compiled JS, workspace dist exports, compiled migrator), env/cookie/header/rate-limit hardening, liveness vs readiness, drain-safe shutdown, Docker artifacts, and CI. Financial domain behavior is unchanged. One API replica remains required. Redis remains unused.
+Phase 18A adds production packaging (compiled JS, workspace dist exports, compiled migrator), env/cookie/header/rate-limit hardening, liveness vs readiness, drain-safe shutdown, Docker artifacts, and CI. Financial domain behavior is unchanged. One API replica remains required. Redis remains unused. Phase 18A remains the production-hardening baseline.
 
-Phase 18B is Render-specific hosting in Singapore: static site + Docker API + Render Postgres, one steady-state API instance, private internal `DATABASE_URL`, public DB access disabled, `TRUST_PROXY=false` until provider verification, custom sibling domains for the final cookie topology, onrender hostnames for provisioning/testing only, and auto-deploy off. Provider resources, DNS, and deploys start after 18B.1. See ADR-039.
+Phase 18B is a Northflank Developer Sandbox portfolio/demo, not production hosting. Recurring cost is `$0`: two services (`notional-web` public, `notional-api` private), one private PostgreSQL 17 addon, no jobs, Redis, extra volumes, autoscaling, or purchased domain. nginx on the web service proxies API and WebSocket paths to `notional-api:3000`. The browser origin is only the generated web hostname, so the cookie stays host-only SameSite=Lax. `TRUST_PROXY` stays `false`. The first web build uses a manual `https://web.invalid` placeholder; the second build uses the real generated DNS. Sandbox creation is later and manual. There is no provider manifest yet. If the free allocation cannot run Notional, stop rather than upgrade. OCI Always Free is not selected. See ADR-040. ADR-039 (Render) is superseded and was never deployed. ADR-038 remains the provider-independent operations architecture.

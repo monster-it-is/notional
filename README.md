@@ -57,7 +57,7 @@ Production start:
 3. `pnpm migrate:prod` (compiled Drizzle SQL migrator; never `drizzle-kit push`)
 4. `node apps/api/dist/server.js` or the API Docker image entrypoint (migrate then `exec node dist/server.js`)
 
-`TRUST_PROXY` defaults to false and accepts only `false` or `true`. Phase 18B keeps it false on Render until provider `X-Forwarded-For` verification.
+`TRUST_PROXY` defaults to false and accepts only `false` or `true`. Numeric values are rejected. The Northflank demo keeps it false until a separate reviewed client-IP design.
 
 `GET /health` — process liveness, no database.
 `GET /ready` — startup complete, not shutting down, Postgres reachable. Not gated on Binance freshness.
@@ -77,14 +77,35 @@ docker build -f apps/web/Dockerfile --build-arg VITE_API_BASE_URL=https://api.ex
 
 A local `pnpm --filter=api --prod --legacy deploy ./tmp-out` verifies the pruned artifact. Restore the workspace afterward with `pnpm install` (deploy `--prod` can prune local devDependencies).
 
-## Production (Phase 18B — Render)
+## Northflank demo (Phase 18B)
 
-Status: **in progress**. Repository Blueprint/config only in 18B.1. This does not create Render resources, configure DNS, or deploy.
+Status: **in progress**. Phase 18A remains the production-hardening baseline. Phase 18B.2 is repository configuration only. It does not create a Northflank account, provider resources, DNS, or a deploy. There is no Northflank template in the repo yet.
 
-Provider: Render. Region: Singapore (API + Postgres). Topology: static site `notional-web` + Docker API `notional-api` + Postgres `notional-db`. No Redis.
+This is a **public portfolio / demo** on the Northflank Developer Sandbox. Provider docs do not position that sandbox as production hosting. Recurring hosting cost is a hard **$0**.
 
-- One **steady-state** API instance. Do not horizontally scale. Render zero-downtime deploys may temporarily run old and new API processes before SIGTERM of the old process.
-- `DATABASE_URL` is Render's same-region internal `connectionString`. Public database access is disabled. No `sslmode` append, no `DATABASE_SSL`.
-- `TRUST_PROXY=false` until provider verification. Auto-deploy is off.
-- Final cookie topology requires sibling custom domains (`https://notional.<DOMAIN>` and `https://api.notional.<DOMAIN>`). `*.onrender.com` hostnames are provisioning/testing only.
-- Manifest: [`render.yaml`](render.yaml). See ADR-039.
+Browser origin is only the public `notional-web` hostname. `notional-api` has no browser hostname. nginx proxies `/api`, `/api/`, `/health`, `/ready`, `/ws/market`, and `/ws/account` to the private address `notional-api:3000`.
+
+Conceptual values after Northflank assigns the web port (do not invent the hostname):
+
+```text
+WEB_ORIGIN=https://<northflank-web-dns>
+BETTER_AUTH_URL=https://<northflank-web-dns>
+VITE_API_BASE_URL=https://<northflank-web-dns>
+```
+
+The session cookie stays host-only, HttpOnly, Secure, SameSite=Lax, Path=/, with no `Domain` attribute.
+
+`VITE_API_BASE_URL` is a web image **build** argument. The public DNS does not exist until the web port exists, so bootstrap is two manual provider steps. Those `.invalid` values are not source-controlled runtime config.
+
+1. Create the API with `WEB_ORIGIN=https://web.invalid` and `BETTER_AUTH_URL=https://web.invalid`. Build the web image with `VITE_API_BASE_URL=https://web.invalid` so the public port can be created.
+2. Copy the generated web port DNS. Rebuild web with `VITE_API_BASE_URL=https://<actual-web-dns>`. Set the API runtime origins to that same URL. Rebuild/redeploy web and restart/redeploy the API.
+
+Ports: API container `3000`, HTTP, private (`public=false`, `vpcAccessible=false`). Northflank can auto-detect `EXPOSE 3000` as public; confirm the API port shows private before treating the demo as valid. Web container `80`, HTTP, public. That is the only public browser endpoint.
+
+PostgreSQL 17: one addon, one replica, TLS on, public accessibility off. A runtime secret group scoped only to `notional-api` aliases `POSTGRES_URI` to `DATABASE_URL` when the names differ. Do not inherit it into builds or `notional-web`. Do not use `POSTGRES_URI_ADMIN`. Use the provider URI unchanged: no `DATABASE_SSL`, no `NODE_TLS_REJECT_UNAUTHORIZED`, no `rejectUnauthorized: false`, no hand-added `sslmode`. If that URI cannot be consumed with TLS verification left on, stop. Local maintenance is Northflank addon forwarding, not a public database.
+
+`TRUST_PROXY=false`. nginx forwards `Host`, `Origin`, and `Cookie`, and strips `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `Forwarded`. Per-IP auth and WebSocket rate limits therefore share the private hop address. A client-IP design is a later reviewed change.
+
+Sandbox limits: Developer Sandbox plan, 2 services, 1 addon, 0 jobs, 0 extra volumes, 0 BYOC, 1 instance each, no autoscaling, no paid networking, no public database. Every create screen must show `$0` / included allocation. A non-zero price means stop. Do not pick a cheaper paid plan, upgrade, or switch to Pay-as-you-go. A card required for identity verification does not authorize paid resources. Final verification includes a billing page at projected spend `$0`. If the free allocation cannot run Notional, stop. OCI Always Free is only a later fallback decision, not the selected host.
+
+See ADR-040. ADR-039 records the earlier Render choice and is superseded. ADR-038 remains the provider-independent operations architecture.
