@@ -144,7 +144,7 @@ function redact(value: string): string {
   return value
     .replace(/[a-z][a-z0-9+.-]*:\/\/[^\s'"]+/gi, "[redacted]")
     .replace(
-      /\b(?:password|passwd|pwd|secret|token|DATABASE_URL)\b\s*[:=]\s*\S+/gi,
+      /\b(?:password|passwd|pwd|secret|token|DATABASE_URL|MIGRATION_DATABASE_URL)\b\s*[:=]\s*\S+/gi,
       "[redacted]",
     );
 }

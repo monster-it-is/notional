@@ -1,16 +1,11 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import { Pool } from "pg";
 
+import { applicationDatabaseUrl } from "./database-url.js";
 import * as schema from "./schema/index.js";
 
-const databaseUrl = process.env.DATABASE_URL;
-
-if (!databaseUrl) {
-  throw new Error("DATABASE_URL is not defined");
-}
-
 export const pool = new Pool({
-  connectionString: databaseUrl,
+  connectionString: applicationDatabaseUrl(),
   max: poolMax(),
   idleTimeoutMillis: 30_000,
   connectionTimeoutMillis: 5_000,

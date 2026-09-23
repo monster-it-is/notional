@@ -52,7 +52,7 @@ Cookie sessions are host-only, HttpOnly, SameSite=Lax, Path=/. Web and API must 
 
 Production start:
 
-1. Set production env (https `BETTER_AUTH_URL` and `WEB_ORIGIN`, strong `BETTER_AUTH_SECRET`, real `DATABASE_URL` including `sslmode` if the host requires it).
+1. Set production env (https `BETTER_AUTH_URL` and `WEB_ORIGIN`, strong `BETTER_AUTH_SECRET`, real `DATABASE_URL` including `sslmode` if the host requires it). If the app user cannot `CREATE SCHEMA`, set `MIGRATION_DATABASE_URL` for the compiled migrator only.
 2. `pnpm -r build`
 3. `pnpm migrate:prod` (compiled Drizzle SQL migrator; never `drizzle-kit push`)
 4. `node apps/api/dist/server.js` or the API Docker image entrypoint (migrate then `exec node dist/server.js`)
@@ -102,7 +102,7 @@ The session cookie stays host-only, HttpOnly, Secure, SameSite=Lax, Path=/, with
 
 Ports: API container `3000`, HTTP, private (`public=false`, `vpcAccessible=false`). Northflank can auto-detect `EXPOSE 3000` as public; confirm the API port shows private before treating the demo as valid. Web container `80`, HTTP, public. That is the only public browser endpoint.
 
-PostgreSQL 17: one addon, one replica, TLS on, public accessibility off. A runtime secret group scoped only to `notional-api` aliases `POSTGRES_URI` to `DATABASE_URL` when the names differ. Do not inherit it into builds or `notional-web`. Do not use `POSTGRES_URI_ADMIN`. Use the provider URI unchanged: no `DATABASE_SSL`, no `NODE_TLS_REJECT_UNAUTHORIZED`, no `rejectUnauthorized: false`, no hand-added `sslmode`. If that URI cannot be consumed with TLS verification left on, stop. Local maintenance is Northflank addon forwarding, not a public database.
+PostgreSQL 17: one addon, one replica, TLS on, public accessibility off. A runtime secret group scoped only to `notional-api` aliases `POSTGRES_URI` to `DATABASE_URL` when the names differ. Alias `POSTGRES_URI_ADMIN` to `MIGRATION_DATABASE_URL` for the API image entrypoint migrator only. The long-running API uses `DATABASE_URL`. Do not inherit either URI into builds or `notional-web`. Use the provider URIs unchanged: no `DATABASE_SSL`, no `NODE_TLS_REJECT_UNAUTHORIZED`, no `rejectUnauthorized: false`, no hand-added `sslmode`. If that URI cannot be consumed with TLS verification left on, stop. Local maintenance is Northflank addon forwarding, not a public database.
 
 `TRUST_PROXY=false`. nginx forwards `Host`, `Origin`, and `Cookie`, and strips `X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, and `Forwarded`. Per-IP auth and WebSocket rate limits therefore share the private hop address. A client-IP design is a later reviewed change.
 

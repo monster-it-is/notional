@@ -13,6 +13,7 @@ export const PINO_REDACT_PATHS = [
   "*.secret",
   "*.token",
   "DATABASE_URL",
+  "MIGRATION_DATABASE_URL",
   "BETTER_AUTH_SECRET",
 ] as const;
 
@@ -23,7 +24,10 @@ export type UnknownErrorDiagnostic = {
   code?: string;
 };
 
-export function createPinoLoggerOptions(level: string, destination?: NodeJS.WritableStream) {
+export function createPinoLoggerOptions(
+  level: string,
+  destination?: NodeJS.WritableStream,
+) {
   return {
     level,
     redact: {
@@ -40,7 +44,9 @@ export function unknownErrorDiagnostic(error: unknown): UnknownErrorDiagnostic {
   return code === undefined ? { name } : { name, code };
 }
 
-export function unknownErrorLogFields(error: unknown): { err: UnknownErrorDiagnostic } {
+export function unknownErrorLogFields(error: unknown): {
+  err: UnknownErrorDiagnostic;
+} {
   return { err: unknownErrorDiagnostic(error) };
 }
 

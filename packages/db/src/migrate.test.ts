@@ -32,14 +32,27 @@ describe("compiled migrator", () => {
 
     expect(library).not.toMatch(/process\.argv/);
     expect(library).not.toMatch(/import\.meta\.url ===/);
+    expect(library).not.toMatch(/from "\.\/client\.js"/);
+    expect(library).toMatch(/migrationDatabaseUrl\(/);
+    expect(library).toMatch(/connectionString:\s*migrationDatabaseUrl\(/);
     expect(entry).toMatch(/runMigrationCli/);
     expect(entry).toMatch(/runMigrations/);
+    expect(entry).toMatch(/closeMigrationPool/);
     expect(entry).not.toMatch(/process\.argv/);
     expect(entry).not.toMatch(/import\.meta\.url/);
+    expect(entry).not.toMatch(/from "\.\/client\.js"/);
+    expect(entry).not.toMatch(/\bclosePool\b/);
     expect(docker).toContain(
       "node node_modules/@notional/db/dist/migrate-entry.js",
     );
+    expect(docker).toContain("unset MIGRATION_DATABASE_URL");
     expect(docker).not.toContain("dist/migrate.js");
+    expect(docker.indexOf("unset MIGRATION_DATABASE_URL")).toBeGreaterThan(
+      docker.indexOf("migrate-entry.js"),
+    );
+    expect(docker.indexOf("exec node dist/server.js")).toBeGreaterThan(
+      docker.indexOf("unset MIGRATION_DATABASE_URL"),
+    );
   });
 });
 
@@ -127,7 +140,7 @@ describe("migration CLI lifecycle", () => {
   it("logs a DrizzleQueryError cause without connection secrets", async () => {
     const events: string[] = [];
     const cause = new DatabaseError(
-      "password=super-secret connection failed at postgres://migrator:super-secret@db.internal:5432/notional",
+      "MIGRATION_DATABASE_URL=postgres://migrator:super-secret@db.internal:5432/notional password=super-secret connection failed at postgres://migrator:super-secret@db.internal:5432/notional",
       "28P01",
     );
     const failure = new DrizzleQueryError(
@@ -160,7 +173,7 @@ describe("migration CLI lifecycle", () => {
         "params: ",
         "cause:",
         "  name: DatabaseError",
-        "  message: [redacted] connection failed at [redacted]",
+        "  message: [redacted] [redacted] connection failed at [redacted]",
         "  code: 28P01",
         "stack: DrizzleQueryError stack",
         "",
@@ -170,6 +183,7 @@ describe("migration CLI lifecycle", () => {
     expect(events.join("\n")).not.toContain("postgres://");
     expect(events.join("\n")).not.toContain("connectionString");
     expect(events.join("\n")).not.toContain("migrator");
+    expect(events.join("\n")).not.toContain("MIGRATION_DATABASE_URL=");
   });
 
   it("stops when an error cause points at itself", async () => {
