@@ -175,7 +175,7 @@ describe("book ticker universe", () => {
       expect(logs).toEqual([
         {
           message: "catalog sync cycle failed",
-          extra: { name: "CatalogProbeError", code: "CATALOG_PROBE" },
+          extra: { name: "CatalogProbeError", code: "CATALOG_PROBE", messageKind: "generic" },
         },
       ]);
       expect(JSON.stringify(logs)).not.toContain(secret);

@@ -413,9 +413,10 @@ describe("in-process LIMIT matcher", () => {
     expect(logs).toEqual([
       {
         message: "limit matcher cycle failed",
-        extra: { symbol: "BTCUSDT", name: "Error" },
+        extra: { symbol: "BTCUSDT", name: "Error", messageKind: "generic" },
       },
     ]);
+    expect(JSON.stringify(logs)).not.toContain("matcher boom");
     expect((await findOrderById(db, accountId, (resting.json() as OrderResponse).id))?.status).toBe(
       "OPEN",
     );
@@ -430,6 +431,105 @@ describe("in-process LIMIT matcher", () => {
     expect(await listExecutionsByPaperAccountId(db, accountId, { limit: 10, offset: 0 })).toHaveLength(
       1,
     );
+  });
+
+  it("logs a pg pool acquire timeout as messageKind without the raw message", async () => {
+    const { cookies } = await initializeUser(app, "matcher-pool-timeout@example.com");
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    const resting = await postOrder(app, cookies, "buy-90", {
+      type: "LIMIT",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.1",
+      limitPrice: "90",
+    });
+    expect(resting.statusCode).toBe(201);
+
+    const throwing: MarketDataAccess = {
+      ...marketData,
+      getFreshBook() {
+        throw new Error("timeout exceeded when trying to connect");
+      },
+    };
+    const logs: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const logger: Logger = {
+      info() {},
+      warn() {},
+      error(message, extra) {
+        logs.push({ message, extra });
+      },
+    };
+    const matcher = createLimitOrderMatcher({ marketData: throwing, logger });
+    matcher.schedule("BTCUSDT");
+    await matcher.waitForIdle();
+
+    expect(logs).toEqual([
+      {
+        message: "limit matcher cycle failed",
+        extra: { symbol: "BTCUSDT", name: "Error", messageKind: "pool_acquire_timeout" },
+      },
+    ]);
+    expect(JSON.stringify(logs)).not.toContain("timeout exceeded when trying to connect");
+    expect(JSON.stringify(logs)).not.toContain("postgresql://");
+    expect(JSON.stringify(logs)).not.toContain("password");
+  });
+
+  it("logs a Drizzle-style nested cause code without SQL or secrets", async () => {
+    const { cookies } = await initializeUser(app, "matcher-drizzle-cause@example.com");
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+    const resting = await postOrder(app, cookies, "buy-90", {
+      type: "LIMIT",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.1",
+      limitPrice: "90",
+    });
+    expect(resting.statusCode).toBe(201);
+
+    const throwing: MarketDataAccess = {
+      ...marketData,
+      getFreshBook() {
+        const cause = new Error(
+          "password=super-secret permission denied at postgresql://user:password@host/db",
+        );
+        cause.name = "DatabaseError";
+        Object.assign(cause, { code: "42501" });
+        const error = new Error('Failed query: SELECT * FROM trade_order\nparams: ["OPEN"]');
+        error.name = "DrizzleQueryError";
+        error.cause = cause;
+        throw error;
+      },
+    };
+    const logs: Array<{ message: string; extra?: Record<string, unknown> }> = [];
+    const logger: Logger = {
+      info() {},
+      warn() {},
+      error(message, extra) {
+        logs.push({ message, extra });
+      },
+    };
+    const matcher = createLimitOrderMatcher({ marketData: throwing, logger });
+    matcher.schedule("BTCUSDT");
+    await matcher.waitForIdle();
+
+    expect(logs).toEqual([
+      {
+        message: "limit matcher cycle failed",
+        extra: {
+          symbol: "BTCUSDT",
+          name: "DrizzleQueryError",
+          causeName: "DatabaseError",
+          causeCode: "42501",
+          messageKind: "generic",
+        },
+      },
+    ]);
+    const serialized = JSON.stringify(logs);
+    expect(serialized).not.toContain("Failed query");
+    expect(serialized).not.toContain("trade_order");
+    expect(serialized).not.toContain("super-secret");
+    expect(serialized).not.toContain("postgresql://");
+    expect(serialized).not.toContain("params");
   });
 
   it("schedules matcher after a new OPEN LIMIT commits so a newer store BBO still fills", async () => {

@@ -18,10 +18,16 @@ export const PINO_REDACT_PATHS = [
 ] as const;
 
 const SAFE_ERROR_IDENTIFIER = /^[A-Za-z0-9._-]{1,64}$/;
+const POOL_ACQUIRE_TIMEOUT_MESSAGE = "timeout exceeded when trying to connect";
+
+export type UnknownErrorMessageKind = "pool_acquire_timeout" | "generic";
 
 export type UnknownErrorDiagnostic = {
   name: string;
   code?: string;
+  causeName?: string;
+  causeCode?: string;
+  messageKind: UnknownErrorMessageKind;
 };
 
 export function createPinoLoggerOptions(
@@ -41,7 +47,27 @@ export function createPinoLoggerOptions(
 export function unknownErrorDiagnostic(error: unknown): UnknownErrorDiagnostic {
   const name = safeErrorName(error);
   const code = safeErrorCode(error);
-  return code === undefined ? { name } : { name, code };
+  const cause = readCause(error);
+  const causeName = cause === undefined ? undefined : safeCauseName(cause);
+  const causeCode = cause === undefined ? undefined : safeErrorCode(cause);
+  const diagnostic: UnknownErrorDiagnostic = {
+    name,
+    messageKind: safeMessageKind(error, cause),
+  };
+
+  if (code !== undefined) {
+    diagnostic.code = code;
+  }
+
+  if (causeName !== undefined) {
+    diagnostic.causeName = causeName;
+  }
+
+  if (causeCode !== undefined) {
+    diagnostic.causeCode = causeCode;
+  }
+
+  return diagnostic;
 }
 
 export function unknownErrorLogFields(error: unknown): {
@@ -72,6 +98,38 @@ function safeErrorIdentifier(value: unknown): string | undefined {
   }
 
   return value;
+}
+
+function readCause(error: unknown): unknown {
+  if (typeof error !== "object" || error === null || !("cause" in error)) {
+    return undefined;
+  }
+
+  return error.cause;
+}
+
+function safeCauseName(cause: unknown): string | undefined {
+  if (cause instanceof Error) {
+    return safeErrorName(cause);
+  }
+
+  if (typeof cause !== "object" || cause === null || !("name" in cause)) {
+    return undefined;
+  }
+
+  return safeErrorIdentifier(cause.name);
+}
+
+function isPoolAcquireTimeout(value: unknown): boolean {
+  return value instanceof Error && value.message === POOL_ACQUIRE_TIMEOUT_MESSAGE;
+}
+
+function safeMessageKind(error: unknown, cause: unknown): UnknownErrorMessageKind {
+  if (isPoolAcquireTimeout(error) || isPoolAcquireTimeout(cause)) {
+    return "pool_acquire_timeout";
+  }
+
+  return "generic";
 }
 
 export function createLoggerAdapter(log: FastifyBaseLogger): Logger {
