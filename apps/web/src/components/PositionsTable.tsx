@@ -5,6 +5,7 @@ import { positionSideFromQuantity } from "../lib/decimal-string.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
+import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
 export function PositionsTable() {
   const query = useQuery({
@@ -13,7 +14,7 @@ export function PositionsTable() {
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-app-text">Loading positions…</p>;
+    return <TableStatus>Loading positions…</TableStatus>;
   }
 
   if (query.error) {
@@ -27,29 +28,27 @@ export function PositionsTable() {
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-left text-sm">
-        <thead>
-          <tr className="text-app-text">
-            <th className="py-2 pr-3">Symbol</th>
-            <th className="py-2 pr-3">Side</th>
-            <th className="py-2 pr-3">Quantity</th>
-            <th className="py-2 pr-3">Entry</th>
-            <th className="py-2 pr-3">Realized PnL</th>
+    <DataTable>
+      <thead>
+        <tr>
+          <Th>Symbol</Th>
+          <Th>Side</Th>
+          <Th>Quantity</Th>
+          <Th>Entry</Th>
+          <Th>Realized PnL</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {positions.map((position) => (
+          <tr key={position.symbol}>
+            <Td>{position.symbol}</Td>
+            <Td>{positionSideFromQuantity(position.quantity)}</Td>
+            <Td numeric>{position.quantity}</Td>
+            <Td numeric>{position.entryPrice}</Td>
+            <Td numeric>{position.cumulativeRealizedPnl}</Td>
           </tr>
-        </thead>
-        <tbody>
-          {positions.map((position) => (
-            <tr key={position.symbol} className="border-t border-app-border text-app-heading">
-              <td className="py-2 pr-3">{position.symbol}</td>
-              <td className="py-2 pr-3">{positionSideFromQuantity(position.quantity)}</td>
-              <td className="py-2 pr-3 tabular-nums">{position.quantity}</td>
-              <td className="py-2 pr-3 tabular-nums">{position.entryPrice}</td>
-              <td className="py-2 pr-3 tabular-nums">{position.cumulativeRealizedPnl}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }

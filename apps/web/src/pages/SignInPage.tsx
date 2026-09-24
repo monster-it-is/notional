@@ -5,6 +5,7 @@ import { Link, Navigate, useNavigate, useSearchParams } from "react-router";
 import { authClient } from "../auth/auth-client.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { ErrorBanner } from "../components/ui/ErrorBanner.tsx";
+import { FormField } from "../components/ui/FormField.tsx";
 import { Input } from "../components/ui/Input.tsx";
 
 export function SignInPage() {
@@ -40,23 +41,21 @@ export function SignInPage() {
     <form className="space-y-4" onSubmit={onSubmit}>
       <h1 className="text-2xl">Sign in</h1>
       {error ? <ErrorBanner error={error} /> : null}
-      <label className="block text-sm">
-        <span className="mb-1 block">Email</span>
+      <FormField label="Email">
         <Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-      </label>
-      <label className="block text-sm">
-        <span className="mb-1 block">Password</span>
+      </FormField>
+      <FormField label="Password">
         <Input
           type="password"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
           required
         />
-      </label>
+      </FormField>
       <Button type="submit" variant="primary" disabled={pending}>
         {pending ? "Signing in…" : "Sign in"}
       </Button>
-      <p className="text-sm">
+      <p className="text-sm text-secondary">
         No account? <Link to="/signup">Sign up</Link>
       </p>
     </form>

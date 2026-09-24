@@ -64,7 +64,7 @@ export function OrderForm({
       }}
     >
       <fieldset className="flex gap-2" disabled={disabled || order.pending}>
-        <legend className="mb-1 text-sm text-app-text">Side</legend>
+        <legend className="mb-1 text-sm text-secondary">Side</legend>
         <Button
           type="button"
           variant={side === "BUY" ? "buy" : "secondary"}
@@ -84,7 +84,7 @@ export function OrderForm({
       </fieldset>
 
       <fieldset className="flex gap-2" disabled={disabled || order.pending}>
-        <legend className="mb-1 text-sm text-app-text">Order type</legend>
+        <legend className="mb-1 text-sm text-secondary">Order type</legend>
         <Button
           type="button"
           variant={type === "MARKET" ? "primary" : "secondary"}
@@ -104,32 +104,34 @@ export function OrderForm({
       </fieldset>
 
       <label className="block text-sm">
-        <span className="mb-1 block text-app-text">Quantity</span>
+        <span className="mb-1 block text-secondary">Quantity</span>
         <Input
           value={quantity}
           onChange={(event) => setQuantity(event.target.value)}
           inputMode="decimal"
           autoComplete="off"
           aria-label="Quantity"
+          numeric
           disabled={disabled || order.pending}
         />
       </label>
 
       {type === "LIMIT" ? (
         <label className="block text-sm">
-          <span className="mb-1 block text-app-text">Limit price</span>
+          <span className="mb-1 block text-secondary">Limit price</span>
           <Input
             value={limitPrice}
             onChange={(event) => setLimitPrice(event.target.value)}
             inputMode="decimal"
             autoComplete="off"
             aria-label="Limit price"
+            numeric
             disabled={disabled || order.pending}
           />
         </label>
       ) : null}
 
-      <label className="flex items-center gap-2 text-sm text-app-heading">
+      <label className="flex items-center gap-2 text-sm text-foreground">
         <input
           type="checkbox"
           checked={reduceOnly}
@@ -142,11 +144,11 @@ export function OrderForm({
       {validation ? <ErrorBanner error={new Error(validation)} /> : null}
       {order.error ? <ErrorBanner error={order.error} /> : null}
       {failClosed ? (
-        <p className="text-sm text-app-danger">The order did not succeed.</p>
+        <p className="text-sm text-warning">The order did not succeed.</p>
       ) : null}
 
       <div className="flex gap-2">
-        <Button type="submit" variant={side === "BUY" ? "buy" : "sell"} disabled={disabled || order.pending}>
+        <Button type="submit" variant="primary" disabled={disabled || order.pending}>
           {order.pending ? "Placing…" : `Place ${type} ${side}`}
         </Button>
         {order.error ? (

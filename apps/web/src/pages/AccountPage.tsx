@@ -5,6 +5,7 @@ import { authClient } from "../auth/auth-client.ts";
 import { FaucetCard } from "../components/FaucetCard.tsx";
 import { WalletFundingTable } from "../components/WalletFundingTable.tsx";
 import { Button } from "../components/ui/Button.tsx";
+import { NumericText } from "../components/ui/NumericText.tsx";
 import { Panel } from "../components/ui/Panel.tsx";
 import { getAccount } from "../lib/api/account.ts";
 import { queryKeys } from "../lib/query-keys.ts";
@@ -36,12 +37,12 @@ export function AccountPage() {
       <Panel title="Session">
         <dl className="space-y-2 text-sm">
           <div>
-            <dt className="text-app-text">Name</dt>
-            <dd className="text-app-heading">{user?.name ?? "—"}</dd>
+            <dt className="text-secondary">Name</dt>
+            <dd className="text-foreground">{user?.name ?? "—"}</dd>
           </div>
           <div>
-            <dt className="text-app-text">Email</dt>
-            <dd className="text-app-heading">{user?.email ?? "—"}</dd>
+            <dt className="text-secondary">Email</dt>
+            <dd className="text-foreground">{user?.email ?? "—"}</dd>
           </div>
         </dl>
         <div className="mt-4">
@@ -52,11 +53,11 @@ export function AccountPage() {
       </Panel>
 
       <Panel title="Wallet">
-        <p className="mb-4 text-sm text-app-heading">
+        <p className="mb-4 text-sm text-foreground">
           Wallet balance{" "}
-          <span className="tabular-nums">
+          <NumericText>
             {accountQuery.data?.balance ?? "—"} {accountQuery.data?.currency ?? "USDT"}
-          </span>
+          </NumericText>
         </p>
         <FaucetCard
           lastFaucetClaimAt={accountQuery.data?.lastFaucetClaimAt ?? null}

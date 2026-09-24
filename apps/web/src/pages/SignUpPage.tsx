@@ -5,6 +5,7 @@ import { Link, Navigate, useNavigate } from "react-router";
 import { authClient } from "../auth/auth-client.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { ErrorBanner } from "../components/ui/ErrorBanner.tsx";
+import { FormField } from "../components/ui/FormField.tsx";
 import { Input } from "../components/ui/Input.tsx";
 
 export function SignUpPage() {
@@ -38,21 +39,18 @@ export function SignUpPage() {
   return (
     <form className="space-y-4" onSubmit={onSubmit}>
       <h1 className="text-2xl">Sign up</h1>
-      <p className="text-sm text-app-text">
+      <p className="text-sm text-secondary">
         After sign up, Notional creates your paper account (1,000 USDT signup allocation) in the
         authenticated app. This form only creates the user session.
       </p>
       {error ? <ErrorBanner error={error} /> : null}
-      <label className="block text-sm">
-        <span className="mb-1 block">Name</span>
+      <FormField label="Name">
         <Input value={name} onChange={(event) => setName(event.target.value)} required />
-      </label>
-      <label className="block text-sm">
-        <span className="mb-1 block">Email</span>
+      </FormField>
+      <FormField label="Email">
         <Input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
-      </label>
-      <label className="block text-sm">
-        <span className="mb-1 block">Password</span>
+      </FormField>
+      <FormField label="Password">
         <Input
           type="password"
           value={password}
@@ -60,11 +58,11 @@ export function SignUpPage() {
           required
           minLength={8}
         />
-      </label>
+      </FormField>
       <Button type="submit" variant="primary" disabled={pending}>
         {pending ? "Creating session…" : "Sign up"}
       </Button>
-      <p className="text-sm">
+      <p className="text-sm text-secondary">
         Already registered? <Link to="/signin">Sign in</Link>
       </p>
     </form>

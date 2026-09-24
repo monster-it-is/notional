@@ -30,7 +30,7 @@ function AuthenticatedShell() {
     <div className="flex min-h-svh flex-col">
       <Header signedIn walletBalance={account?.balance} />
       {suspended ? (
-        <div role="alert" className="bg-app-danger/10 px-4 py-2 text-center text-sm text-app-danger">
+        <div role="alert" className="border-b border-warning-border bg-warning-background px-4 py-2 text-center text-sm text-warning">
           This paper account is suspended. Trading and faucet claims are disabled.
         </div>
       ) : null}

@@ -5,6 +5,7 @@ import { listOrders } from "../lib/api/orders.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
+import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
 export function OrdersHistoryTable({
   status,
@@ -23,7 +24,7 @@ export function OrdersHistoryTable({
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-app-text">Loading orders…</p>;
+    return <TableStatus>Loading orders…</TableStatus>;
   }
 
   if (query.error) {
@@ -37,35 +38,33 @@ export function OrdersHistoryTable({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-left text-sm">
-        <thead>
-          <tr className="text-app-text">
-            <th className="py-2 pr-3">Created</th>
-            <th className="py-2 pr-3">Symbol</th>
-            <th className="py-2 pr-3">Side</th>
-            <th className="py-2 pr-3">Type</th>
-            <th className="py-2 pr-3">Quantity</th>
-            <th className="py-2 pr-3">Limit</th>
-            <th className="py-2 pr-3">Status</th>
-            <th className="py-2 pr-3">Origin</th>
+    <DataTable>
+      <thead>
+        <tr>
+          <Th>Created</Th>
+          <Th>Symbol</Th>
+          <Th>Side</Th>
+          <Th>Type</Th>
+          <Th>Quantity</Th>
+          <Th>Limit</Th>
+          <Th>Status</Th>
+          <Th>Origin</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {orders.map((order) => (
+          <tr key={order.id}>
+            <Td>{order.createdAt}</Td>
+            <Td>{order.symbol}</Td>
+            <Td>{order.side}</Td>
+            <Td>{order.type}</Td>
+            <Td numeric>{order.quantity}</Td>
+            <Td numeric>{order.limitPrice ?? "—"}</Td>
+            <Td>{order.status}</Td>
+            <Td>{order.origin}</Td>
           </tr>
-        </thead>
-        <tbody>
-          {orders.map((order) => (
-            <tr key={order.id} className="border-t border-app-border text-app-heading">
-              <td className="py-2 pr-3">{order.createdAt}</td>
-              <td className="py-2 pr-3">{order.symbol}</td>
-              <td className="py-2 pr-3">{order.side}</td>
-              <td className="py-2 pr-3">{order.type}</td>
-              <td className="py-2 pr-3 tabular-nums">{order.quantity}</td>
-              <td className="py-2 pr-3 tabular-nums">{order.limitPrice ?? "—"}</td>
-              <td className="py-2 pr-3">{order.status}</td>
-              <td className="py-2 pr-3">{order.origin}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }

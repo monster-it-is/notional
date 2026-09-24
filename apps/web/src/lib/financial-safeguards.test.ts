@@ -10,6 +10,8 @@ const files = [
   "src/lib/decimal-string.ts",
   "src/lib/idempotency.ts",
   "src/stores/market-store.ts",
+  "src/components/landing/leverage-lab-math.ts",
+  "src/components/landing/format-decimal.ts",
 ];
 
 describe("financial number safeguards", () => {

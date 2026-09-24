@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { Surface } from "./Surface.tsx";
+
 export function Panel({
   title,
   children,
@@ -10,9 +12,9 @@ export function Panel({
   className?: string;
 }) {
   return (
-    <section className={`rounded-lg border border-app-border bg-app-bg p-4 ${className}`}>
-      {title ? <h2 className="mb-3 text-base">{title}</h2> : null}
+    <Surface as="section" variant="default" className={className}>
+      {title ? <h2 className="mb-3 font-heading text-base text-foreground">{title}</h2> : null}
       {children}
-    </section>
+    </Surface>
   );
 }

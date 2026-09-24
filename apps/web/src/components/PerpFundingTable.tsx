@@ -4,6 +4,7 @@ import { listPerpFunding } from "../lib/api/funding.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
+import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
 export function PerpFundingTable({ limit, offset }: { limit: number; offset: number }) {
   const query = useQuery({
@@ -12,7 +13,7 @@ export function PerpFundingTable({ limit, offset }: { limit: number; offset: num
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-app-text">Loading perpetual funding…</p>;
+    return <TableStatus>Loading perpetual funding…</TableStatus>;
   }
 
   if (query.error) {
@@ -26,33 +27,31 @@ export function PerpFundingTable({ limit, offset }: { limit: number; offset: num
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-left text-sm">
-        <thead>
-          <tr className="text-app-text">
-            <th className="py-2 pr-3">Funding time</th>
-            <th className="py-2 pr-3">Symbol</th>
-            <th className="py-2 pr-3">Mode</th>
-            <th className="py-2 pr-3">Quantity</th>
-            <th className="py-2 pr-3">Rate</th>
-            <th className="py-2 pr-3">Mark</th>
-            <th className="py-2 pr-3">Payment</th>
+    <DataTable>
+      <thead>
+        <tr>
+          <Th>Funding time</Th>
+          <Th>Symbol</Th>
+          <Th>Mode</Th>
+          <Th>Quantity</Th>
+          <Th>Rate</Th>
+          <Th>Mark</Th>
+          <Th>Payment</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.id}>
+            <Td>{row.fundingTime}</Td>
+            <Td>{row.symbol}</Td>
+            <Td>{row.marginMode}</Td>
+            <Td numeric>{row.quantity}</Td>
+            <Td numeric>{row.fundingRate}</Td>
+            <Td numeric>{row.markPrice}</Td>
+            <Td numeric>{row.fundingPayment}</Td>
           </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-t border-app-border text-app-heading">
-              <td className="py-2 pr-3">{row.fundingTime}</td>
-              <td className="py-2 pr-3">{row.symbol}</td>
-              <td className="py-2 pr-3">{row.marginMode}</td>
-              <td className="py-2 pr-3 tabular-nums">{row.quantity}</td>
-              <td className="py-2 pr-3 tabular-nums">{row.fundingRate}</td>
-              <td className="py-2 pr-3 tabular-nums">{row.markPrice}</td>
-              <td className="py-2 pr-3 tabular-nums">{row.fundingPayment}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }

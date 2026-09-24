@@ -4,6 +4,7 @@ import { listLiquidations } from "../lib/api/liquidations.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
+import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
 export function LiquidationsTable({ limit, offset }: { limit: number; offset: number }) {
   const query = useQuery({
@@ -12,7 +13,7 @@ export function LiquidationsTable({ limit, offset }: { limit: number; offset: nu
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-app-text">Loading liquidations…</p>;
+    return <TableStatus>Loading liquidations…</TableStatus>;
   }
 
   if (query.error) {
@@ -26,29 +27,27 @@ export function LiquidationsTable({ limit, offset }: { limit: number; offset: nu
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-left text-sm">
-        <thead>
-          <tr className="text-app-text">
-            <th className="py-2 pr-3">Time</th>
-            <th className="py-2 pr-3">Mode</th>
-            <th className="py-2 pr-3">Symbol</th>
-            <th className="py-2 pr-3">Equity snapshot</th>
-            <th className="py-2 pr-3">Maintenance</th>
+    <DataTable>
+      <thead>
+        <tr>
+          <Th>Time</Th>
+          <Th>Mode</Th>
+          <Th>Symbol</Th>
+          <Th>Equity snapshot</Th>
+          <Th>Maintenance</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((row) => (
+          <tr key={row.id}>
+            <Td>{row.createdAt}</Td>
+            <Td>{row.marginMode}</Td>
+            <Td>{row.symbol ?? "CROSS"}</Td>
+            <Td numeric>{row.equity}</Td>
+            <Td numeric>{row.maintenanceMargin}</Td>
           </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <tr key={row.id} className="border-t border-app-border text-app-heading">
-              <td className="py-2 pr-3">{row.createdAt}</td>
-              <td className="py-2 pr-3">{row.marginMode}</td>
-              <td className="py-2 pr-3">{row.symbol ?? "CROSS"}</td>
-              <td className="py-2 pr-3 tabular-nums">{row.equity}</td>
-              <td className="py-2 pr-3 tabular-nums">{row.maintenanceMargin}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }

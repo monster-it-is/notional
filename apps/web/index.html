@@ -5,7 +5,36 @@
   <meta charset="UTF-8" />
   <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Notional</title>
+  <meta
+      name="description"
+      content="Notional is a paper desk for crypto perpetual futures. Practice leverage, margin, and long or short positions with virtual USDT and live market data. No real capital is traded."
+    />
+  <title>Notional — Practice perpetual futures</title>
+  <script>
+    (function () {
+      try {
+        var stored = localStorage.getItem("notional.theme");
+        var media = window.matchMedia ? window.matchMedia("(prefers-color-scheme: dark)") : null;
+        var theme =
+          stored === "light" || stored === "dark"
+            ? stored
+            : media
+              ? media.matches
+                ? "dark"
+                : "light"
+              : "dark";
+        var root = document.documentElement;
+        root.classList.remove("light", "dark");
+        root.classList.add(theme);
+        root.style.colorScheme = theme;
+        root.dataset.theme = theme;
+      } catch (e) {
+        document.documentElement.classList.add("dark");
+        document.documentElement.style.colorScheme = "dark";
+        document.documentElement.dataset.theme = "dark";
+      }
+    })();
+  </script>
 </head>
 
 <body>

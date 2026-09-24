@@ -1,5 +1,6 @@
 import type { InstrumentResponse } from "@notional/contracts";
 
+import { FormField } from "./ui/FormField.tsx";
 import { Select } from "./ui/Select.tsx";
 
 export function SymbolSelector({
@@ -12,8 +13,7 @@ export function SymbolSelector({
   onChange: (symbol: string) => void;
 }) {
   return (
-    <label className="block text-sm">
-      <span className="mb-1 block text-app-text">Instrument</span>
+    <FormField label="Instrument">
       <Select
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value)}
@@ -26,6 +26,6 @@ export function SymbolSelector({
           </option>
         ))}
       </Select>
-    </label>
+    </FormField>
   );
 }

@@ -4,6 +4,7 @@ import { getWalletFunding } from "../lib/api/account.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
+import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
 export function WalletFundingTable({ limit, offset }: { limit: number; offset: number }) {
   const query = useQuery({
@@ -12,7 +13,7 @@ export function WalletFundingTable({ limit, offset }: { limit: number; offset: n
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-app-text">Loading wallet funding…</p>;
+    return <TableStatus>Loading wallet funding…</TableStatus>;
   }
 
   if (query.error) {
@@ -26,27 +27,25 @@ export function WalletFundingTable({ limit, offset }: { limit: number; offset: n
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-left text-sm">
-        <thead>
-          <tr className="text-app-text">
-            <th className="py-2 pr-3">Time</th>
-            <th className="py-2 pr-3">Type</th>
-            <th className="py-2 pr-3">Amount</th>
+    <DataTable>
+      <thead>
+        <tr>
+          <Th>Time</Th>
+          <Th>Type</Th>
+          <Th>Amount</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {events.map((event) => (
+          <tr key={event.id}>
+            <Td>{event.createdAt}</Td>
+            <Td>{event.type}</Td>
+            <Td numeric>
+              {event.amount} {event.currency}
+            </Td>
           </tr>
-        </thead>
-        <tbody>
-          {events.map((event) => (
-            <tr key={event.id} className="border-t border-app-border text-app-heading">
-              <td className="py-2 pr-3">{event.createdAt}</td>
-              <td className="py-2 pr-3">{event.type}</td>
-              <td className="py-2 pr-3 tabular-nums">
-                {event.amount} {event.currency}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }

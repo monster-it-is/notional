@@ -1,10 +1,11 @@
+import { NumericText } from "./ui/NumericText.tsx";
 import { useMarketStore } from "../stores/market-store.ts";
 
 export function MarketTicker({ symbol }: { symbol: string | null }) {
   const quote = useMarketStore((state) => (symbol ? state.quotes[symbol] : undefined));
 
   if (!symbol) {
-    return <p className="text-sm text-app-text">Select an instrument to see live market data.</p>;
+    return <p className="text-sm text-secondary">Select an instrument to see live market data.</p>;
   }
 
   return (
@@ -21,7 +22,7 @@ export function MarketTicker({ symbol }: { symbol: string | null }) {
             ? formatNextFunding(quote.mark.nextFundingTime)
             : undefined
         }
-        tabular={false}
+        numeric={false}
       />
     </dl>
   );
@@ -30,16 +31,20 @@ export function MarketTicker({ symbol }: { symbol: string | null }) {
 function TickerField({
   label,
   value,
-  tabular = true,
+  numeric = true,
 }: {
   label: string;
   value: string | undefined;
-  tabular?: boolean;
+  numeric?: boolean;
 }) {
   return (
     <div>
-      <dt className="text-xs uppercase tracking-wide text-app-text">{label}</dt>
-      <dd className={`text-app-heading ${tabular ? "tabular-nums" : ""}`}>{value ?? "—"}</dd>
+      <dt className="text-xs uppercase tracking-wide text-secondary">{label}</dt>
+      {numeric ? (
+        <NumericText as="dd">{value ?? "—"}</NumericText>
+      ) : (
+        <dd className="text-foreground">{value ?? "—"}</dd>
+      )}
     </div>
   );
 }

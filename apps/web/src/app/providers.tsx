@@ -5,6 +5,7 @@ import { authClient } from "../auth/auth-client.ts";
 import { isApiError } from "../lib/api/errors.ts";
 import { setUnauthorizedHandler } from "../lib/api/client.ts";
 import { configureRealtime, setRealtimeAuthHandlers, stopRealtime } from "../realtime/runtime.ts";
+import { ThemeProvider } from "../theme/ThemeProvider.tsx";
 import { AppRouter } from "./router.tsx";
 
 const queryClient = new QueryClient({
@@ -46,10 +47,12 @@ setUnauthorizedHandler(() => {
 
 export function AppProviders() {
   return (
-    <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <AppRouter />
-      </BrowserRouter>
-    </QueryClientProvider>
+    <ThemeProvider>
+      <QueryClientProvider client={queryClient}>
+        <BrowserRouter>
+          <AppRouter />
+        </BrowserRouter>
+      </QueryClientProvider>
+    </ThemeProvider>
   );
 }

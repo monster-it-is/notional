@@ -7,7 +7,7 @@ export function ProtectedRoute() {
   const location = useLocation();
 
   if (session.isPending) {
-    return <p className="p-6 text-sm text-app-text">Loading session…</p>;
+    return <p className="p-6 text-sm text-secondary">Loading session…</p>;
   }
 
   if (!session.data) {

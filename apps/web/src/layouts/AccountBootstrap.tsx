@@ -95,7 +95,7 @@ export function AccountBootstrap({ children }: { children: ReactNode }) {
     return (
       <AccountBootstrapContext.Provider value={value}>
         <Header signedIn />
-        <p className="p-6 text-sm text-app-text">Preparing paper account…</p>
+        <p className="p-6 text-sm text-secondary">Preparing paper account…</p>
       </AccountBootstrapContext.Provider>
     );
   }
@@ -105,7 +105,7 @@ export function AccountBootstrap({ children }: { children: ReactNode }) {
       <AccountBootstrapContext.Provider value={value}>
         <Header signedIn />
         <div className="mx-auto max-w-lg space-y-4 p-6">
-          <h1 className="text-xl">Paper account unavailable</h1>
+          <h1 className="text-xl text-foreground">Paper account unavailable</h1>
           <ErrorBanner error={error} />
           <Button type="button" variant="primary" onClick={retry}>
             Retry

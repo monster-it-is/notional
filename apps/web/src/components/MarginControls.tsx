@@ -45,7 +45,7 @@ export function MarginControls({
       {mutation.error ? <ErrorBanner error={mutation.error} /> : null}
       <div className="grid gap-3 sm:grid-cols-2">
         <label className="text-sm">
-          <span className="mb-1 block text-app-text">Margin mode</span>
+          <span className="mb-1 block text-secondary">Margin mode</span>
           <Select
             aria-label="Margin mode"
             value={settings?.marginMode ?? "CROSS"}
@@ -66,7 +66,7 @@ export function MarginControls({
           </Select>
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-app-text">Leverage</span>
+          <span className="mb-1 block text-secondary">Leverage</span>
           <Select
             aria-label="Leverage"
             value={settings ? String(settings.leverage) : "1"}
@@ -90,8 +90,8 @@ export function MarginControls({
           </Select>
         </label>
       </div>
-      {mutation.isPending ? <p className="text-xs text-app-text">Saving margin settings…</p> : null}
-      <p className="text-xs text-app-text">
+      {mutation.isPending ? <p className="text-xs text-secondary">Saving margin settings…</p> : null}
+      <p className="text-xs text-secondary">
         Margin mode and leverage can change only while the position is flat and there are no open
         orders.
       </p>

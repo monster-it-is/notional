@@ -20,9 +20,9 @@ export function ConnectionStatusChip({
             : "disconnected";
 
   return (
-    <span className="inline-flex items-center gap-1.5 text-xs text-app-text">
+    <span className="inline-flex items-center gap-1.5 text-xs text-secondary">
       <span
-        className={`h-2 w-2 rounded-full ${live ? "bg-app-success" : "bg-app-text"}`}
+        className={`h-2 w-2 rounded-full ${live ? "bg-accent" : "bg-muted"}`}
         aria-hidden="true"
       />
       {label} {text}

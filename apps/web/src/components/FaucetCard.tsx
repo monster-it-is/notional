@@ -5,6 +5,7 @@ import { isApiError } from "../lib/api/errors.ts";
 import { invalidateAfterFaucet } from "../realtime/invalidate.ts";
 import { Button } from "./ui/Button.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
+import { NumericText } from "./ui/NumericText.tsx";
 
 export function FaucetCard({
   lastFaucetClaimAt,
@@ -29,14 +30,14 @@ export function FaucetCard({
 
   return (
     <div className="space-y-3">
-      <p className="text-sm text-app-text">
+      <p className="text-sm text-secondary">
         Claim virtual USDT from the paper faucet. The amount is set by the server. Last claim:{" "}
-        <span className="tabular-nums text-app-heading">{lastFaucetClaimAt ?? "never"}</span>
+        <NumericText>{lastFaucetClaimAt ?? "never"}</NumericText>
       </p>
       {mutation.error ? <ErrorBanner error={mutation.error} /> : null}
       {cooldown ? (
-        <p className="text-sm text-app-text">
-          Next claim at <span className="tabular-nums">{cooldown}</span>
+        <p className="text-sm text-secondary">
+          Next claim at <NumericText>{cooldown}</NumericText>
         </p>
       ) : null}
       <Button

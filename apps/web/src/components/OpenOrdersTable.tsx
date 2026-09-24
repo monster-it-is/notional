@@ -7,6 +7,7 @@ import { invalidateAfterCancel } from "../realtime/invalidate.ts";
 import { Button } from "./ui/Button.tsx";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
+import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
 export function OpenOrdersTable({ symbol }: { symbol?: string }) {
   const queryClient = useQueryClient();
@@ -24,7 +25,7 @@ export function OpenOrdersTable({ symbol }: { symbol?: string }) {
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-app-text">Loading open orders…</p>;
+    return <TableStatus>Loading open orders…</TableStatus>;
   }
 
   if (query.error) {
@@ -38,18 +39,18 @@ export function OpenOrdersTable({ symbol }: { symbol?: string }) {
   }
 
   return (
-    <div className="overflow-x-auto">
+    <div className="space-y-3">
       {cancel.error ? <ErrorBanner error={cancel.error} /> : null}
-      <table className="min-w-full text-left text-sm">
+      <DataTable>
         <thead>
-          <tr className="text-app-text">
-            <th className="py-2 pr-3">Symbol</th>
-            <th className="py-2 pr-3">Side</th>
-            <th className="py-2 pr-3">Type</th>
-            <th className="py-2 pr-3">Quantity</th>
-            <th className="py-2 pr-3">Limit</th>
-            <th className="py-2 pr-3">Reduce</th>
-            <th className="py-2 pr-3">Action</th>
+          <tr>
+            <Th>Symbol</Th>
+            <Th>Side</Th>
+            <Th>Type</Th>
+            <Th>Quantity</Th>
+            <Th>Limit</Th>
+            <Th>Reduce</Th>
+            <Th>Action</Th>
           </tr>
         </thead>
         <tbody>
@@ -62,7 +63,7 @@ export function OpenOrdersTable({ symbol }: { symbol?: string }) {
             />
           ))}
         </tbody>
-      </table>
+      </DataTable>
     </div>
   );
 }
@@ -77,18 +78,18 @@ function OpenOrderRow({
   onCancel: () => void;
 }) {
   return (
-    <tr className="border-t border-app-border text-app-heading">
-      <td className="py-2 pr-3">{order.symbol}</td>
-      <td className="py-2 pr-3">{order.side}</td>
-      <td className="py-2 pr-3">{order.type}</td>
-      <td className="py-2 pr-3 tabular-nums">{order.quantity}</td>
-      <td className="py-2 pr-3 tabular-nums">{order.limitPrice ?? "—"}</td>
-      <td className="py-2 pr-3">{order.reduceOnly ? "yes" : "no"}</td>
-      <td className="py-2 pr-3">
-        <Button type="button" onClick={onCancel} disabled={pending}>
+    <tr>
+      <Td>{order.symbol}</Td>
+      <Td>{order.side}</Td>
+      <Td>{order.type}</Td>
+      <Td numeric>{order.quantity}</Td>
+      <Td numeric>{order.limitPrice ?? "—"}</Td>
+      <Td>{order.reduceOnly ? "yes" : "no"}</Td>
+      <Td>
+        <Button type="button" size="sm" onClick={onCancel} disabled={pending}>
           Cancel
         </Button>
-      </td>
+      </Td>
     </tr>
   );
 }

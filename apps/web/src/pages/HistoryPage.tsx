@@ -32,7 +32,7 @@ export function HistoryPage() {
       <Panel>
         <div className="mb-4 grid gap-3 md:grid-cols-3">
           <label className="text-sm">
-            <span className="mb-1 block">Symbol filter</span>
+          <span className="mb-1 block text-secondary">Symbol filter</span>
             <Input
               value={symbol}
               onChange={(event) => {
@@ -45,7 +45,7 @@ export function HistoryPage() {
           </label>
           {tab === "orders" ? (
             <label className="text-sm">
-              <span className="mb-1 block">Status</span>
+              <span className="mb-1 block text-secondary">Status</span>
               <Select
                 aria-label="Order status"
                 value={status}

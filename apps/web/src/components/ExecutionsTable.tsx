@@ -4,6 +4,7 @@ import { listExecutions } from "../lib/api/executions.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
+import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
 export function ExecutionsTable({
   symbol,
@@ -20,7 +21,7 @@ export function ExecutionsTable({
   });
 
   if (query.isLoading) {
-    return <p className="text-sm text-app-text">Loading executions…</p>;
+    return <TableStatus>Loading executions…</TableStatus>;
   }
 
   if (query.error) {
@@ -34,31 +35,29 @@ export function ExecutionsTable({
   }
 
   return (
-    <div className="overflow-x-auto">
-      <table className="min-w-full text-left text-sm">
-        <thead>
-          <tr className="text-app-text">
-            <th className="py-2 pr-3">Time</th>
-            <th className="py-2 pr-3">Symbol</th>
-            <th className="py-2 pr-3">Side</th>
-            <th className="py-2 pr-3">Type</th>
-            <th className="py-2 pr-3">Quantity</th>
-            <th className="py-2 pr-3">Price</th>
+    <DataTable>
+      <thead>
+        <tr>
+          <Th>Time</Th>
+          <Th>Symbol</Th>
+          <Th>Side</Th>
+          <Th>Type</Th>
+          <Th>Quantity</Th>
+          <Th>Price</Th>
+        </tr>
+      </thead>
+      <tbody>
+        {executions.map((execution) => (
+          <tr key={execution.id}>
+            <Td>{execution.executedAt}</Td>
+            <Td>{execution.symbol}</Td>
+            <Td>{execution.side}</Td>
+            <Td>{execution.orderType}</Td>
+            <Td numeric>{execution.quantity}</Td>
+            <Td numeric>{execution.price}</Td>
           </tr>
-        </thead>
-        <tbody>
-          {executions.map((execution) => (
-            <tr key={execution.id} className="border-t border-app-border text-app-heading">
-              <td className="py-2 pr-3">{execution.executedAt}</td>
-              <td className="py-2 pr-3">{execution.symbol}</td>
-              <td className="py-2 pr-3">{execution.side}</td>
-              <td className="py-2 pr-3">{execution.orderType}</td>
-              <td className="py-2 pr-3 tabular-nums">{execution.quantity}</td>
-              <td className="py-2 pr-3 tabular-nums">{execution.price}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+        ))}
+      </tbody>
+    </DataTable>
   );
 }

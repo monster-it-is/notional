@@ -1,38 +1,38 @@
-import { Link } from "react-router";
-
-import { authClient } from "../auth/auth-client.ts";
-import { Button } from "../components/ui/Button.tsx";
-import { PaperBadge } from "../components/PaperBadge.tsx";
+import { FaqSection } from "../components/landing/FaqSection.tsx";
+import { FinalCta } from "../components/landing/FinalCta.tsx";
+import { Capabilities } from "../components/landing/Capabilities.tsx";
+import { Hero } from "../components/landing/Hero.tsx";
+import { HowItWorks } from "../components/landing/HowItWorks.tsx";
+import { LandingFooter } from "../components/landing/LandingFooter.tsx";
+import { LandingMarketProvider } from "../components/landing/LandingMarket.tsx";
+import { LandingNavbar } from "../components/landing/LandingNavbar.tsx";
+import { LearningSection } from "../components/landing/LearningSection.tsx";
+import { LeverageLab } from "../components/landing/LeverageLab.tsx";
+import { RiskDisclosure } from "../components/landing/RiskDisclosure.tsx";
+import { TerminalShowcase } from "../components/landing/TerminalShowcase.tsx";
+import { ValueStrip } from "../components/landing/ValueStrip.tsx";
+import { WhyPaperTrading } from "../components/landing/WhyPaperTrading.tsx";
 
 export function LandingPage() {
-  const session = authClient.useSession();
-  const signedIn = Boolean(session.data);
-
   return (
-    <div className="space-y-6">
-      <PaperBadge />
-      <h1 className="text-4xl md:text-5xl">Notional paper perpetuals</h1>
-      <p>
-        Notional is a paper crypto perpetual-futures simulator. It is not a real exchange, wallet, or
-        real-money product. Prices come from Binance USD-M market data through Notional&apos;s backend —
-        this browser never talks to Binance.
-      </p>
-      <div className="flex flex-wrap gap-3">
-        {signedIn ? (
-          <Link to="/trade">
-            <Button variant="primary">Open trade desk</Button>
-          </Link>
-        ) : (
-          <>
-            <Link to="/signup">
-              <Button variant="primary">Create paper account</Button>
-            </Link>
-            <Link to="/signin">
-              <Button>Sign in</Button>
-            </Link>
-          </>
-        )}
+    <LandingMarketProvider>
+      <div className="landing-page overflow-x-clip bg-background text-secondary antialiased">
+        <LandingNavbar />
+        <main id="main">
+          <Hero />
+          <ValueStrip />
+          <WhyPaperTrading />
+          <Capabilities />
+          <LeverageLab />
+          <HowItWorks />
+          <TerminalShowcase />
+          <LearningSection />
+          <RiskDisclosure />
+          <FaqSection />
+          <FinalCta />
+        </main>
+        <LandingFooter />
       </div>
-    </div>
+    </LandingMarketProvider>
   );
 }
