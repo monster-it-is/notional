@@ -1,5 +1,6 @@
 import { Route, Routes } from "react-router";
 
+import { AuthLayout } from "../layouts/AuthLayout.tsx";
 import { AuthenticatedLayout } from "../layouts/AuthenticatedLayout.tsx";
 import { ProtectedRoute } from "../layouts/ProtectedRoute.tsx";
 import { PublicLayout } from "../layouts/PublicLayout.tsx";
@@ -16,6 +17,8 @@ export function AppRouter() {
     <Routes>
       <Route element={<PublicLayout />}>
         <Route path="/" element={<LandingPage />} />
+      </Route>
+      <Route element={<AuthLayout />}>
         <Route path="/signin" element={<SignInPage />} />
         <Route path="/signup" element={<SignUpPage />} />
       </Route>
