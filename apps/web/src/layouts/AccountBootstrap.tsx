@@ -5,7 +5,9 @@ import type { ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { runAccountBootstrap } from "../auth/account-bootstrap.ts";
-import { Header } from "../components/Header.tsx";
+import { AppBottomNav } from "../components/app/AppBottomNav.tsx";
+import { AppHeader } from "../components/app/AppHeader.tsx";
+import { APP_MAIN_CLASS } from "../components/app/app-nav.ts";
 import { Button } from "../components/ui/Button.tsx";
 import { ErrorBanner } from "../components/ui/ErrorBanner.tsx";
 import { useAccountSocket } from "../hooks/use-account-socket.ts";
@@ -94,8 +96,9 @@ export function AccountBootstrap({ children }: { children: ReactNode }) {
   if (status === "loading_account" || status === "initializing") {
     return (
       <AccountBootstrapContext.Provider value={value}>
-        <Header signedIn />
-        <p className="p-6 text-sm text-secondary">Preparing paper account…</p>
+        <BootstrapChrome>
+          <p className="text-sm text-secondary">Preparing paper account…</p>
+        </BootstrapChrome>
       </AccountBootstrapContext.Provider>
     );
   }
@@ -103,17 +106,30 @@ export function AccountBootstrap({ children }: { children: ReactNode }) {
   if (status === "error") {
     return (
       <AccountBootstrapContext.Provider value={value}>
-        <Header signedIn />
-        <div className="mx-auto max-w-lg space-y-4 p-6">
-          <h1 className="text-xl text-foreground">Paper account unavailable</h1>
-          <ErrorBanner error={error} />
-          <Button type="button" variant="primary" onClick={retry}>
-            Retry
-          </Button>
-        </div>
+        <BootstrapChrome>
+          <div className="mx-auto max-w-lg space-y-4">
+            <h1 className="text-xl text-foreground">Paper account unavailable</h1>
+            <ErrorBanner error={error} />
+            <Button type="button" variant="primary" onClick={retry}>
+              Retry
+            </Button>
+          </div>
+        </BootstrapChrome>
       </AccountBootstrapContext.Provider>
     );
   }
 
   return <AccountBootstrapContext.Provider value={value}>{children}</AccountBootstrapContext.Provider>;
+}
+
+function BootstrapChrome({ children }: { children: ReactNode }) {
+  return (
+    <div className="app-shell flex min-h-svh flex-col bg-background">
+      <AppHeader accountReady={false} />
+      <main className={APP_MAIN_CLASS} id="main">
+        {children}
+      </main>
+      <AppBottomNav />
+    </div>
+  );
 }

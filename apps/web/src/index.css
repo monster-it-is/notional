@@ -151,6 +151,24 @@ a:focus-visible {
   border-radius: 2px;
 }
 
+a.app-chrome-link,
+a.app-chrome-link:focus-visible {
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+a.app-chrome-link:hover,
+a.app-chrome-link[aria-current="page"] {
+  color: var(--text-primary);
+}
+
+a.app-chrome-link.app-chrome-brand,
+a.app-chrome-link.app-chrome-brand:hover,
+a.app-chrome-link.app-chrome-brand:focus-visible,
+a.app-chrome-link.app-chrome-brand[aria-current="page"] {
+  color: var(--text-primary);
+}
+
 input[type="checkbox"] {
   accent-color: var(--accent);
   width: 1rem;

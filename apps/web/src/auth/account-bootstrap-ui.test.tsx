@@ -5,6 +5,8 @@ import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { AccountBootstrap } from "../layouts/AccountBootstrap.tsx";
+import { ThemeProvider } from "../theme/ThemeProvider.tsx";
+import { THEME_STORAGE_KEY } from "../theme/theme.ts";
 
 const { acquire, runAccountBootstrap, useSession } = vi.hoisted(() => ({
   acquire: vi.fn(),
@@ -18,6 +20,7 @@ const { acquire, runAccountBootstrap, useSession } = vi.hoisted(() => ({
 vi.mock("../auth/auth-client.ts", () => ({
   authClient: {
     useSession: () => useSession(),
+    signOut: () => Promise.resolve({}),
   },
 }));
 
@@ -33,16 +36,23 @@ vi.mock("../hooks/use-account-socket.ts", () => ({
   },
 }));
 
+vi.mock("../realtime/runtime.ts", () => ({
+  stopRealtime: () => undefined,
+}));
+
 function renderBootstrap(children: ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
+  localStorage.setItem(THEME_STORAGE_KEY, "dark");
   return render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter>
-        <AccountBootstrap>{children}</AccountBootstrap>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <ThemeProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <AccountBootstrap>{children}</AccountBootstrap>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 }
 
@@ -50,6 +60,7 @@ describe("AccountBootstrap UI", () => {
   beforeEach(() => {
     acquire.mockReset();
     runAccountBootstrap.mockReset();
+    localStorage.setItem(THEME_STORAGE_KEY, "dark");
   });
 
   it("does not acquire the account socket until READY and hides children", async () => {
@@ -63,7 +74,12 @@ describe("AccountBootstrap UI", () => {
     renderBootstrap(<div>secret-trading</div>);
 
     expect(screen.getByText(/Preparing paper account/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Skip to content" })).toHaveAttribute("href", "#main");
+    expect(document.getElementById("main")).not.toBeNull();
     expect(screen.queryByText("secret-trading")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Wallet/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Account disconnected/)).not.toBeInTheDocument();
+    expect(screen.getAllByRole("navigation", { name: "Primary" }).length).toBeGreaterThan(0);
     expect(acquire).not.toHaveBeenCalled();
 
     resolve?.({
@@ -93,7 +109,9 @@ describe("AccountBootstrap UI", () => {
     renderBootstrap(<div>secret-trading</div>);
 
     expect(await screen.findByText("Paper account unavailable")).toBeInTheDocument();
+    expect(document.getElementById("main")).not.toBeNull();
     expect(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    expect(screen.getAllByRole("navigation", { name: "Primary" }).length).toBeGreaterThan(0);
     expect(screen.queryByText("secret-trading")).not.toBeInTheDocument();
     expect(acquire).not.toHaveBeenCalled();
   });
