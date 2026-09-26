@@ -1,7 +1,9 @@
-import type { OrderSide } from "@notional/contracts";
 import { useQuery } from "@tanstack/react-query";
+import { useEffect } from "react";
 
 import { listExecutions } from "../lib/api/executions.ts";
+import { formatTimestamp } from "../lib/format-timestamp.ts";
+import { orderSideClass } from "../lib/order-side-class.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
@@ -11,15 +13,33 @@ export function ExecutionsTable({
   symbol,
   limit = 20,
   offset = 0,
+  showOrderId = false,
+  onRowCountChange,
 }: {
   symbol?: string;
   limit?: number;
   offset?: number;
+  showOrderId?: boolean;
+  onRowCountChange?: (rowCount: number | null) => void;
 }) {
   const query = useQuery({
     queryKey: queryKeys.executions.list({ symbol, limit, offset }),
     queryFn: () => listExecutions({ symbol, limit, offset }),
   });
+  const executions = query.data?.executions ?? [];
+
+  useEffect(() => {
+    if (!onRowCountChange) {
+      return;
+    }
+
+    if (query.isSuccess) {
+      onRowCountChange(executions.length);
+      return;
+    }
+
+    onRowCountChange(null);
+  }, [onRowCountChange, executions.length, query.isSuccess]);
 
   if (query.isLoading) {
     return <TableStatus>Loading executions…</TableStatus>;
@@ -29,10 +49,8 @@ export function ExecutionsTable({
     return <ErrorBanner error={query.error} />;
   }
 
-  const executions = query.data?.executions ?? [];
-
   if (executions.length === 0) {
-    return <EmptyState>No executions.</EmptyState>;
+    return <EmptyState>{offset > 0 ? "No more executions." : "No executions."}</EmptyState>;
   }
 
   return (
@@ -45,6 +63,7 @@ export function ExecutionsTable({
           <Th>Type</Th>
           <Th>Quantity</Th>
           <Th>Price</Th>
+          {showOrderId ? <Th>Order</Th> : null}
         </tr>
       </thead>
       <tbody>
@@ -52,29 +71,14 @@ export function ExecutionsTable({
           <tr key={execution.id}>
             <Td>{formatTimestamp(execution.executedAt)}</Td>
             <Td>{execution.symbol}</Td>
-            <Td className={sideClass(execution.side)}>{execution.side}</Td>
+            <Td className={orderSideClass(execution.side)}>{execution.side}</Td>
             <Td>{execution.orderType}</Td>
             <Td numeric>{execution.quantity}</Td>
             <Td numeric>{execution.price}</Td>
+            {showOrderId ? <Td numeric>{execution.orderId}</Td> : null}
           </tr>
         ))}
       </tbody>
     </DataTable>
   );
-}
-
-function sideClass(side: OrderSide): string | undefined {
-  if (side === "BUY") {
-    return "text-positive";
-  }
-
-  if (side === "SELL") {
-    return "text-negative";
-  }
-
-  return undefined;
-}
-
-function formatTimestamp(value: string): string {
-  return value.replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }
