@@ -11,12 +11,16 @@ import {
   insertFilledOrderWithExecution,
   lockPaperAccountById,
   lockPositionByAccountAndInstrument,
+  updateMarginSettingsForFlatPosition,
 } from "@notional/db";
 import { endTestPool, resetTestTables, setPaperAccountStatusForTests } from "@notional/db/test";
+import { calculateUnrealizedPnl } from "@notional/trading";
 import type { FastifyInstance } from "fastify";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
 import { buildApp } from "./app.js";
+import type { MarketDataAccess } from "./market-data/coordinator.js";
+import { createMarketDataStore, type MarketDataStore } from "./market-data/market-data-store.js";
 import { upsertInstrumentWithFundingEvidence as upsertInstrumentBySymbol } from "./services/funding-test-fixtures.js";
 import { applyPositionForFillResult } from "./services/position-application.js";
 
@@ -130,17 +134,20 @@ describe("position api", () => {
       symbol: "BTCUSDT",
       quantity: "0.5",
       entryPrice: "65000.1",
+      markPrice: null,
+      unrealizedPnl: null,
       cumulativeRealizedPnl: "0",
+      marginMode: "CROSS",
+      leverage: 1,
       updatedAt: expect.stringMatching(ISO_PATTERN),
     } satisfies PositionResponse);
     expect(body.positions[1]?.quantity).toBe("-1.25");
     expect(body.positions[1]?.entryPrice).toBe("3000");
+    expect(body.positions[1]?.markPrice).toBeNull();
+    expect(body.positions[1]?.unrealizedPnl).toBeNull();
     expect(JSON.stringify(body)).not.toContain(ada.accountId);
     expect(JSON.stringify(body)).not.toContain(btc.id);
     expect(JSON.stringify(body)).not.toMatch(/"id":/);
-    expect(body.positions[0]).not.toHaveProperty("unrealizedPnl");
-    expect(body.positions[0]).not.toHaveProperty("markPrice");
-    expect(body.positions[0]).not.toHaveProperty("leverage");
   });
 
   it("omits persistent flat rows from the open list and 404s symbol lookup", async () => {
@@ -245,6 +252,236 @@ describe("position api", () => {
     expect(response.statusCode).toBe(200);
     expect((response.json() as PositionListResponse).positions).toHaveLength(1);
   });
+
+  it("returns fresh long mark and server-computed unrealized pnl", async () => {
+    await withMarketApp(
+      (store) => {
+        seedMark(store, "BTCUSDT", "110");
+      },
+      async (marketApp) => {
+        const { cookies, accountId } = await initializeUser(marketApp, "long-mark@example.com");
+        const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+        await openPosition(accountId, btc.id, {
+          quantity: "1",
+          executionPrice: "100",
+          idempotencyKey: "long-mark",
+        });
+
+        const response = await marketApp.inject({
+          method: "GET",
+          url: "/api/positions/BTCUSDT",
+          headers: authHeadersFromCookie(cookies),
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json() as PositionResponse;
+        expect(body.quantity).toBe("1");
+        expect(body.entryPrice).toBe("100");
+        expect(body.markPrice).toBe("110");
+        expect(body.unrealizedPnl).toBe(
+          calculateUnrealizedPnl({
+            positionQty: "1",
+            entryPrice: "100",
+            markPrice: "110",
+          }),
+        );
+      },
+    );
+  });
+
+  it("returns fresh short mark with the helper's pnl sign", async () => {
+    await withMarketApp(
+      (store) => {
+        seedMark(store, "BTCUSDT", "110");
+      },
+      async (marketApp) => {
+        const { cookies, accountId } = await initializeUser(marketApp, "short-mark@example.com");
+        const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+        await openPosition(accountId, btc.id, {
+          side: "SELL",
+          quantity: "1",
+          executionPrice: "100",
+          idempotencyKey: "short-mark",
+        });
+
+        const response = await marketApp.inject({
+          method: "GET",
+          url: "/api/positions/BTCUSDT",
+          headers: authHeadersFromCookie(cookies),
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json() as PositionResponse;
+        expect(body.quantity).toBe("-1");
+        expect(body.markPrice).toBe("110");
+        expect(body.unrealizedPnl).toBe(
+          calculateUnrealizedPnl({
+            positionQty: "-1",
+            entryPrice: "100",
+            markPrice: "110",
+          }),
+        );
+      },
+    );
+  });
+
+  it("keeps HTTP 200 when one listed mark is fresh and another is stale", async () => {
+    await withMarketApp(
+      (store) => {
+        seedMark(store, "BTCUSDT", "110", 70_000);
+        seedMark(store, "ETHUSDT", "3200", 1);
+      },
+      async (marketApp) => {
+        const { cookies, accountId } = await initializeUser(marketApp, "mixed-mark@example.com");
+        const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+        const eth = await upsertInstrumentBySymbol(db, sample("ETHUSDT", "ETH"));
+        await openPosition(accountId, btc.id, {
+          quantity: "1",
+          executionPrice: "100",
+          idempotencyKey: "mixed-btc",
+        });
+        await openPosition(accountId, eth.id, {
+          quantity: "1",
+          executionPrice: "3000",
+          idempotencyKey: "mixed-eth",
+        });
+
+        const response = await marketApp.inject({
+          method: "GET",
+          url: "/api/positions",
+          headers: authHeadersFromCookie(cookies),
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json() as PositionListResponse;
+        const btcRow = body.positions.find((row) => row.symbol === "BTCUSDT");
+        const ethRow = body.positions.find((row) => row.symbol === "ETHUSDT");
+        expect(btcRow?.markPrice).toBe("110");
+        expect(btcRow?.unrealizedPnl).toBe(
+          calculateUnrealizedPnl({
+            positionQty: "1",
+            entryPrice: "100",
+            markPrice: "110",
+          }),
+        );
+        expect(ethRow?.markPrice).toBeNull();
+        expect(ethRow?.unrealizedPnl).toBeNull();
+      },
+      { now: 70_000 },
+    );
+  });
+
+  it("returns the persisted position with null mark metrics when the symbol mark is missing", async () => {
+    await withMarketApp(
+      () => undefined,
+      async (marketApp) => {
+        const { cookies, accountId } = await initializeUser(marketApp, "missing-mark@example.com");
+        const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+        await openPosition(accountId, btc.id, {
+          quantity: "1",
+          executionPrice: "100",
+          idempotencyKey: "missing-mark",
+        });
+
+        const response = await marketApp.inject({
+          method: "GET",
+          url: "/api/positions/BTCUSDT",
+          headers: authHeadersFromCookie(cookies),
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json() as PositionResponse;
+        expect(body.symbol).toBe("BTCUSDT");
+        expect(body.quantity).toBe("1");
+        expect(body.entryPrice).toBe("100");
+        expect(body.markPrice).toBeNull();
+        expect(body.unrealizedPnl).toBeNull();
+      },
+    );
+  });
+
+  it("maps persisted margin mode and leverage onto the position response", async () => {
+    await withMarketApp(
+      () => undefined,
+      async (marketApp) => {
+        const { cookies, accountId } = await initializeUser(marketApp, "margin-pos@example.com");
+        const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+        await db.transaction(async (tx) => {
+          await lockPaperAccountById(tx, accountId);
+          await ensurePosition(tx, accountId, btc.id);
+          const position = await lockPositionByAccountAndInstrument(tx, accountId, btc.id);
+          await updateMarginSettingsForFlatPosition(tx, position.id, {
+            marginMode: "ISOLATED",
+            leverage: 20,
+          });
+        });
+        await openPosition(accountId, btc.id, {
+          quantity: "1",
+          executionPrice: "100",
+          idempotencyKey: "margin-pos",
+        });
+
+        const response = await marketApp.inject({
+          method: "GET",
+          url: "/api/positions/BTCUSDT",
+          headers: authHeadersFromCookie(cookies),
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json() as PositionResponse;
+        expect(body.marginMode).toBe("ISOLATED");
+        expect(body.leverage).toBe(20);
+      },
+    );
+  });
+
+  it("keeps cumulative realized pnl unchanged when mark metrics are present", async () => {
+    await withMarketApp(
+      (store) => {
+        seedMark(store, "BTCUSDT", "210");
+      },
+      async (marketApp) => {
+        const { cookies, accountId } = await initializeUser(marketApp, "cum-pnl@example.com");
+        const btc = await upsertInstrumentBySymbol(db, sample("BTCUSDT", "BTC"));
+        await openPosition(accountId, btc.id, {
+          quantity: "1",
+          executionPrice: "100",
+          idempotencyKey: "cum-open",
+        });
+        await openPosition(accountId, btc.id, {
+          side: "SELL",
+          quantity: "1",
+          executionPrice: "130",
+          idempotencyKey: "cum-close",
+        });
+        await openPosition(accountId, btc.id, {
+          quantity: "1",
+          executionPrice: "200",
+          idempotencyKey: "cum-reopen",
+        });
+
+        const response = await marketApp.inject({
+          method: "GET",
+          url: "/api/positions/BTCUSDT",
+          headers: authHeadersFromCookie(cookies),
+        });
+
+        expect(response.statusCode).toBe(200);
+        const body = response.json() as PositionResponse;
+        expect(body.cumulativeRealizedPnl).toBe("30");
+        expect(body.quantity).toBe("1");
+        expect(body.entryPrice).toBe("200");
+        expect(body.markPrice).toBe("210");
+        expect(body.unrealizedPnl).toBe(
+          calculateUnrealizedPnl({
+            positionQty: "1",
+            entryPrice: "200",
+            markPrice: "210",
+          }),
+        );
+      },
+    );
+  });
 });
 
 async function openPosition(
@@ -344,4 +581,57 @@ function authHeadersFromCookie(cookie: string) {
 
 function cookieHeader(response: { cookies: Array<{ name: string; value: string }> }) {
   return response.cookies.map((cookie) => `${cookie.name}=${cookie.value}`).join("; ");
+}
+
+async function withMarketApp(
+  seed: (store: MarketDataStore) => void,
+  run: (marketApp: FastifyInstance) => Promise<void>,
+  options: { now?: number } = {},
+) {
+  const now = options.now ?? 1_000;
+  const store = createMarketDataStore({ now: () => now });
+  seed(store);
+  const marketApp = await buildApp({ marketData: accessFromStore(store) });
+  try {
+    await run(marketApp);
+  } finally {
+    await marketApp.close();
+  }
+}
+
+function accessFromStore(store: MarketDataStore): MarketDataAccess {
+  return {
+    getFreshMark(symbol) {
+      return store.getFreshMark(symbol, 60_000);
+    },
+    getFreshBook(symbol) {
+      return store.getFreshBook(symbol, 60_000);
+    },
+    getReadySnapshot() {
+      return null;
+    },
+    getStatus() {
+      return {
+        catalogSyncOk: true,
+        catalogSyncedAt: 1,
+        marketWsConnected: true,
+        publicWsConnected: true,
+        readySymbolCount: 1,
+      };
+    },
+  };
+}
+
+function seedMark(store: MarketDataStore, symbol: string, markPrice: string, receivedAt = 1_000) {
+  store.applyMark(
+    {
+      symbol,
+      markPrice,
+      indexPrice: markPrice,
+      fundingRate: "0",
+      nextFundingTime: 1,
+      markEventTime: receivedAt,
+    },
+    receivedAt,
+  );
 }

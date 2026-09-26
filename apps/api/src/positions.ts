@@ -10,15 +10,19 @@ import {
   findPaperAccountByUserId,
   findSignupAllocationFundingEvent,
   listOpenPositionsByPaperAccountId,
+  type PositionWithSymbol,
 } from "@notional/db";
-import { toCanonicalDecimalString } from "@notional/trading";
+import { calculateUnrealizedPnl, toCanonicalDecimalString } from "@notional/trading";
 import type { FastifyReply, FastifyRequest } from "fastify";
+
+import type { MarketDataAccess } from "./market-data/coordinator.js";
 
 const CANONICAL_SYMBOL = /^[A-Z0-9]+$/;
 
 export async function getPositions(
   request: FastifyRequest,
   reply: FastifyReply,
+  marketData: MarketDataAccess,
 ): Promise<PositionListResponse | AccountNotInitializedError | { error: string }> {
   const session = request.auth;
 
@@ -35,13 +39,14 @@ export async function getPositions(
   const rows = await listOpenPositionsByPaperAccountId(db, initialized.account.id);
 
   return {
-    positions: rows.map(toPositionResponse),
+    positions: rows.map((row) => toPositionResponse(row, marketData)),
   };
 }
 
 export async function getPositionBySymbol(
   request: FastifyRequest,
   reply: FastifyReply,
+  marketData: MarketDataAccess,
 ): Promise<
   PositionResponse | AccountNotInitializedError | PositionNotFoundError | { error: string }
 > {
@@ -69,7 +74,7 @@ export async function getPositionBySymbol(
     return reply.status(404).send({ error: "POSITION_NOT_FOUND" });
   }
 
-  return toPositionResponse(row);
+  return toPositionResponse(row, marketData);
 }
 
 async function loadInitializedAccount(userId: string) {
@@ -88,22 +93,32 @@ async function loadInitializedAccount(userId: string) {
   return { account };
 }
 
-function toPositionResponse(row: {
-  symbol: string;
-  quantity: string;
-  entryPrice: string | null;
-  realizedPnl: string;
-  updatedAt: Date;
-}): PositionResponse {
+function toPositionResponse(row: PositionWithSymbol, marketData: MarketDataAccess): PositionResponse {
   if (row.entryPrice === null) {
     throw new Error("open position requires entryPrice");
   }
 
+  const quantity = toCanonicalDecimalString(row.quantity);
+  const entryPrice = toCanonicalDecimalString(row.entryPrice);
+  const freshMark = marketData.getFreshMark(row.symbol);
+  const markPrice = freshMark ? toCanonicalDecimalString(freshMark.markPrice) : null;
+
   return {
     symbol: row.symbol,
-    quantity: toCanonicalDecimalString(row.quantity),
-    entryPrice: toCanonicalDecimalString(row.entryPrice),
+    quantity,
+    entryPrice,
+    markPrice,
+    unrealizedPnl:
+      markPrice === null
+        ? null
+        : calculateUnrealizedPnl({
+            positionQty: quantity,
+            entryPrice,
+            markPrice,
+          }),
     cumulativeRealizedPnl: toCanonicalDecimalString(row.realizedPnl),
+    marginMode: row.marginMode,
+    leverage: row.leverage,
     updatedAt: toIsoString(row.updatedAt),
   };
 }

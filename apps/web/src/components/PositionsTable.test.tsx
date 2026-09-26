@@ -1,4 +1,4 @@
-import type { OrderResponse } from "@notional/contracts";
+import type { OrderResponse, PositionResponse } from "@notional/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -42,16 +42,21 @@ describe("PositionsTable", () => {
     expect(await screen.findByText("No open positions.")).toBeInTheDocument();
   });
 
+  it("shows ErrorBanner when the initial positions request fails with no cached data", async () => {
+    mocked.mockRejectedValue(new Error("positions down"));
+    render(<PositionsTable />, { wrapper });
+    expect(await screen.findByRole("alert")).toHaveTextContent("positions down");
+    expect(screen.queryByText("No open positions.")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
   it("renders signed quantity as LONG/SHORT without float conversion", async () => {
     mocked.mockResolvedValue({
       positions: [
-        {
-          symbol: "BTCUSDT",
-          quantity: "-0.5",
-          entryPrice: "100",
+        position("BTCUSDT", "-0.5", {
           cumulativeRealizedPnl: "1.25",
-          updatedAt: "t",
-        },
+        }),
       ],
     });
     render(<PositionsTable />, { wrapper });
@@ -65,27 +70,9 @@ describe("PositionsTable", () => {
   it("classifies realized PnL sign and keeps the original decimal string", async () => {
     mocked.mockResolvedValue({
       positions: [
-        {
-          symbol: "ETHUSDT",
-          quantity: "1",
-          entryPrice: "10",
-          cumulativeRealizedPnl: "-1.25",
-          updatedAt: "t",
-        },
-        {
-          symbol: "SOLUSDT",
-          quantity: "2",
-          entryPrice: "10",
-          cumulativeRealizedPnl: "0",
-          updatedAt: "t",
-        },
-        {
-          symbol: "BNBUSDT",
-          quantity: "3",
-          entryPrice: "10",
-          cumulativeRealizedPnl: "-0",
-          updatedAt: "t",
-        },
+        position("ETHUSDT", "1", { entryPrice: "10", cumulativeRealizedPnl: "-1.25" }),
+        position("SOLUSDT", "2", { entryPrice: "10", cumulativeRealizedPnl: "0" }),
+        position("BNBUSDT", "3", { entryPrice: "10", cumulativeRealizedPnl: "-0" }),
       ],
     });
     render(<PositionsTable />, { wrapper });
@@ -98,15 +85,119 @@ describe("PositionsTable", () => {
     expect(negativeZero.className).not.toContain("text-negative");
     expect(negativeZero.className).not.toContain("text-positive");
   });
+
+  it("renders mark, unrealized pnl, mode, leverage, and cumulative realized copy", async () => {
+    mocked.mockResolvedValue({
+      positions: [
+        position("BTCUSDT", "1", {
+          markPrice: "110",
+          unrealizedPnl: "10",
+          cumulativeRealizedPnl: "4",
+          marginMode: "CROSS",
+          leverage: 5,
+        }),
+      ],
+    });
+    render(<PositionsTable />, { wrapper });
+    expect(await screen.findByText("BTCUSDT")).toBeInTheDocument();
+    expect(screen.getByText("110")).toBeInTheDocument();
+    const unrealized = screen.getByText("10");
+    expect(unrealized.className).toContain("text-positive");
+    expect(screen.getByText("4")).toBeInTheDocument();
+    expect(screen.getByText("CROSS")).toBeInTheDocument();
+    expect(screen.getByText("5x")).toBeInTheDocument();
+    expect(screen.getByText("Cumulative realized")).toBeInTheDocument();
+    expect(screen.getByText("Cumulative realized")).toHaveAttribute(
+      "title",
+      "Lifetime realized PnL for this symbol, including earlier reductions. Not this leg only.",
+    );
+    expect(screen.getByRole("button", { name: "Close BTCUSDT" })).toBeEnabled();
+  });
+
+  it("renders em dashes for null mark and unrealized pnl", async () => {
+    mocked.mockResolvedValue({
+      positions: [position("ETHUSDT", "2", { marginMode: "ISOLATED", leverage: 20 })],
+    });
+    render(<PositionsTable />, { wrapper });
+    expect(await screen.findByText("ETHUSDT")).toBeInTheDocument();
+    const dashes = screen.getAllByText("—");
+    expect(dashes).toHaveLength(2);
+    expect(dashes[0]?.className).not.toContain("text-positive");
+    expect(dashes[0]?.className).not.toContain("text-negative");
+    expect(dashes[1]?.className).not.toContain("text-positive");
+    expect(dashes[1]?.className).not.toContain("text-negative");
+    expect(screen.getByText("ISOLATED")).toBeInTheDocument();
+    expect(screen.getByText("20x")).toBeInTheDocument();
+  });
+
+  it("classifies unrealized pnl sign without changing the returned string", async () => {
+    mocked.mockResolvedValue({
+      positions: [
+        position("BTCUSDT", "1", { markPrice: "110", unrealizedPnl: "12.5" }),
+        position("ETHUSDT", "-1", { markPrice: "110", unrealizedPnl: "-9.25" }),
+        position("SOLUSDT", "1", {
+          markPrice: "100",
+          unrealizedPnl: "0",
+          cumulativeRealizedPnl: "3",
+        }),
+      ],
+    });
+    render(<PositionsTable />, { wrapper });
+    const gain = await screen.findByText("12.5");
+    expect(gain.className).toContain("text-positive");
+    const loss = screen.getByText("-9.25");
+    expect(loss.className).toContain("text-negative");
+    const solRow = screen.getByText("SOLUSDT").closest("tr");
+    expect(solRow).not.toBeNull();
+    const zero = within(solRow as HTMLElement).getByText("0");
+    expect(zero.className).not.toContain("text-positive");
+    expect(zero.className).not.toContain("text-negative");
+  });
+
+  it("polls positions every second while mounted and stops after unmount", async () => {
+    mocked.mockResolvedValue({ positions: [] });
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { unmount } = render(
+      <QueryClientProvider client={client}>
+        <PositionsTable />
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByText("No open positions.")).toBeInTheDocument();
+    const query = client.getQueryCache().find({ queryKey: queryKeys.positions.all });
+    expect(query).toBeDefined();
+    const observerOptions = (
+      query as unknown as {
+        observers: Array<{
+          options: { staleTime?: number; refetchInterval?: number | false };
+        }>;
+      }
+    ).observers[0]?.options;
+    expect(observerOptions?.staleTime).toBe(0);
+    expect(observerOptions?.refetchInterval).toBe(1000);
+    expect(query?.getObserversCount()).toBeGreaterThan(0);
+    unmount();
+    expect(query?.getObserversCount()).toBe(0);
+  });
 });
 
-function position(symbol: string, quantity: string) {
+function position(
+  symbol: string,
+  quantity: string,
+  overrides: Partial<PositionResponse> = {},
+): PositionResponse {
   return {
     symbol,
     quantity,
     entryPrice: "100",
+    markPrice: null,
+    unrealizedPnl: null,
     cumulativeRealizedPnl: "0",
+    marginMode: "CROSS",
+    leverage: 1,
     updatedAt: "t",
+    ...overrides,
   };
 }
 
@@ -149,6 +240,35 @@ describe("PositionsTable close", () => {
     mockedOrders.mockReset();
     mockedPlace.mockReset();
     mockedOrders.mockResolvedValue({ orders: [] });
+  });
+
+  it("keeps an idle close confirmation when a background positions refetch fails", async () => {
+    const user = userEvent.setup();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    const { client } = renderPositions();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    const dialog = await screen.findByRole("dialog", { name: "Close BTCUSDT" });
+
+    mocked.mockRejectedValue(new Error("positions refresh failed"));
+    await client.refetchQueries({ queryKey: queryKeys.positions.all });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("positions refresh failed");
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Confirm close" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Close BTCUSDT" })).toBeEnabled();
+    expect(screen.getByRole("cell", { name: "1.25" })).toBeInTheDocument();
+    expect(mockedPlace).not.toHaveBeenCalled();
+
+    mocked.mockResolvedValue({
+      positions: [position("BTCUSDT", "1.25", { markPrice: "110", unrealizedPnl: "12.5" })],
+    });
+    await client.refetchQueries({ queryKey: queryKeys.positions.all });
+
+    expect(await screen.findByText("110")).toBeInTheDocument();
+    expect(screen.queryByText("positions refresh failed")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
+    expect(mockedPlace).not.toHaveBeenCalled();
   });
 
   it("does not offer Close for a flat quantity", async () => {
@@ -383,6 +503,24 @@ describe("PositionsTable close", () => {
     expect(screen.queryByText(/This symbol has reduce-only open orders/)).not.toBeInTheDocument();
     await user.click(confirm);
     await waitFor(() => expect(mockedPlace).toHaveBeenCalledTimes(1));
+  });
+
+  it("does not treat mark or unrealized pnl refresh as a stale close", async () => {
+    const user = userEvent.setup();
+    const open = position("BTCUSDT", "1.25");
+    mocked.mockResolvedValue({ positions: [open] });
+    mockedPlace.mockResolvedValue(filledClose("SELL", "1.25"));
+    const { client } = renderPositions();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    client.setQueryData(queryKeys.positions.all, {
+      positions: [{ ...open, markPrice: "110", unrealizedPnl: "12.5" }],
+    });
+    expect(await screen.findByText("110")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Confirm close" }));
+    await waitFor(() => expect(mockedPlace).toHaveBeenCalledTimes(1));
+    expect(
+      screen.queryByText("Position changed. Cancel and reopen Close to review the current size."),
+    ).not.toBeInTheDocument();
   });
 
   it("does not submit a close after the cached position quantity changes", async () => {

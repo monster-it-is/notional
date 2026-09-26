@@ -15,6 +15,9 @@ import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
 import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
+const CUMULATIVE_REALIZED_HELP =
+  "Lifetime realized PnL for this symbol, including earlier reductions. Not this leg only.";
+
 export function PositionsTable({
   disabled = false,
   onClosePendingChange,
@@ -25,6 +28,8 @@ export function PositionsTable({
   const query = useQuery({
     queryKey: queryKeys.positions.all,
     queryFn: listPositions,
+    staleTime: 0,
+    refetchInterval: 1000,
   });
   const [selection, setSelection] = useState<{
     symbol: string;
@@ -52,14 +57,16 @@ export function PositionsTable({
     return <TableStatus>Loading positions…</TableStatus>;
   }
 
-  if (query.error) {
+  if (query.isLoadingError) {
     return <ErrorBanner error={query.error} />;
   }
 
   const positions = query.data?.positions ?? [];
+  const refetchError = query.isRefetchError ? query.error : null;
 
   return (
     <div className="space-y-3">
+      {refetchError ? <ErrorBanner error={refetchError} /> : null}
       {selection ? (
         <ClosePositionConfirm
           key={`${selection.symbol}:${selection.signedQuantity}`}
@@ -80,7 +87,11 @@ export function PositionsTable({
               <Th>Side</Th>
               <Th>Quantity</Th>
               <Th>Entry</Th>
-              <Th>Realized PnL</Th>
+              <Th>Mark</Th>
+              <Th>Unrealized PnL</Th>
+              <Th title={CUMULATIVE_REALIZED_HELP}>Cumulative realized</Th>
+              <Th>Mode</Th>
+              <Th>Leverage</Th>
               <Th>Updated</Th>
               <Th>Action</Th>
             </tr>
@@ -88,7 +99,11 @@ export function PositionsTable({
           <tbody>
             {positions.map((position) => {
               const side = positionSideFromQuantity(position.quantity);
-              const pnlSign = decimalVisualSign(position.cumulativeRealizedPnl);
+              const realizedSign = decimalVisualSign(position.cumulativeRealizedPnl);
+              const unrealizedSign =
+                position.unrealizedPnl === null
+                  ? "zero"
+                  : decimalVisualSign(position.unrealizedPnl);
 
               return (
                 <tr key={position.symbol}>
@@ -96,9 +111,15 @@ export function PositionsTable({
                   <Td className={sideClass(side)}>{side}</Td>
                   <Td numeric>{position.quantity}</Td>
                   <Td numeric>{position.entryPrice}</Td>
-                  <Td numeric className={pnlClass(pnlSign)}>
+                  <Td numeric>{position.markPrice ?? "—"}</Td>
+                  <Td numeric className={pnlClass(unrealizedSign)}>
+                    {position.unrealizedPnl ?? "—"}
+                  </Td>
+                  <Td numeric className={pnlClass(realizedSign)}>
                     {position.cumulativeRealizedPnl}
                   </Td>
+                  <Td>{position.marginMode}</Td>
+                  <Td numeric>{`${position.leverage}x`}</Td>
                   <Td>{formatTimestamp(position.updatedAt)}</Td>
                   <Td>
                     {side === "FLAT" ? null : (

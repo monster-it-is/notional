@@ -1,4 +1,4 @@
-import type { InstrumentResponse } from "@notional/contracts";
+import type { InstrumentResponse, PositionResponse } from "@notional/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -11,6 +11,7 @@ import { listInstruments } from "../lib/api/instruments.ts";
 import { getMarginSettings } from "../lib/api/margin.ts";
 import { cancelOrder, listOrders, placeOrder } from "../lib/api/orders.ts";
 import { listPositions } from "../lib/api/positions.ts";
+import { queryKeys } from "../lib/query-keys.ts";
 
 const { setDesiredSymbol } = vi.hoisted(() => ({
   setDesiredSymbol: vi.fn(),
@@ -85,7 +86,7 @@ function renderTrade({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
 
-  return render(
+  const view = render(
     <QueryClientProvider client={client}>
       <MemoryRouter initialEntries={[path]}>
         <Routes>
@@ -96,6 +97,23 @@ function renderTrade({
       </MemoryRouter>
     </QueryClientProvider>,
   );
+
+  return { client, ...view };
+}
+
+function tradePosition(overrides: Partial<PositionResponse> = {}): PositionResponse {
+  return {
+    symbol: "BTCUSDT",
+    quantity: "1.5",
+    entryPrice: "100",
+    markPrice: null,
+    unrealizedPnl: null,
+    cumulativeRealizedPnl: "0",
+    marginMode: "CROSS",
+    leverage: 1,
+    updatedAt: "t",
+    ...overrides,
+  };
 }
 
 describe("TradePage", () => {
@@ -232,32 +250,128 @@ describe("TradePage", () => {
 
   it("disables position Close while the account is suspended", async () => {
     mockedPositions.mockResolvedValue({
-      positions: [
-        {
-          symbol: "BTCUSDT",
-          quantity: "1.5",
-          entryPrice: "100",
-          cumulativeRealizedPnl: "0",
-          updatedAt: "t",
-        },
-      ],
+      positions: [tradePosition()],
     });
     renderTrade({ suspended: true });
     expect(await screen.findByRole("button", { name: "Close BTCUSDT" })).toBeDisabled();
   });
 
+  it("keeps a pending close mounted when a background positions refetch fails", async () => {
+    const user = userEvent.setup();
+    let resolveClose: (order: Awaited<ReturnType<typeof placeOrder>>) => void = () => undefined;
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition()],
+    });
+    mockedPlace.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
+    const { client } = renderTrade();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    const dialog = screen.getByRole("dialog", { name: "Close BTCUSDT" });
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    const idempotencyKey = mockedPlace.mock.calls[0]?.[1];
+
+    mockedPositions.mockRejectedValue(new Error("positions refresh failed"));
+    await client.refetchQueries({ queryKey: queryKeys.positions.all });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("positions refresh failed");
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Confirm close" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close BTCUSDT" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Open orders" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Recent executions" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Positions" })).toBeEnabled();
+    expect(screen.getByRole("cell", { name: "1.5" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Open orders" }));
+    await user.click(screen.getByRole("tab", { name: "Recent executions" }));
+    expect(screen.getByRole("tab", { name: "Positions" })).toHaveAttribute("aria-selected", "true");
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    expect(mockedPlace.mock.calls[0]?.[1]).toBe(idempotencyKey);
+
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition({ markPrice: "110", unrealizedPnl: "15" })],
+    });
+    await client.refetchQueries({ queryKey: queryKeys.positions.all });
+
+    expect(await screen.findByText("110")).toBeInTheDocument();
+    expect(screen.queryByText("positions refresh failed")).not.toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Confirm close" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Open orders" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Recent executions" })).toBeDisabled();
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    expect(mockedPlace.mock.calls[0]?.[1]).toBe(idempotencyKey);
+
+    resolveClose({
+      id: "close-1",
+      symbol: "BTCUSDT",
+      side: "SELL",
+      type: "MARKET",
+      quantity: "1.5",
+      limitPrice: null,
+      reduceOnly: true,
+      status: "FILLED",
+      origin: "USER",
+      createdAt: "t",
+      updatedAt: "t",
+    });
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(screen.getByRole("tab", { name: "Open orders" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: "Recent executions" })).toBeEnabled();
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    expect(mockedPlace.mock.calls[0]?.[1]).toBe(idempotencyKey);
+    await user.click(screen.getByRole("tab", { name: "Open orders" }));
+    expect(await screen.findByText("No open orders.")).toBeInTheDocument();
+  });
+
+  it("retries the same close intent after a refetch failure during a pending close", async () => {
+    const user = userEvent.setup();
+    let rejectClose: (reason: unknown) => void = () => undefined;
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition()],
+    });
+    mockedPlace.mockImplementation(
+      () =>
+        new Promise((_resolve, reject) => {
+          rejectClose = reject;
+        }),
+    );
+    const { client } = renderTrade();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    const dialog = screen.getByRole("dialog", { name: "Close BTCUSDT" });
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+
+    mockedPositions.mockRejectedValue(new Error("positions refresh failed"));
+    await client.refetchQueries({ queryKey: queryKeys.positions.all });
+    expect(await screen.findByText("positions refresh failed")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Confirm close" })).toBeDisabled();
+
+    rejectClose(new Error("network"));
+    expect(await screen.findByText("network")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Confirm close" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: "Open orders" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: "Recent executions" })).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Confirm close" }));
+    await waitFor(() => expect(mockedPlace).toHaveBeenCalledTimes(2));
+    expect(mockedPlace.mock.calls[1]?.[1]).toBe(mockedPlace.mock.calls[0]?.[1]);
+    expect(mockedPlace.mock.calls[1]?.[0]).toEqual(mockedPlace.mock.calls[0]?.[0]);
+  });
+
   it("keeps Positions mounted while a close POST is pending", async () => {
     const user = userEvent.setup();
     mockedPositions.mockResolvedValue({
-      positions: [
-        {
-          symbol: "BTCUSDT",
-          quantity: "1.5",
-          entryPrice: "100",
-          cumulativeRealizedPnl: "0",
-          updatedAt: "t",
-        },
-      ],
+      positions: [tradePosition()],
     });
     mockedPlace.mockReturnValue(new Promise(() => undefined));
     renderTrade();
@@ -277,15 +391,7 @@ describe("TradePage", () => {
   it("allows Trade tab changes after a failed close", async () => {
     const user = userEvent.setup();
     mockedPositions.mockResolvedValue({
-      positions: [
-        {
-          symbol: "BTCUSDT",
-          quantity: "1.5",
-          entryPrice: "100",
-          cumulativeRealizedPnl: "0",
-          updatedAt: "t",
-        },
-      ],
+      positions: [tradePosition()],
     });
     mockedPlace.mockRejectedValue(new Error("network"));
     renderTrade();
@@ -303,15 +409,7 @@ describe("TradePage", () => {
   it("allows Trade tab changes after a successful close", async () => {
     const user = userEvent.setup();
     mockedPositions.mockResolvedValue({
-      positions: [
-        {
-          symbol: "BTCUSDT",
-          quantity: "1.5",
-          entryPrice: "100",
-          cumulativeRealizedPnl: "0",
-          updatedAt: "t",
-        },
-      ],
+      positions: [tradePosition()],
     });
     mockedPlace.mockResolvedValue({
       id: "close-1",
@@ -339,15 +437,7 @@ describe("TradePage", () => {
   it("still allows tab changes while an idle Close confirmation is open", async () => {
     const user = userEvent.setup();
     mockedPositions.mockResolvedValue({
-      positions: [
-        {
-          symbol: "BTCUSDT",
-          quantity: "1.5",
-          entryPrice: "100",
-          cumulativeRealizedPnl: "0",
-          updatedAt: "t",
-        },
-      ],
+      positions: [tradePosition()],
     });
     renderTrade();
     await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
@@ -357,5 +447,17 @@ describe("TradePage", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
     expect(await screen.findByText("No open orders.")).toBeInTheDocument();
     expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("unmounts Positions when leaving the Positions tab", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition()],
+    });
+    renderTrade();
+    expect(await screen.findByRole("button", { name: "Close BTCUSDT" })).toBeInTheDocument();
+    await user.click(screen.getByRole("tab", { name: "Open orders" }));
+    expect(screen.queryByRole("button", { name: "Close BTCUSDT" })).not.toBeInTheDocument();
+    expect(await screen.findByText("No open orders.")).toBeInTheDocument();
   });
 });

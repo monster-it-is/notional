@@ -164,8 +164,12 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.get("/api/executions", { preHandler: authed("reads") }, getExecutions);
   app.get("/api/executions/:id", { preHandler: authed("reads") }, getExecutionById);
   app.get("/api/liquidations", { preHandler: authed("reads") }, getLiquidations);
-  app.get("/api/positions", { preHandler: authed("reads") }, getPositions);
-  app.get("/api/positions/:symbol", { preHandler: authed("reads") }, getPositionBySymbol);
+  app.get("/api/positions", { preHandler: authed("reads") }, (request, reply) =>
+    getPositions(request, reply, marketData),
+  );
+  app.get("/api/positions/:symbol", { preHandler: authed("reads") }, (request, reply) =>
+    getPositionBySymbol(request, reply, marketData),
+  );
   app.get("/api/margin-settings/:symbol", { preHandler: authed("reads") }, getMarginSettings);
   app.put("/api/margin-settings/:symbol", { preHandler: authed("margin") }, (request, reply) =>
     putMarginSettings(request, reply, onPrivateCommitted),
