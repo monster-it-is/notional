@@ -156,19 +156,35 @@ describe("TradePage", () => {
 
   it("subscribes the market socket to the selected symbol from the URL", async () => {
     renderTrade({ path: "/trade?symbol=ETHUSDT" });
-    const selector = await screen.findByLabelText("Instrument");
+    const selector = await screen.findByRole("combobox", { name: "Instrument" });
     expect(selector).toHaveValue("ETHUSDT");
     await waitFor(() => expect(setDesiredSymbol).toHaveBeenCalledWith("ETHUSDT"));
   });
 
-  it("changes the market socket subscription when the instrument select changes", async () => {
+  it("changes the market socket subscription when a catalog instrument is chosen", async () => {
     const user = userEvent.setup();
     renderTrade({ path: "/trade?symbol=ETHUSDT" });
-    const selector = await screen.findByLabelText("Instrument");
+    const selector = await screen.findByRole("combobox", { name: "Instrument" });
     await waitFor(() => expect(setDesiredSymbol).toHaveBeenCalledWith("ETHUSDT"));
-    await user.selectOptions(selector, "BTCUSDT");
+    await user.click(selector);
+    await user.click(await screen.findByRole("option", { name: /BTCUSDT/ }));
     await waitFor(() => expect(setDesiredSymbol).toHaveBeenCalledWith("BTCUSDT"));
     expect(selector).toHaveValue("BTCUSDT");
+  });
+
+  it("does not change the desired symbol while typing in the picker", async () => {
+    const user = userEvent.setup();
+    renderTrade({ path: "/trade?symbol=ETHUSDT" });
+    const selector = await screen.findByRole("combobox", { name: "Instrument" });
+    await waitFor(() => expect(setDesiredSymbol).toHaveBeenCalledWith("ETHUSDT"));
+    const callsAfterLoad = setDesiredSymbol.mock.calls.length;
+    await user.click(selector);
+    await user.type(selector, "BTC");
+    expect(setDesiredSymbol.mock.calls.length).toBe(callsAfterLoad);
+    expect(setDesiredSymbol).not.toHaveBeenCalledWith("B");
+    expect(setDesiredSymbol).not.toHaveBeenCalledWith("BT");
+    expect(setDesiredSymbol).not.toHaveBeenCalledWith("BTC");
+    expect(setDesiredSymbol).not.toHaveBeenCalledWith("BTCUSDT");
   });
 
   it("keeps Cancel available while the account is suspended", async () => {
