@@ -81,6 +81,16 @@ describe("OrderForm", () => {
     expect(mockedPlace.mock.calls[0]?.[0].reduceOnly).toBe(false);
   });
 
+  it("exposes Reduce only on a full-width label with a taller target below lg", () => {
+    render(<OrderForm symbol="BTCUSDT" disabled={false} />, { wrapper });
+    const checkbox = screen.getByRole("checkbox", { name: "Reduce only" });
+    const label = checkbox.closest("label");
+    expect(label).not.toBeNull();
+    expect(label?.className).toContain("min-h-11");
+    expect(label?.className).toContain("w-full");
+    expect(label?.className).toContain("lg:min-h-0");
+  });
+
   it("sends reduceOnly and SELL in the payload as provided", async () => {
     const user = userEvent.setup();
     mockedPlace.mockResolvedValue({

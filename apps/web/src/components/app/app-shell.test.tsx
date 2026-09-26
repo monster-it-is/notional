@@ -174,6 +174,14 @@ describe("authenticated app shell", () => {
     expect(screen.getByRole("button", { name: "Ada" })).toBeInTheDocument();
   });
 
+  it("sizes the authenticated brand link and account trigger for touch below lg", () => {
+    renderShell();
+    expect(screen.getByRole("link", { name: /Notional/ }).className).toContain("h-12");
+    const trigger = screen.getByRole("button", { name: "Ada" });
+    expect(trigger.className).toContain("h-11");
+    expect(trigger.className).toContain("lg:h-10");
+  });
+
   it("falls back to email and keeps the full accessible name", async () => {
     const user = userEvent.setup();
     signedIn({ email: "only@example.com" });

@@ -232,7 +232,7 @@ export function OrderForm({
         </p>
       ) : null}
 
-      <label className="flex items-center gap-2 text-sm text-foreground">
+      <label className="flex min-h-11 w-full items-center gap-2 text-sm text-foreground lg:min-h-0">
         <input
           type="checkbox"
           checked={reduceOnly}

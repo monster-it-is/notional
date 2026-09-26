@@ -75,7 +75,7 @@ export function AccountMenu() {
         aria-expanded={open}
         aria-label={identity}
         className={cn(
-          "inline-flex h-10 min-w-0 max-w-24 items-center px-2 text-sm text-secondary hover:text-foreground md:max-w-40",
+          "inline-flex h-11 min-w-0 max-w-24 items-center px-2 text-sm text-secondary hover:text-foreground md:max-w-40 lg:h-10",
           focus,
         )}
         onClick={() => setOpen((value) => !value)}

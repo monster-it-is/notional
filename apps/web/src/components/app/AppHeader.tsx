@@ -35,7 +35,7 @@ export function AppHeader({
       <div className="flex h-12 w-full flex-nowrap items-center gap-3 px-3 xl:px-4">
         <NavLink
           className={cn(
-            "app-chrome-link app-chrome-brand inline-flex shrink-0 items-center gap-2 whitespace-nowrap",
+            "app-chrome-link app-chrome-brand inline-flex h-12 shrink-0 items-center gap-2 whitespace-nowrap",
             focus,
           )}
           to="/trade"

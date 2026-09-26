@@ -30,7 +30,7 @@ export function Tabs<T extends string>({
             aria-disabled={disabled || undefined}
             disabled={disabled}
             className={cn(
-              "rounded-md px-3 py-2 text-sm",
+              "rounded-md px-3 py-2 text-sm min-h-11 lg:min-h-9",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
               "disabled:pointer-events-none disabled:text-muted disabled:opacity-70",
               selected

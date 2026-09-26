@@ -55,6 +55,34 @@ describe("Button", () => {
     expect(button.className).toContain("bg-accent-soft");
     expect(button.className).not.toMatch(/positive|negative|green|red/);
   });
+
+  it("uses a taller touch target below lg for sm and default sizes", () => {
+    const { rerender } = render(
+      <Button type="button" size="sm">
+        Reduce
+      </Button>,
+    );
+    let button = screen.getByRole("button", { name: "Reduce" });
+    expect(button.className).toContain("min-h-11");
+    expect(button.className).toContain("lg:min-h-8");
+    expect(button.className).not.toContain("lg:min-h-10");
+
+    rerender(<Button type="button">Place</Button>);
+    button = screen.getByRole("button", { name: "Place" });
+    expect(button.className).toContain("min-h-11");
+    expect(button.className).toContain("lg:min-h-10");
+    expect(button.className).not.toContain("lg:min-h-8");
+
+    rerender(
+      <Button type="button" size="lg">
+        Log in
+      </Button>,
+    );
+    button = screen.getByRole("button", { name: "Log in" });
+    expect(button.className).toContain("min-h-11");
+    expect(button.className).not.toContain("lg:min-h-8");
+    expect(button.className).not.toContain("lg:min-h-10");
+  });
 });
 
 describe("Input", () => {
@@ -89,6 +117,8 @@ describe("Tabs", () => {
     expect(screen.getByRole("tab", { name: "Open orders" })).toHaveAttribute("aria-selected", "false");
     expect(screen.getByRole("tab", { name: "Positions" })).toBeEnabled();
     expect(screen.getByRole("tab", { name: "Open orders" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: "Positions" }).className).toContain("min-h-11");
+    expect(screen.getByRole("tab", { name: "Positions" }).className).toContain("lg:min-h-9");
   });
 
   it("disables a tab with native button semantics", () => {
