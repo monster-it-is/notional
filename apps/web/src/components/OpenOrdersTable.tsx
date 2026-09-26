@@ -1,19 +1,24 @@
 import type { OrderResponse, OrderSide } from "@notional/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
 
 import { cancelOrder, listOrders } from "../lib/api/orders.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { invalidateAfterCancel } from "../realtime/invalidate.ts";
+import { OffsetPagination } from "./OffsetPagination.tsx";
 import { Button } from "./ui/Button.tsx";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
 import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
+const PAGE_SIZE = 50;
+
 export function OpenOrdersTable({ symbol }: { symbol?: string }) {
   const queryClient = useQueryClient();
+  const [offset, setOffset] = useState(0);
   const query = useQuery({
-    queryKey: queryKeys.orders.list({ status: "OPEN", symbol, limit: 50, offset: 0 }),
-    queryFn: () => listOrders({ status: "OPEN", symbol, limit: 50, offset: 0 }),
+    queryKey: queryKeys.orders.list({ status: "OPEN", symbol, limit: PAGE_SIZE, offset }),
+    queryFn: () => listOrders({ status: "OPEN", symbol, limit: PAGE_SIZE, offset }),
   });
 
   const cancel = useMutation({
@@ -24,47 +29,50 @@ export function OpenOrdersTable({ symbol }: { symbol?: string }) {
     },
   });
 
-  if (query.isLoading) {
-    return <TableStatus>Loading open orders…</TableStatus>;
-  }
-
-  if (query.error) {
-    return <ErrorBanner error={query.error} />;
-  }
-
   const orders = query.data?.orders ?? [];
-
-  if (orders.length === 0) {
-    return <EmptyState>No open orders.</EmptyState>;
-  }
+  const rowCount = query.isSuccess ? orders.length : null;
 
   return (
     <div className="space-y-3">
-      {cancel.error ? <ErrorBanner error={cancel.error} /> : null}
-      <DataTable>
-        <thead>
-          <tr>
-            <Th>Symbol</Th>
-            <Th>Side</Th>
-            <Th>Type</Th>
-            <Th>Quantity</Th>
-            <Th>Limit</Th>
-            <Th>Reduce</Th>
-            <Th>Time</Th>
-            <Th>Action</Th>
-          </tr>
-        </thead>
-        <tbody>
-          {orders.map((order) => (
-            <OpenOrderRow
-              key={order.id}
-              order={order}
-              pending={cancel.isPending}
-              onCancel={() => cancel.mutate(order.id)}
-            />
-          ))}
-        </tbody>
-      </DataTable>
+      {query.isLoading ? <TableStatus>Loading open orders…</TableStatus> : null}
+      {query.error ? <ErrorBanner error={query.error} /> : null}
+      {query.isSuccess && cancel.error ? <ErrorBanner error={cancel.error} /> : null}
+      {query.isSuccess && orders.length === 0 ? (
+        <EmptyState>{offset > 0 ? "No more open orders." : "No open orders."}</EmptyState>
+      ) : null}
+      {query.isSuccess && orders.length > 0 ? (
+        <DataTable>
+          <thead>
+            <tr>
+              <Th>Symbol</Th>
+              <Th>Side</Th>
+              <Th>Type</Th>
+              <Th>Quantity</Th>
+              <Th>Limit</Th>
+              <Th>Reduce</Th>
+              <Th>Time</Th>
+              <Th>Action</Th>
+            </tr>
+          </thead>
+          <tbody>
+            {orders.map((order) => (
+              <OpenOrderRow
+                key={order.id}
+                order={order}
+                pending={cancel.isPending}
+                onCancel={() => cancel.mutate(order.id)}
+              />
+            ))}
+          </tbody>
+        </DataTable>
+      ) : null}
+      <OffsetPagination
+        offset={offset}
+        pageSize={PAGE_SIZE}
+        rowCount={rowCount}
+        onPrevious={() => setOffset(offset > PAGE_SIZE ? offset - PAGE_SIZE : 0)}
+        onNext={() => setOffset(offset + PAGE_SIZE)}
+      />
     </div>
   );
 }
