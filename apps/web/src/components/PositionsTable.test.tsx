@@ -114,6 +114,37 @@ describe("PositionsTable", () => {
     expect(screen.getByRole("button", { name: "Close BTCUSDT" })).toBeEnabled();
   });
 
+  it("renders the exact cumulative realized API string with existing sign styling", async () => {
+    mocked.mockResolvedValue({
+      positions: [
+        position("BTCUSDT", "1", {
+          cumulativeRealizedPnl: "12.340000000000000000",
+        }),
+        position("ETHUSDT", "-1", {
+          cumulativeRealizedPnl: "-8.760000000000000000",
+        }),
+      ],
+    });
+    render(<PositionsTable />, { wrapper });
+
+    const header = await screen.findByRole("columnheader", {
+      name: "Cumulative realized",
+    });
+    expect(header).toHaveTextContent(/^Cumulative realized$/);
+    expect(header).toHaveAttribute(
+      "title",
+      "Lifetime realized PnL for this symbol, including earlier reductions. Not this leg only.",
+    );
+
+    const gain = screen.getByText("12.340000000000000000");
+    expect(gain.textContent).toBe("12.340000000000000000");
+    expect(gain.className).toContain("text-positive");
+
+    const loss = screen.getByText("-8.760000000000000000");
+    expect(loss.textContent).toBe("-8.760000000000000000");
+    expect(loss.className).toContain("text-negative");
+  });
+
   it("renders em dashes for null mark and unrealized pnl", async () => {
     mocked.mockResolvedValue({
       positions: [position("ETHUSDT", "2", { marginMode: "ISOLATED", leverage: 20 })],
