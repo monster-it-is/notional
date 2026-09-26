@@ -582,3 +582,78 @@ describe("PositionsTable close", () => {
     expect(mockedPlace).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("PositionsTable reduce", () => {
+  beforeEach(() => {
+    mockedOrders.mockReset();
+    mockedPlace.mockReset();
+    mockedOrders.mockResolvedValue({ orders: [] });
+  });
+
+  it("does not offer Reduce for a flat quantity", async () => {
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "0")] });
+    renderPositions();
+    expect(await screen.findByText("FLAT")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reduce BTCUSDT" })).not.toBeInTheDocument();
+  });
+
+  it("asks to prefill a LONG position as SELL without placing", async () => {
+    const user = userEvent.setup();
+    const onReduce = vi.fn();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    renderPositions(<PositionsTable onReduce={onReduce} />);
+    await user.click(await screen.findByRole("button", { name: "Reduce BTCUSDT" }));
+    expect(onReduce).toHaveBeenCalledTimes(1);
+    expect(onReduce).toHaveBeenCalledWith({ symbol: "BTCUSDT", side: "SELL" });
+    expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("asks to prefill a SHORT position as BUY without placing", async () => {
+    const user = userEvent.setup();
+    const onReduce = vi.fn();
+    mocked.mockResolvedValue({ positions: [position("ETHUSDT", "-0.50000000")] });
+    renderPositions(<PositionsTable onReduce={onReduce} />);
+    await user.click(await screen.findByRole("button", { name: "Reduce ETHUSDT" }));
+    expect(onReduce).toHaveBeenCalledTimes(1);
+    expect(onReduce).toHaveBeenCalledWith({ symbol: "ETHUSDT", side: "BUY" });
+    expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("disables Reduce while the account is suspended", async () => {
+    const onReduce = vi.fn();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    renderPositions(<PositionsTable disabled onReduce={onReduce} />);
+    const reduce = await screen.findByRole("button", { name: "Reduce BTCUSDT" });
+    expect(reduce).toBeDisabled();
+    reduce.click();
+    expect(onReduce).not.toHaveBeenCalled();
+    expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("disables Reduce while the order ticket is pending", async () => {
+    const onReduce = vi.fn();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    renderPositions(<PositionsTable reduceDisabled onReduce={onReduce} />);
+    const reduce = await screen.findByRole("button", { name: "Reduce BTCUSDT" });
+    expect(reduce).toBeDisabled();
+    reduce.click();
+    expect(onReduce).not.toHaveBeenCalled();
+    expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("disables Reduce while a close request is pending", async () => {
+    const user = userEvent.setup();
+    const onReduce = vi.fn();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    mockedPlace.mockReturnValue(new Promise(() => undefined));
+    renderPositions(<PositionsTable onReduce={onReduce} />);
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    const reduce = screen.getByRole("button", { name: "Reduce BTCUSDT" });
+    expect(reduce).toBeDisabled();
+    reduce.click();
+    expect(onReduce).not.toHaveBeenCalled();
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+  });
+});

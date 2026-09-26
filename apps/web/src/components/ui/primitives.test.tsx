@@ -64,6 +64,12 @@ describe("Input", () => {
     rerender(<Input aria-label="Quantity" numeric />);
     expect(screen.getByLabelText("Quantity").className).toContain("font-numeric");
   });
+
+  it("forwards a ref to the native input", () => {
+    const ref = { current: null as HTMLInputElement | null };
+    render(<Input aria-label="Quantity" ref={ref} />);
+    expect(ref.current).toBe(screen.getByLabelText("Quantity"));
+  });
 });
 
 describe("Tabs", () => {

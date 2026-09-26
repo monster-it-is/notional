@@ -1,6 +1,6 @@
 import type { InstrumentResponse, PositionResponse } from "@notional/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router";
@@ -459,5 +459,226 @@ describe("TradePage", () => {
     await user.click(screen.getByRole("tab", { name: "Open orders" }));
     expect(screen.queryByRole("button", { name: "Close BTCUSDT" })).not.toBeInTheDocument();
     expect(await screen.findByText("No open orders.")).toBeInTheDocument();
+  });
+});
+
+describe("TradePage reduce prefill", () => {
+  beforeEach(() => {
+    setDesiredSymbol.mockReset();
+    mockedInstruments.mockReset();
+    mockedPositions.mockReset();
+    mockedOrders.mockReset();
+    mockedCancel.mockReset();
+    mockedPlace.mockReset();
+    mockedExecutions.mockReset();
+    mockedMargin.mockReset();
+    mockedInstruments.mockResolvedValue({ instruments: [btc, eth] });
+    mockedPositions.mockResolvedValue({ positions: [] });
+    mockedOrders.mockResolvedValue({ orders: [] });
+    mockedExecutions.mockResolvedValue({ executions: [] });
+    mockedMargin.mockResolvedValue({
+      symbol: "BTCUSDT",
+      marginMode: "CROSS",
+      leverage: 20,
+    });
+  });
+
+  it("prefills a LONG reduce on the existing ticket without placing", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition({ quantity: "1.5" })],
+    });
+    renderTrade({ path: "/trade?symbol=BTCUSDT" });
+    await user.type(await screen.findByLabelText("Quantity"), "9.5");
+    await user.click(screen.getByRole("button", { name: "LIMIT" }));
+    await user.type(screen.getByLabelText("Limit price"), "101.25");
+
+    await user.click(await screen.findByRole("button", { name: "Reduce BTCUSDT" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "SELL" })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("button", { name: "MARKET" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("checkbox", { name: "Reduce only" })).toBeChecked();
+    expect(screen.getByLabelText("Quantity")).toHaveValue("");
+    expect(screen.queryByLabelText("Limit price")).not.toBeInTheDocument();
+    expect(mockedPlace).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByLabelText("Quantity")).toHaveFocus());
+  });
+
+  it("prefills a SHORT reduce as BUY and submits the user-chosen quantity later", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition({ symbol: "ETHUSDT", quantity: "-0.50000000" })],
+    });
+    mockedPlace.mockResolvedValue({
+      id: "1",
+      symbol: "ETHUSDT",
+      side: "BUY",
+      type: "MARKET",
+      quantity: "0.2",
+      limitPrice: null,
+      reduceOnly: true,
+      status: "FILLED",
+      origin: "USER",
+      createdAt: "t",
+      updatedAt: "t",
+    });
+    renderTrade({ path: "/trade?symbol=ETHUSDT" });
+    await user.click(await screen.findByRole("button", { name: "Reduce ETHUSDT" }));
+    await waitFor(() => expect(screen.getByRole("button", { name: "BUY" })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByLabelText("Quantity")).toHaveValue("");
+    expect(mockedPlace).not.toHaveBeenCalled();
+
+    await user.type(screen.getByLabelText("Quantity"), "0.2");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+    await waitFor(() => expect(mockedPlace).toHaveBeenCalledTimes(1));
+    expect(mockedPlace.mock.calls[0]?.[0]).toEqual({
+      type: "MARKET",
+      symbol: "ETHUSDT",
+      side: "BUY",
+      quantity: "0.2",
+      reduceOnly: true,
+    });
+  });
+
+  it("switches ?symbol= first when reducing a different-symbol position", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [
+        tradePosition({ symbol: "BTCUSDT", quantity: "1" }),
+        tradePosition({ symbol: "ETHUSDT", quantity: "2" }),
+      ],
+    });
+    renderTrade({ path: "/trade?symbol=BTCUSDT" });
+    const selector = await screen.findByRole("combobox", { name: "Instrument" });
+    expect(selector).toHaveValue("BTCUSDT");
+    await user.click(await screen.findByRole("button", { name: "Reduce ETHUSDT" }));
+    await waitFor(() => expect(selector).toHaveValue("ETHUSDT"));
+    await waitFor(() => expect(screen.getByRole("button", { name: "SELL" })).toHaveAttribute("aria-pressed", "true"));
+    expect(screen.getByRole("checkbox", { name: "Reduce only" })).toBeChecked();
+    expect(screen.getByLabelText("Quantity")).toHaveValue("");
+    expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("does not reapply an old Reduce command after the user changes symbol and comes back", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition({ quantity: "1.5" })],
+    });
+    renderTrade({ path: "/trade?symbol=BTCUSDT" });
+    await user.click(await screen.findByRole("button", { name: "Reduce BTCUSDT" }));
+    await waitFor(() => expect(screen.getByLabelText("Quantity")).toHaveValue(""));
+    await user.type(screen.getByLabelText("Quantity"), "0.5");
+    await user.click(screen.getByRole("checkbox", { name: "Reduce only" }));
+    await user.click(screen.getByRole("button", { name: "LIMIT" }));
+    await user.type(screen.getByLabelText("Limit price"), "99");
+
+    const selector = screen.getByRole("combobox", { name: "Instrument" });
+    await user.click(selector);
+    await user.click(await screen.findByRole("option", { name: /ETHUSDT/ }));
+    await waitFor(() => expect(selector).toHaveValue("ETHUSDT"));
+    expect(screen.getByLabelText("Quantity")).toHaveValue("0.5");
+
+    await user.click(selector);
+    await user.click(await screen.findByRole("option", { name: /BTCUSDT/ }));
+    await waitFor(() => expect(selector).toHaveValue("BTCUSDT"));
+    expect(screen.getByLabelText("Quantity")).toHaveValue("0.5");
+    expect(screen.getByRole("button", { name: "LIMIT" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("checkbox", { name: "Reduce only" })).not.toBeChecked();
+    expect(screen.getByLabelText("Limit price")).toHaveValue("99");
+    expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("re-applies Reduce defaults when the same row is clicked again after edits", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition({ quantity: "1.5" })],
+    });
+    renderTrade({ path: "/trade?symbol=BTCUSDT" });
+    await user.click(await screen.findByRole("button", { name: "Reduce BTCUSDT" }));
+    await waitFor(() => expect(screen.getByLabelText("Quantity")).toHaveValue(""));
+    await user.type(screen.getByLabelText("Quantity"), "0.5");
+    await user.click(screen.getByRole("button", { name: "LIMIT" }));
+
+    await user.click(screen.getByRole("button", { name: "Reduce BTCUSDT" }));
+    await waitFor(() => expect(screen.getByLabelText("Quantity")).toHaveValue(""));
+    expect(screen.getByRole("button", { name: "MARKET" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "SELL" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("checkbox", { name: "Reduce only" })).toBeChecked();
+  });
+
+  it("disables Reduce while the account is suspended", async () => {
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition()],
+    });
+    renderTrade({ suspended: true });
+    expect(await screen.findByRole("button", { name: "Reduce BTCUSDT" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Close BTCUSDT" })).toBeDisabled();
+  });
+
+  it("disables Reduce while a close request is pending and keeps the close dialog", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [tradePosition()],
+    });
+    mockedPlace.mockReturnValue(new Promise(() => undefined));
+    renderTrade();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    const reduce = screen.getByRole("button", { name: "Reduce BTCUSDT" });
+    expect(reduce).toBeDisabled();
+    fireEvent.click(reduce);
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "BUY" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("checkbox", { name: "Reduce only" })).not.toBeChecked();
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mutate the ticket when Reduce is clicked while placement is pending", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [
+        tradePosition({ symbol: "BTCUSDT", quantity: "1" }),
+        tradePosition({ symbol: "ETHUSDT", quantity: "2" }),
+      ],
+    });
+    mockedPlace.mockReturnValue(new Promise(() => undefined));
+    renderTrade({ path: "/trade?symbol=BTCUSDT" });
+    await user.type(await screen.findByLabelText("Quantity"), "0.001");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+    expect(screen.getByRole("button", { name: "Placing…" })).toBeDisabled();
+    const reduce = screen.getByRole("button", { name: "Reduce ETHUSDT" });
+    expect(reduce).toBeDisabled();
+    fireEvent.click(reduce);
+    expect(screen.getByRole("combobox", { name: "Instrument" })).toHaveValue("BTCUSDT");
+    expect(screen.getByLabelText("Quantity")).toHaveValue("0.001");
+    expect(screen.getByRole("button", { name: "BUY" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("checkbox", { name: "Reduce only" })).not.toBeChecked();
+    expect(screen.getByRole("button", { name: "Placing…" })).toBeInTheDocument();
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not mutate the ticket when Reduce is clicked while Retry same order is pending", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [
+        tradePosition({ symbol: "BTCUSDT", quantity: "1" }),
+        tradePosition({ symbol: "ETHUSDT", quantity: "2" }),
+      ],
+    });
+    mockedPlace.mockRejectedValueOnce(new Error("network"));
+    mockedPlace.mockReturnValue(new Promise(() => undefined));
+    renderTrade({ path: "/trade?symbol=BTCUSDT" });
+    await user.type(await screen.findByLabelText("Quantity"), "0.001");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+    await user.click(await screen.findByRole("button", { name: "Retry same order" }));
+    expect(screen.getByRole("button", { name: "Placing…" })).toBeDisabled();
+    const reduce = screen.getByRole("button", { name: "Reduce ETHUSDT" });
+    expect(reduce).toBeDisabled();
+    fireEvent.click(reduce);
+    expect(screen.getByRole("combobox", { name: "Instrument" })).toHaveValue("BTCUSDT");
+    expect(screen.getByLabelText("Quantity")).toHaveValue("0.001");
+    expect(screen.getByRole("button", { name: "BUY" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("checkbox", { name: "Reduce only" })).not.toBeChecked();
+    expect(mockedPlace).toHaveBeenCalledTimes(2);
   });
 });

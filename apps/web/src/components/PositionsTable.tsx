@@ -1,3 +1,4 @@
+import type { OrderSide } from "@notional/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 
@@ -20,10 +21,14 @@ const CUMULATIVE_REALIZED_HELP =
 
 export function PositionsTable({
   disabled = false,
+  reduceDisabled = false,
   onClosePendingChange,
+  onReduce,
 }: {
   disabled?: boolean;
+  reduceDisabled?: boolean;
   onClosePendingChange?: (pending: boolean) => void;
+  onReduce?: (command: { symbol: string; side: OrderSide }) => void;
 }) {
   const query = useQuery({
     queryKey: queryKeys.positions.all,
@@ -123,25 +128,47 @@ export function PositionsTable({
                   <Td>{formatTimestamp(position.updatedAt)}</Td>
                   <Td>
                     {side === "FLAT" ? null : (
-                      <Button
-                        type="button"
-                        size="sm"
-                        disabled={disabled || closePending}
-                        aria-label={`Close ${position.symbol}`}
-                        onClick={(event) => {
-                          if (closePending) {
-                            return;
-                          }
+                      <div className="flex flex-wrap gap-1">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={disabled || closePending || reduceDisabled}
+                          aria-label={`Reduce ${position.symbol}`}
+                          onClick={() => {
+                            if (disabled || closePending || reduceDisabled) {
+                              return;
+                            }
 
-                          openerRef.current = event.currentTarget;
-                          setSelection({
-                            symbol: position.symbol,
-                            signedQuantity: position.quantity,
-                          });
-                        }}
-                      >
-                        Close
-                      </Button>
+                            const ticketSide = reduceOrderSide(side);
+                            if (!ticketSide) {
+                              return;
+                            }
+
+                            onReduce?.({ symbol: position.symbol, side: ticketSide });
+                          }}
+                        >
+                          Reduce
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={disabled || closePending}
+                          aria-label={`Close ${position.symbol}`}
+                          onClick={(event) => {
+                            if (closePending) {
+                              return;
+                            }
+
+                            openerRef.current = event.currentTarget;
+                            setSelection({
+                              symbol: position.symbol,
+                              signedQuantity: position.quantity,
+                            });
+                          }}
+                        >
+                          Close
+                        </Button>
+                      </div>
                     )}
                   </Td>
                 </tr>
@@ -152,6 +179,18 @@ export function PositionsTable({
       )}
     </div>
   );
+}
+
+function reduceOrderSide(side: PositionVisualSide): OrderSide | null {
+  if (side === "LONG") {
+    return "SELL";
+  }
+
+  if (side === "SHORT") {
+    return "BUY";
+  }
+
+  return null;
 }
 
 function sideClass(side: PositionVisualSide): string | undefined {

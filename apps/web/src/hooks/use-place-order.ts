@@ -18,6 +18,7 @@ export function usePlaceOrder(): {
   error: unknown;
   data: OrderResponse | undefined;
   reset: () => void;
+  beginFreshTicket: () => void;
 } {
   const queryClient = useQueryClient();
   const intentRef = useRef<OrderIntent | null>(null);
@@ -53,6 +54,11 @@ export function usePlaceOrder(): {
     error: mutation.error,
     data: mutation.data,
     reset: () => {
+      mutation.reset();
+    },
+    beginFreshTicket: () => {
+      intentRef.current = null;
+      requestRef.current = null;
       mutation.reset();
     },
   };

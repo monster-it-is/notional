@@ -1,12 +1,13 @@
+import type { OrderSide } from "@notional/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useOutletContext } from "react-router";
 
 import { ExecutionsTable } from "../components/ExecutionsTable.tsx";
 import { MarginControls } from "../components/MarginControls.tsx";
 import { MarketTicker } from "../components/MarketTicker.tsx";
 import { OpenOrdersTable } from "../components/OpenOrdersTable.tsx";
-import { OrderForm } from "../components/OrderForm.tsx";
+import { OrderForm, type ReducePrefillCommand } from "../components/OrderForm.tsx";
 import { PositionsTable } from "../components/PositionsTable.tsx";
 import { SymbolSelector } from "../components/SymbolSelector.tsx";
 import { ErrorBanner } from "../components/ui/ErrorBanner.tsx";
@@ -32,6 +33,25 @@ export function TradePage() {
   const instrument = instruments.find((row) => row.symbol === symbol) ?? null;
   const [tab, setTab] = useState<"positions" | "orders" | "executions">("positions");
   const [closePending, setClosePending] = useState(false);
+  const [ticketPending, setTicketPending] = useState(false);
+  const [reducePrefill, setReducePrefill] = useState<ReducePrefillCommand | null>(null);
+  const nextReduceId = useRef(0);
+
+  function requestReduce(command: { symbol: string; side: OrderSide }): void {
+    if (suspended || closePending || ticketPending) {
+      return;
+    }
+
+    nextReduceId.current += 1;
+    if (symbol !== command.symbol) {
+      setSymbol(command.symbol);
+    }
+    setReducePrefill({
+      id: nextReduceId.current,
+      symbol: command.symbol,
+      side: command.side,
+    });
+  }
 
   useEffect(() => {
     const socket = getMarketSocket();
@@ -88,7 +108,12 @@ export function TradePage() {
           />
           <div className="mt-3 min-w-0">
             {tab === "positions" ? (
-              <PositionsTable disabled={suspended} onClosePendingChange={setClosePending} />
+              <PositionsTable
+                disabled={suspended}
+                reduceDisabled={ticketPending}
+                onClosePendingChange={setClosePending}
+                onReduce={requestReduce}
+              />
             ) : null}
             {tab === "orders" ? <OpenOrdersTable /> : null}
             {tab === "executions" ? <ExecutionsTable limit={20} offset={0} /> : null}
@@ -110,6 +135,8 @@ export function TradePage() {
               disabled={suspended}
               baseAsset={instrument?.baseAsset}
               quoteAsset={instrument?.quoteAsset}
+              reducePrefill={reducePrefill}
+              onPendingChange={setTicketPending}
             />
           </div>
         </Surface>

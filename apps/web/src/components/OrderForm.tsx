@@ -1,5 +1,5 @@
 import type { CreateOrderRequest, OrderSide, OrderType } from "@notional/contracts";
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { isApiError } from "../lib/api/errors.ts";
 import { isPlainPositiveDecimal } from "../lib/decimal-string.ts";
@@ -9,16 +9,26 @@ import { Button } from "./ui/Button.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
 import { Input } from "./ui/Input.tsx";
 
+export type ReducePrefillCommand = {
+  id: number;
+  symbol: string;
+  side: OrderSide;
+};
+
 export function OrderForm({
   symbol,
   disabled,
   baseAsset,
   quoteAsset = "USDT",
+  reducePrefill = null,
+  onPendingChange,
 }: {
   symbol: string | null;
   disabled: boolean;
   baseAsset?: string;
   quoteAsset?: string;
+  reducePrefill?: ReducePrefillCommand | null;
+  onPendingChange?: (pending: boolean) => void;
 }) {
   const [side, setSide] = useState<OrderSide>("BUY");
   const [type, setType] = useState<OrderType>("MARKET");
@@ -27,6 +37,49 @@ export function OrderForm({
   const [reduceOnly, setReduceOnly] = useState(false);
   const [validation, setValidation] = useState<string | null>(null);
   const order = usePlaceOrder();
+  const orderRef = useRef(order);
+  const appliedPrefillId = useRef<number | null>(null);
+  const quantityInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    orderRef.current = order;
+  });
+
+  // Before paint, so Reduce cannot change symbol while Place/Retry is already in flight.
+  useLayoutEffect(() => {
+    onPendingChange?.(order.pending);
+  }, [onPendingChange, order.pending]);
+
+  useEffect(() => {
+    if (!reducePrefill) {
+      return;
+    }
+
+    if (appliedPrefillId.current === reducePrefill.id) {
+      return;
+    }
+
+    if (symbol !== reducePrefill.symbol) {
+      return;
+    }
+
+    if (orderRef.current.pending) {
+      appliedPrefillId.current = reducePrefill.id;
+      return;
+    }
+
+    appliedPrefillId.current = reducePrefill.id;
+    setSide(reducePrefill.side);
+    setType("MARKET");
+    setQuantity("");
+    setLimitPrice("");
+    setReduceOnly(true);
+    setValidation(null);
+    orderRef.current.beginFreshTicket();
+    queueMicrotask(() => {
+      quantityInputRef.current?.focus();
+    });
+  }, [reducePrefill, symbol]);
 
   function submit(): void {
     setValidation(null);
@@ -121,6 +174,7 @@ export function OrderForm({
         <span className="mb-1 block text-xs text-secondary">Quantity</span>
         <span className="relative block">
           <Input
+            ref={quantityInputRef}
             value={quantity}
             onChange={(event) => setQuantity(event.target.value)}
             type="text"

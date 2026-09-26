@@ -1,4 +1,4 @@
-import type { InputHTMLAttributes } from "react";
+import type { InputHTMLAttributes, Ref } from "react";
 
 import { cn } from "../../lib/cn.ts";
 
@@ -6,13 +6,16 @@ export function Input({
   className = "",
   numeric = false,
   invalid = false,
+  ref,
   ...props
 }: InputHTMLAttributes<HTMLInputElement> & {
   numeric?: boolean;
   invalid?: boolean;
+  ref?: Ref<HTMLInputElement>;
 }) {
   return (
     <input
+      ref={ref}
       aria-invalid={invalid || undefined}
       className={cn(
         "w-full rounded-md border bg-input px-3 py-2 text-sm text-foreground",
