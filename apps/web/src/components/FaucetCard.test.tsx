@@ -35,6 +35,7 @@ const account: AccountResponse = {
   status: "ACTIVE",
   lastFaucetClaimAt: claimedAt,
   createdAt: "2026-01-01T00:00:00.000Z",
+  realizedPnl24h: "0",
 };
 
 function renderFaucet(

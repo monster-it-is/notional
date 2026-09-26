@@ -11,7 +11,7 @@ export {
 } from "./funding-event.js";
 export type { FundingEvent } from "./funding-event.js";
 export { checkDatabaseHealth } from "./health.js";
-export { postLedgerTransaction } from "./ledger.js";
+export { postLedgerTransaction, sumRealizedTradingPnlSince } from "./ledger.js";
 export type { FinancialEventType, LedgerEntry, LedgerTransaction } from "./ledger.js";
 export {
   ensureSystemFundingLedgerAccount,

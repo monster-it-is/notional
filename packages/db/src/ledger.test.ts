@@ -84,6 +84,7 @@ describe("ledger and funding primitives", () => {
       db.transaction((tx) =>
         postLedgerTransaction(tx, {
           eventType: "SIGNUP_ALLOCATION",
+          paperAccountId: account.id,
           idempotencyKey: "unbalanced",
           entries: [
             {
@@ -105,6 +106,7 @@ describe("ledger and funding primitives", () => {
     const posted = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "SIGNUP_ALLOCATION",
+        paperAccountId: account.id,
         idempotencyKey: "signup-allocation:balanced",
         entries: [
           {
@@ -126,6 +128,8 @@ describe("ledger and funding primitives", () => {
 
     expect(entries).toHaveLength(2);
     expect(typeof entries[0]?.amount).toBe("string");
+    expect(posted.paperAccountId).toBe(account.id);
+    expect(userCash.paperAccountId).toBe(posted.paperAccountId);
 
     const sum = entries.reduce(
       (total, entry) => total.plus(new MoneyDecimal(entry.amount)),
@@ -144,6 +148,7 @@ describe("ledger and funding primitives", () => {
     const posted = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "FAUCET_CLAIM",
+        paperAccountId: account.id,
         idempotencyKey: "faucet:balanced",
         entries: [
           {
@@ -159,6 +164,7 @@ describe("ledger and funding primitives", () => {
     );
 
     expect(posted.eventType).toBe("FAUCET_CLAIM");
+    expect(posted.paperAccountId).toBe(account.id);
 
     const entries = await db
       .select()
@@ -174,6 +180,30 @@ describe("ledger and funding primitives", () => {
     expect(sum.isZero()).toBe(true);
   });
 
+  it("rejects a ledger transaction without paperAccountId", async () => {
+    const createdUser = await insertUser("missing-owner@example.com");
+    const account = await ensurePaperAccount(db, createdUser.id);
+    const userCash = await ensureUserCashLedgerAccount(db, account.id);
+    const systemFunding = await ensureSystemVirtualFundingAccount(db);
+
+    await expect(
+      db.transaction((tx) =>
+        postLedgerTransaction(tx, {
+          eventType: "SIGNUP_ALLOCATION",
+          paperAccountId: "",
+          idempotencyKey: "signup-allocation:missing-owner",
+          entries: [
+            { ledgerAccountId: userCash.id, amount: SIGNUP_ALLOCATION_AMOUNT },
+            {
+              ledgerAccountId: systemFunding.id,
+              amount: SIGNUP_ALLOCATION_AMOUNT.negated(),
+            },
+          ],
+        }),
+      ),
+    ).rejects.toThrow("ledger transaction requires paperAccountId");
+  });
+
   it("rejects a zero-amount ledger entry at the database", async () => {
     const createdUser = await insertUser("ada@example.com");
     const account = await ensurePaperAccount(db, createdUser.id);
@@ -183,6 +213,7 @@ describe("ledger and funding primitives", () => {
       .insert(ledgerTransaction)
       .values({
         eventType: "SIGNUP_ALLOCATION",
+        paperAccountId: account.id,
         idempotencyKey: "zero-entry",
       })
       .returning();
@@ -198,14 +229,19 @@ describe("ledger and funding primitives", () => {
   });
 
   it("rejects a duplicate ledger idempotency key", async () => {
+    const createdUser = await insertUser("dup-key@example.com");
+    const account = await ensurePaperAccount(db, createdUser.id);
+
     await db.insert(ledgerTransaction).values({
       eventType: "SIGNUP_ALLOCATION",
+      paperAccountId: account.id,
       idempotencyKey: "signup-allocation:dup",
     });
 
     await expectRejectedConstraint(
       db.insert(ledgerTransaction).values({
         eventType: "SIGNUP_ALLOCATION",
+        paperAccountId: account.id,
         idempotencyKey: "signup-allocation:dup",
       }),
       "ledger_transaction_idempotency_key_unique",
@@ -281,6 +317,7 @@ describe("ledger and funding primitives", () => {
     const first = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "SIGNUP_ALLOCATION",
+        paperAccountId: account.id,
         idempotencyKey: "signup-allocation:funding-1",
         entries: [
           { ledgerAccountId: userCash.id, amount: SIGNUP_ALLOCATION_AMOUNT },
@@ -316,6 +353,7 @@ describe("ledger and funding primitives", () => {
     const second = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "SIGNUP_ALLOCATION",
+        paperAccountId: account.id,
         idempotencyKey: "signup-allocation:funding-2",
         entries: [
           { ledgerAccountId: userCash.id, amount: SIGNUP_ALLOCATION_AMOUNT },
@@ -350,6 +388,7 @@ describe("ledger and funding primitives", () => {
     const first = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "FAUCET_CLAIM",
+        paperAccountId: account.id,
         idempotencyKey: "faucet:history-1",
         entries: [
           { ledgerAccountId: userCash.id, amount: faucetAmount },
@@ -360,6 +399,7 @@ describe("ledger and funding primitives", () => {
     const second = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "FAUCET_CLAIM",
+        paperAccountId: account.id,
         idempotencyKey: "faucet:history-2",
         entries: [
           { ledgerAccountId: userCash.id, amount: faucetAmount },
@@ -402,6 +442,7 @@ describe("ledger and funding primitives", () => {
     const transaction = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "SIGNUP_ALLOCATION",
+        paperAccountId: account.id,
         idempotencyKey: "signup-allocation:currency",
         entries: [
           { ledgerAccountId: userCash.id, amount: SIGNUP_ALLOCATION_AMOUNT },
@@ -436,6 +477,7 @@ describe("ledger and funding primitives", () => {
       db.transaction(async (tx) => {
         await postLedgerTransaction(tx, {
           eventType: "SIGNUP_ALLOCATION",
+          paperAccountId: account.id,
           idempotencyKey: "signup-allocation:rollback",
           entries: [
             { ledgerAccountId: userCash.id, amount: SIGNUP_ALLOCATION_AMOUNT },
@@ -481,6 +523,7 @@ describe("ledger and funding primitives", () => {
     const posted = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "REALIZED_PNL",
+        paperAccountId: account.id,
         idempotencyKey: "realized-pnl:test",
         entries: [
           { ledgerAccountId: userCash.id, amount: new MoneyDecimal("-1000") },
@@ -491,6 +534,7 @@ describe("ledger and funding primitives", () => {
     );
 
     expect(posted.eventType).toBe("REALIZED_PNL");
+    expect(posted.paperAccountId).toBe(account.id);
     const entries = await db
       .select()
       .from(ledgerEntry)
@@ -524,6 +568,7 @@ describe("ledger and funding primitives", () => {
     const posted = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "FUNDING_PAYMENT",
+        paperAccountId: account.id,
         idempotencyKey: "funding-payment:test",
         entries: [
           { ledgerAccountId: userCash.id, amount: new MoneyDecimal("-100") },
@@ -534,6 +579,7 @@ describe("ledger and funding primitives", () => {
     );
 
     expect(posted.eventType).toBe("FUNDING_PAYMENT");
+    expect(posted.paperAccountId).toBe(account.id);
     const entries = await db
       .select()
       .from(ledgerEntry)

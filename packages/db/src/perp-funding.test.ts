@@ -294,6 +294,7 @@ describe("perp funding schema", () => {
     const posted = await db.transaction((tx) =>
       postLedgerTransaction(tx, {
         eventType: "FUNDING_PAYMENT",
+        paperAccountId: account.id,
         idempotencyKey: "funding-payment:nonzero",
         entries: [
           { ledgerAccountId: userCash.id, amount: new MoneyDecimal("-100") },
@@ -308,6 +309,7 @@ describe("perp funding schema", () => {
       db.transaction((tx) =>
         postLedgerTransaction(tx, {
           eventType: "FUNDING_PAYMENT",
+          paperAccountId: account.id,
           idempotencyKey: "funding-payment:zero",
           entries: [],
         }),

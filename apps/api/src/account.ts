@@ -13,6 +13,7 @@ import {
   findPaperAccountByUserId,
   findSignupAllocationFundingEvent,
   listFundingEventsByPaperAccountId,
+  sumRealizedTradingPnlSince,
   type FundingEvent,
 } from "@notional/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
@@ -156,7 +157,7 @@ export async function loadInitializedAccount(userId: string) {
   return { account };
 }
 
-function toAccountResponse(account: {
+async function toAccountResponse(account: {
   id: string;
   userId: string;
   currency: string;
@@ -164,7 +165,7 @@ function toAccountResponse(account: {
   status: string;
   lastFaucetClaimAt: Date | null;
   createdAt: Date;
-}): AccountResponse {
+}): Promise<AccountResponse> {
   if (account.currency !== "USDT") {
     throw new Error("paper_account.currency must be USDT");
   }
@@ -172,6 +173,8 @@ function toAccountResponse(account: {
   if (typeof account.balance !== "string") {
     throw new Error("paper_account.balance must be a string");
   }
+
+  const realizedPnl24h = await sumRealizedTradingPnlSince(db, account.id);
 
   return {
     id: account.id,
@@ -183,6 +186,7 @@ function toAccountResponse(account: {
       ? toIsoString(account.lastFaucetClaimAt)
       : null,
     createdAt: toIsoString(account.createdAt),
+    realizedPnl24h,
   };
 }
 

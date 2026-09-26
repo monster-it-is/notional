@@ -57,6 +57,11 @@ export const ledgerTransaction = pgTable(
     id: uuid("id")
       .default(sql`pg_catalog.gen_random_uuid()`)
       .primaryKey(),
+    paperAccountId: uuid("paper_account_id")
+      .notNull()
+      .references(() => paperAccount.id, {
+        onDelete: "restrict",
+      }),
     eventType: text("event_type").notNull(),
     idempotencyKey: text("idempotency_key").notNull().unique(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -65,6 +70,11 @@ export const ledgerTransaction = pgTable(
     check(
       "ledger_transaction_event_type_valid",
       sql`${table.eventType} in ('SIGNUP_ALLOCATION', 'FAUCET_CLAIM', 'REALIZED_PNL', 'FUNDING_PAYMENT')`,
+    ),
+    index("ledger_transaction_paper_account_event_created_idx").on(
+      table.paperAccountId,
+      table.eventType,
+      table.createdAt,
     ),
   ],
 );
@@ -104,7 +114,11 @@ export const ledgerAccountRelations = relations(
 
 export const ledgerTransactionRelations = relations(
   ledgerTransaction,
-  ({ many }) => ({
+  ({ one, many }) => ({
+    paperAccount: one(paperAccount, {
+      fields: [ledgerTransaction.paperAccountId],
+      references: [paperAccount.id],
+    }),
     entries: many(ledgerEntry),
   }),
 );

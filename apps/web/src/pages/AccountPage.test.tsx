@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { AccountPage } from "./AccountPage.tsx";
 import { claimFaucet, getAccount, getWalletFunding } from "../lib/api/account.ts";
 import { ApiError } from "../lib/api/errors.ts";
+import { queryKeys } from "../lib/query-keys.ts";
 
 const { signOut, stopRealtime, useSession } = vi.hoisted(() => ({
   signOut: vi.fn(),
@@ -44,6 +45,7 @@ const account: AccountResponse = {
   status: "ACTIVE",
   lastFaucetClaimAt: null,
   createdAt: "2024-01-02T03:04:05.123Z",
+  realizedPnl24h: "0",
 };
 
 const signup: FundingEventResponse = {
@@ -132,6 +134,73 @@ describe("AccountPage", () => {
     expect(await screen.findByText("999.999856 USDT")).toBeInTheDocument();
     expect(screen.getByTitle("999.999856000")).toBeInTheDocument();
     expect(screen.queryByText("999.999856000")).not.toBeInTheDocument();
+  });
+
+  it("renders Realized PnL (24h) from the account response without client calculation", async () => {
+    mockedAccount.mockResolvedValue({ ...account, realizedPnl24h: "23.47" });
+    renderAccount();
+
+    const label = await screen.findByText("Realized PnL (24h)");
+    expect(label).toHaveAttribute(
+      "title",
+      "Trading PnL realized during the rolling last 24 hours. Funding is excluded.",
+    );
+    expect(screen.getByText("+23.47 USDT")).toBeInTheDocument();
+    expect(screen.getByTitle("23.47")).toBeInTheDocument();
+    expect(screen.getByText("+23.47 USDT").className).toContain("text-positive");
+    expect(screen.queryByText("Daily PnL")).not.toBeInTheDocument();
+    expect(screen.queryByText("Today's PnL")).not.toBeInTheDocument();
+  });
+
+  it("styles a negative realized PnL (24h) without a plus prefix", async () => {
+    mockedAccount.mockResolvedValue({ ...account, realizedPnl24h: "-8.5" });
+    renderAccount();
+
+    expect(await screen.findByText("-8.50 USDT")).toBeInTheDocument();
+    expect(screen.getByTitle("-8.5")).toBeInTheDocument();
+    expect(screen.getByText("-8.50 USDT").className).toContain("text-negative");
+    expect(screen.getByText("-8.50 USDT").className).not.toContain("text-positive");
+  });
+
+  it("keeps a zero realized PnL (24h) visually neutral", async () => {
+    renderAccount();
+
+    expect(await screen.findByText("0.00 USDT")).toBeInTheDocument();
+    expect(screen.getByTitle("0")).toBeInTheDocument();
+    expect(screen.getByText("0.00 USDT").className).not.toContain("text-positive");
+    expect(screen.getByText("0.00 USDT").className).not.toContain("text-negative");
+  });
+
+  it("polls the account query every minute while AccountPage is mounted", async () => {
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { unmount } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <Routes>
+            <Route element={<Outlet context={{ suspended: false }} />}>
+              <Route path="/" element={<AccountPage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByText("Realized PnL (24h)")).toBeInTheDocument();
+    const query = client.getQueryCache().find({ queryKey: queryKeys.account });
+    expect(query).toBeDefined();
+    const observerOptions = (
+      query as unknown as {
+        observers: Array<{
+          options: { refetchInterval?: number | false };
+        }>;
+      }
+    ).observers[0]?.options;
+    expect(observerOptions?.refetchInterval).toBe(60_000);
+    expect(query?.getObserversCount()).toBeGreaterThan(0);
+    unmount();
+    expect(query?.getObserversCount()).toBe(0);
   });
 
   it("shows loading when the account query has no cached data", () => {

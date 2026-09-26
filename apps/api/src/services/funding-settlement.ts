@@ -414,6 +414,7 @@ async function postFundingLedger(
 
   await postLedgerTransaction(tx, {
     eventType: "FUNDING_PAYMENT",
+    paperAccountId: params.paperAccountId,
     idempotencyKey: `funding-payment:${params.accountSettlementId}`,
     entries,
   });

@@ -10,6 +10,7 @@ export type AccountResponse = {
   status: AccountStatus;
   lastFaucetClaimAt: string | null;
   createdAt: string;
+  realizedPnl24h: string;
 };
 
 export type AccountNotInitializedError = {

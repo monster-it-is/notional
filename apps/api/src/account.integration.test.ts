@@ -2,6 +2,8 @@ import type { AccountNotInitializedError, AccountResponse } from "@notional/cont
 import {
   db,
   ensurePaperAccount,
+  ensureSystemTradingPnlAccount,
+  ensureUserCashLedgerAccount,
   findPaperAccountByUserId,
   fromDbDecimal,
   fundingEvent,
@@ -9,6 +11,7 @@ import {
   ledgerEntry,
   ledgerTransaction,
   paperAccount,
+  postLedgerTransaction,
   SIGNUP_ALLOCATION_AMOUNT,
 } from "@notional/db";
 import { endTestPool, resetTestTables } from "@notional/db/test";
@@ -116,6 +119,7 @@ describe("paper account api", () => {
       status: "ACTIVE",
       lastFaucetClaimAt: null,
       createdAt: expect.any(String),
+      realizedPnl24h: "0",
     });
     expect(typeof body.balance).toBe("string");
     expect(fromDbDecimal(body.balance).eq(SIGNUP_ALLOCATION_AMOUNT)).toBe(true);
@@ -255,6 +259,77 @@ describe("paper account api", () => {
     expect(await db.select().from(ledgerEntry)).toHaveLength(0);
     expect(await db.select().from(ledgerAccount)).toHaveLength(0);
   });
+
+  it("returns realizedPnl24h 0 on initialize and GET before any trading", async () => {
+    const signup = await signUp(app, {
+      name: "Ada Lovelace",
+      email: "pnl-zero@example.com",
+      password,
+    });
+    const cookies = cookieHeader(signup);
+
+    const initialized = await app.inject({
+      method: "POST",
+      url: "/api/account/initialize",
+      headers: {
+        cookie: cookies,
+        origin: process.env.WEB_ORIGIN,
+      },
+    });
+    expect(initialized.statusCode).toBe(200);
+    expect((initialized.json() as AccountResponse).realizedPnl24h).toBe("0");
+
+    const read = await app.inject({
+      method: "GET",
+      url: "/api/account",
+      headers: {
+        cookie: cookies,
+        origin: process.env.WEB_ORIGIN,
+      },
+    });
+    expect(read.statusCode).toBe(200);
+    expect((read.json() as AccountResponse).realizedPnl24h).toBe("0");
+  });
+
+  it("keeps realizedPnl24h on idempotent initialize after a realized event", async () => {
+    const signup = await signUp(app, {
+      name: "Ada Lovelace",
+      email: "pnl-traded@example.com",
+      password,
+    });
+    const cookies = cookieHeader(signup);
+    const initialized = await app.inject({
+      method: "POST",
+      url: "/api/account/initialize",
+      headers: {
+        cookie: cookies,
+        origin: process.env.WEB_ORIGIN,
+      },
+    });
+    const account = initialized.json() as AccountResponse;
+    await postRealizedForAccount(account.id, "12.5");
+
+    const repeated = await app.inject({
+      method: "POST",
+      url: "/api/account/initialize",
+      headers: {
+        cookie: cookies,
+        origin: process.env.WEB_ORIGIN,
+      },
+    });
+    expect(repeated.statusCode).toBe(200);
+    expect((repeated.json() as AccountResponse).realizedPnl24h).toBe("12.5");
+
+    const read = await app.inject({
+      method: "GET",
+      url: "/api/account",
+      headers: {
+        cookie: cookies,
+        origin: process.env.WEB_ORIGIN,
+      },
+    });
+    expect((read.json() as AccountResponse).realizedPnl24h).toBe("12.5");
+  });
 });
 
 async function assertSingleAllocation(paperAccountId: string): Promise<void> {
@@ -277,6 +352,7 @@ async function assertSingleAllocation(paperAccountId: string): Promise<void> {
   const transactions = await db.select().from(ledgerTransaction);
   expect(transactions).toHaveLength(1);
   expect(transactions[0]?.eventType).toBe("SIGNUP_ALLOCATION");
+  expect(transactions[0]?.paperAccountId).toBe(paperAccountId);
   expect(transactions[0]?.id).toBe(funding[0]?.ledgerTransactionId);
 
   const entries = await db.select().from(ledgerEntry);
@@ -333,4 +409,24 @@ function cookieHeader(response: {
   return response.cookies
     .map((cookie) => `${cookie.name}=${cookie.value}`)
     .join("; ");
+}
+
+async function postRealizedForAccount(
+  paperAccountId: string,
+  realizedPnlDelta: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const userCash = await ensureUserCashLedgerAccount(tx, paperAccountId);
+    const tradingPnl = await ensureSystemTradingPnlAccount(tx);
+    const delta = fromDbDecimal(realizedPnlDelta);
+    await postLedgerTransaction(tx, {
+      eventType: "REALIZED_PNL",
+      paperAccountId,
+      idempotencyKey: `realized-pnl:account-api:${paperAccountId}`,
+      entries: [
+        { ledgerAccountId: tradingPnl.id, amount: delta.negated() },
+        { ledgerAccountId: userCash.id, amount: delta },
+      ],
+    });
+  });
 }

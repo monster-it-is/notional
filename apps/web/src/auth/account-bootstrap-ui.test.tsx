@@ -93,6 +93,7 @@ describe("AccountBootstrap UI", () => {
         status: "ACTIVE",
         lastFaucetClaimAt: null,
         createdAt: "t",
+        realizedPnl24h: "0",
       },
     });
 

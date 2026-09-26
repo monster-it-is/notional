@@ -56,6 +56,7 @@ export async function provisionSignupAllocationInTx(
 
   const ledgerTxn = await postLedgerTransaction(tx, {
     eventType: "SIGNUP_ALLOCATION",
+    paperAccountId: account.id,
     idempotencyKey,
     entries: [
       {

@@ -51,6 +51,7 @@ const account = {
   status: "ACTIVE" as const,
   lastFaucetClaimAt: null,
   createdAt: "t",
+  realizedPnl24h: "0",
 };
 
 vi.mock("../../lib/api/account.ts", () => ({

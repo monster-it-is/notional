@@ -11,6 +11,8 @@ import { ErrorBanner } from "../components/ui/ErrorBanner.tsx";
 import { NumericText } from "../components/ui/NumericText.tsx";
 import { Panel } from "../components/ui/Panel.tsx";
 import { getAccount } from "../lib/api/account.ts";
+import { cn } from "../lib/cn.ts";
+import { decimalVisualSign } from "../lib/decimal-string.ts";
 import { formatExactMoneyDisplay } from "../lib/format-exact-money.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { stopRealtime } from "../realtime/runtime.ts";
@@ -30,6 +32,7 @@ export function AccountPage() {
   const accountQuery = useQuery({
     queryKey: queryKeys.account,
     queryFn: getAccount,
+    refetchInterval: 60_000,
   });
   const user = session.data?.user;
   const account = accountQuery.data;
@@ -89,6 +92,17 @@ export function AccountPage() {
                   {formatExactMoneyDisplay(account.balance)} {account.currency}
                 </NumericText>
               </p>
+              <p
+                className="mt-4 text-sm text-secondary"
+                title="Trading PnL realized during the rolling last 24 hours. Funding is excluded."
+              >
+                Realized PnL (24h)
+              </p>
+              <p className="mt-2" title={account.realizedPnl24h}>
+                <span className={cn("font-numeric", realizedPnlClass(account.realizedPnl24h))}>
+                  {formatSignedRealizedPnl(account.realizedPnl24h)} {account.currency}
+                </span>
+              </p>
               {account.status === "SUSPENDED" ? (
                 <p className="mt-2 text-sm text-secondary">Suspended</p>
               ) : null}
@@ -137,4 +151,22 @@ export function AccountPage() {
       </Panel>
     </div>
   );
+}
+
+function formatSignedRealizedPnl(value: string): string {
+  const display = formatExactMoneyDisplay(value);
+  return decimalVisualSign(value) === "positive" ? `+${display}` : display;
+}
+
+function realizedPnlClass(value: string): string {
+  const sign = decimalVisualSign(value);
+  if (sign === "positive") {
+    return "text-positive";
+  }
+
+  if (sign === "negative") {
+    return "text-negative";
+  }
+
+  return "text-foreground";
 }

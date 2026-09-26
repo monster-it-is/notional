@@ -146,6 +146,7 @@ describe("faucet cooldown and funding history primitives", () => {
     await db.transaction(async (tx) => {
       const signup = await postLedgerTransaction(tx, {
         eventType: "SIGNUP_ALLOCATION",
+        paperAccountId: account.id,
         idempotencyKey: "signup-allocation:list",
         entries: [
           { ledgerAccountId: userCash.id, amount: SIGNUP_ALLOCATION_AMOUNT },
@@ -167,6 +168,7 @@ describe("faucet cooldown and funding history primitives", () => {
     await db.transaction(async (tx) => {
       const faucet = await postLedgerTransaction(tx, {
         eventType: "FAUCET_CLAIM",
+        paperAccountId: account.id,
         idempotencyKey: "faucet:list",
         entries: [
           { ledgerAccountId: userCash.id, amount: faucetAmount },

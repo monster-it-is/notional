@@ -22,6 +22,7 @@ describe("account bootstrap", () => {
         status: "ACTIVE",
         lastFaucetClaimAt: null,
         createdAt: "2026-01-01T00:00:00.000Z",
+        realizedPnl24h: "0",
       }),
       initializeAccount,
     });
@@ -40,6 +41,7 @@ describe("account bootstrap", () => {
       status: "ACTIVE" as const,
       lastFaucetClaimAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
+      realizedPnl24h: "0",
     }));
 
     const result = await runAccountBootstrap({
@@ -63,6 +65,7 @@ describe("account bootstrap", () => {
       status: "ACTIVE" as const,
       lastFaucetClaimAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
+      realizedPnl24h: "0",
     };
     let resolveInit: ((value: typeof account) => void) | undefined;
     const initializeAccount = vi.fn(
@@ -109,6 +112,7 @@ describe("account bootstrap", () => {
       status: "ACTIVE" as const,
       lastFaucetClaimAt: null,
       createdAt: "2026-01-01T00:00:00.000Z",
+      realizedPnl24h: "0",
     };
     const getAccount = vi
       .fn()

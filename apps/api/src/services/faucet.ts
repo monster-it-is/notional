@@ -113,6 +113,7 @@ export async function claimFaucetInTx(
 
   const ledgerTxn = await postLedgerTransaction(tx, {
     eventType: "FAUCET_CLAIM",
+    paperAccountId: funded.account.id,
     idempotencyKey,
     entries: [
       {

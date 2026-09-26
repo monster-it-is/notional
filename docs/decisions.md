@@ -1180,3 +1180,19 @@ Phase 18B.2 records the hosting change after ADR-039. Phase 18A and ADR-038 rema
 - Every resource creation screen must show `$0` or the included Sandbox allocation. A non-zero price means stop. Do not select a cheaper paid plan, upgrade, or switch to Pay-as-you-go. A payment card required for identity verification does not authorize paid resources. Final verification includes a billing page with projected provider spend `$0`.
 - If the free Sandbox resources cannot sustain Notional, stop rather than upgrade. OCI Always Free is only a later fallback decision. It is not selected.
 - 18B.2 does not add a Northflank template, API token, or provider credentials. Sandbox creation stays manual after local Docker/nginx behavior is proven.
+
+## ADR-041 — Ledger transaction paper-account attribution and Realized PnL (24h)
+
+Status: Accepted
+
+`ledger_transaction` now has a NOT NULL `paper_account_id` FK to `paper_account(id)` ON DELETE RESTRICT. Every current accounting event belongs to exactly one paper account. This column is the ownership authority. Do not infer runtime ownership from USER_CASH entries or by parsing idempotency keys.
+
+Insurance-only `REALIZED_PNL` transactions can omit USER_CASH when the protected wallet absorbs the entire loss. Those rows still post `SYSTEM_TRADING_PNL = -realizedPnlDelta`. A USER_CASH-only query would undercount trading losses. SYSTEM_* ledger accounts remain global (`paper_account_id` NULL).
+
+Natural realized trading PnL for reporting is `-SYSTEM_TRADING_PNL.amount`. Do not sum USER_CASH or SYSTEM_INSURANCE.
+
+`AccountResponse.realizedPnl24h` is the rolling previous 24 hours of that amount for the account:
+
+`created_at >= clock_timestamp() - interval '24 hours'`, event type `REALIZED_PNL`. Inclusive bound. Empty set is `"0"`. Funding, faucet, and signup are excluded. The window uses `ledger_transaction.created_at`, not execution or liquidation timestamps.
+
+GET `/api/account`, initialize, and faucet all return the field. The aggregation runs on the read/mapping path after financial mutations have committed. The Account page labels it `Realized PnL (24h)` and refreshes that observer every 60 seconds while mounted.

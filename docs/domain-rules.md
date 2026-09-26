@@ -45,7 +45,7 @@ Eligibility is the absence of SIGNUP_ALLOCATION history, never the current balan
 
 `POST /api/account/initialize` is the recoverable initialization boundary.
 
-`GET /api/account` is read-only and must not create financial state.
+`GET /api/account` is read-only and must not create financial state. It returns `realizedPnl24h`, the rolling last 24 hours of realized trading PnL.
 
 ## Faucet
 
@@ -462,6 +462,8 @@ Authenticated `GET /api/funding` lists position-level perpetual funding history.
 
 The ledger is the immutable explanation of financial changes.
 
+Every `ledger_transaction` belongs to exactly one `paper_account`. `ledger_transaction.paper_account_id` is the ownership authority. SYSTEM_* ledger accounts remain global (`paper_account_id` NULL). If a USER_CASH entry exists, its `ledger_account.paper_account_id` must equal the transaction's `paper_account_id`.
+
 Signed amounts are the permanent convention. For a posted ledger transaction, the signed entry amounts sum to zero.
 
 The paper-account balance is a current projection for fast reads.
@@ -482,6 +484,18 @@ Examples include:
 - liquidation effects
 
 Retries must not cause duplicate financial effects.
+
+## Realized PnL (24h)
+
+Account-wide realized **trading** PnL posted during the rolling previous 24 hours. It is not calendar-day PnL, wallet change, equity, funding, faucet, signup allocation, unrealized PnL, or lifetime `cumulativeRealizedPnl`.
+
+```
+realizedPnl24h = -SUM(SYSTEM_TRADING_PNL.amount)
+```
+
+for `REALIZED_PNL` ledger transactions of this paper account with `created_at >= clock_timestamp() - interval '24 hours'`. Inclusive lower bound. Empty set is `"0"`. Do not sum USER_CASH; insurance may cap or omit the wallet leg while SYSTEM_TRADING_PNL still holds the full trading delta.
+
+The public label is `Realized PnL (24h)`. Do not call it Daily PnL or Today's PnL.
 
 ## Concurrency
 

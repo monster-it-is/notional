@@ -84,6 +84,7 @@ export async function settleRealizedPnlInTx(
 
   await postLedgerTransaction(tx, {
     eventType: "REALIZED_PNL",
+    paperAccountId: params.paperAccountId,
     idempotencyKey: params.idempotencyKey,
     entries,
   });

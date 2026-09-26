@@ -8,6 +8,8 @@ import type {
 import {
   db,
   ensurePaperAccount,
+  ensureSystemTradingPnlAccount,
+  ensureUserCashLedgerAccount,
   findPaperAccountByUserId,
   fromDbDecimal,
   fundingEvent,
@@ -15,6 +17,7 @@ import {
   ledgerEntry,
   ledgerTransaction,
   paperAccount,
+  postLedgerTransaction,
   SIGNUP_ALLOCATION_AMOUNT,
 } from "@notional/db";
 import {
@@ -145,6 +148,36 @@ describe("faucet api", () => {
     expect(readBody.lastFaucetClaimAt).toBe(body.lastFaucetClaimAt);
 
     await assertSingleFaucetClaim(accountId, expectedBalance);
+  });
+
+  it("does not change realizedPnl24h when claiming the faucet", async () => {
+    const { cookies, accountId } = await initializeUser(
+      app,
+      "faucet-pnl@example.com",
+    );
+    await postRealizedForAccount(accountId, "-3.25");
+
+    const before = await app.inject({
+      method: "GET",
+      url: "/api/account",
+      headers: authHeadersFromCookie(cookies),
+    });
+    expect((before.json() as AccountResponse).realizedPnl24h).toBe("-3.25");
+
+    const claimed = await app.inject({
+      method: "POST",
+      url: "/api/account/faucet",
+      headers: authHeadersFromCookie(cookies),
+    });
+    expect(claimed.statusCode).toBe(200);
+    expect((claimed.json() as AccountResponse).realizedPnl24h).toBe("-3.25");
+
+    const after = await app.inject({
+      method: "GET",
+      url: "/api/account",
+      headers: authHeadersFromCookie(cookies),
+    });
+    expect((after.json() as AccountResponse).realizedPnl24h).toBe("-3.25");
   });
 
   it("rejects an immediate second claim and leaves financial history unchanged", async () => {
@@ -466,6 +499,7 @@ async function assertSingleFaucetClaim(
     (transaction) => transaction.eventType === "FAUCET_CLAIM",
   );
   expect(faucetTxns).toHaveLength(1);
+  expect(faucetTxns[0]?.paperAccountId).toBe(paperAccountId);
   expect(faucetTxns[0]?.id).toBe(faucetEvents[0]?.ledgerTransactionId);
 
   const entries = (await db.select().from(ledgerEntry)).filter(
@@ -551,4 +585,24 @@ function cookieHeader(response: {
   return response.cookies
     .map((cookie) => `${cookie.name}=${cookie.value}`)
     .join("; ");
+}
+
+async function postRealizedForAccount(
+  paperAccountId: string,
+  realizedPnlDelta: string,
+): Promise<void> {
+  await db.transaction(async (tx) => {
+    const userCash = await ensureUserCashLedgerAccount(tx, paperAccountId);
+    const tradingPnl = await ensureSystemTradingPnlAccount(tx);
+    const delta = fromDbDecimal(realizedPnlDelta);
+    await postLedgerTransaction(tx, {
+      eventType: "REALIZED_PNL",
+      paperAccountId,
+      idempotencyKey: `realized-pnl:faucet-api:${paperAccountId}`,
+      entries: [
+        { ledgerAccountId: tradingPnl.id, amount: delta.negated() },
+        { ledgerAccountId: userCash.id, amount: delta },
+      ],
+    });
+  });
 }
