@@ -90,7 +90,7 @@ export function OrdersHistoryTable({
 
 function orderStatusClass(status: OrderStatus): string | undefined {
   if (status === "OPEN") {
-    return "text-accent";
+    return "text-accent-ink";
   }
 
   if (status === "CANCELLED") {

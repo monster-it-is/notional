@@ -68,7 +68,7 @@ describe("OrdersHistoryTable", () => {
     expect(filled.className).not.toContain("text-positive");
     expect(filled.className).not.toContain("text-negative");
 
-    expect(screen.getByText("OPEN").className).toContain("text-accent");
+    expect(screen.getByText("OPEN").className).toContain("text-accent-ink");
     expect(screen.getByText("OPEN").className).not.toContain("text-positive");
     expect(screen.getByText("CANCELLED").className).toContain("text-secondary");
     expect(screen.getByText("CANCELLED").className).not.toContain("text-negative");

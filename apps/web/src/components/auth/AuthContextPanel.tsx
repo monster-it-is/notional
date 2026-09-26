@@ -24,7 +24,7 @@ export function AuthContextPanel() {
     >
       <div className="w-full max-w-md border border-border bg-surface xl:max-w-xl">
         <div className="border-b border-border bg-surface-subtle px-4 py-2.5 xl:px-5">
-          <p className="border-l-2 border-l-accent pl-2 font-numeric text-[10px] font-medium uppercase tracking-[0.18em] text-accent">
+          <p className="border-l-2 border-l-accent pl-2 font-numeric text-[10px] font-medium uppercase tracking-[0.18em] text-accent-ink">
             Paper trading
           </p>
         </div>
@@ -46,7 +46,7 @@ export function AuthContextPanel() {
             </p>
             <p className="mt-1 font-numeric text-2xl tracking-tight text-foreground xl:text-3xl">
               1,000
-              <span className="ml-2 text-sm tracking-[0.14em] text-accent">USDT</span>
+              <span className="ml-2 text-sm tracking-[0.14em] text-accent-ink">USDT</span>
             </p>
             <p className="mt-1 text-xs leading-relaxed text-secondary">
               {signup

@@ -17,6 +17,7 @@
   --accent-active: #d9a122;
   --accent-foreground: #0a0d13;
   --accent-soft: color-mix(in srgb, var(--accent) 14%, var(--surface));
+  --accent-ink: var(--accent);
   --positive: #2ebd85;
   --negative: #f0544c;
   --feedback-warning-background: color-mix(in srgb, var(--accent) 12%, var(--surface));
@@ -57,9 +58,11 @@ html.light {
   --accent-active: #c4920f;
   --accent-foreground: #0a0d13;
   --accent-soft: color-mix(in srgb, var(--accent) 16%, var(--surface));
-  /* Same green/red families, darkened for contrast on white. */
-  --positive: #17875a;
-  --negative: #c53d36;
+  /* Filled accent stays #f0b429; this ink token is for amber text only. */
+  --accent-ink: #7a4e00;
+  /* Same green/red families; darkened for AA on paper, row hover, and 10% selected tints. */
+  --positive: #157a52;
+  --negative: #c03932;
   --feedback-warning-background: color-mix(in srgb, var(--accent) 14%, var(--surface));
   --feedback-warning-border: color-mix(in srgb, var(--accent) 48%, var(--border));
   --feedback-warning-text: var(--text-primary);
@@ -86,6 +89,7 @@ html.light {
   --color-accent-active: var(--accent-active);
   --color-accent-foreground: var(--accent-foreground);
   --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
   --color-positive: var(--positive);
   --color-negative: var(--negative);
   --color-warning: var(--feedback-warning-text);
