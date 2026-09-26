@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { Button } from "./Button.tsx";
 import { ErrorBanner } from "./ErrorBanner.tsx";
@@ -81,6 +81,29 @@ describe("Tabs", () => {
     expect(screen.getByRole("tablist")).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Positions" })).toHaveAttribute("aria-selected", "true");
     expect(screen.getByRole("tab", { name: "Open orders" })).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByRole("tab", { name: "Positions" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: "Open orders" })).toBeEnabled();
+  });
+
+  it("disables a tab with native button semantics", () => {
+    const onChange = vi.fn();
+    render(
+      <Tabs
+        tabs={[
+          { id: "positions", label: "Positions" },
+          { id: "orders", label: "Open orders", disabled: true },
+        ]}
+        value="positions"
+        onChange={onChange}
+      />,
+    );
+    const orders = screen.getByRole("tab", { name: "Open orders" });
+    expect(orders).toBeDisabled();
+    expect(orders).toHaveAttribute("aria-disabled", "true");
+    expect(screen.getByRole("tab", { name: "Positions" })).toBeEnabled();
+    expect(screen.getByRole("tab", { name: "Positions" })).not.toHaveAttribute("aria-disabled");
+    orders.click();
+    expect(onChange).not.toHaveBeenCalled();
   });
 });
 

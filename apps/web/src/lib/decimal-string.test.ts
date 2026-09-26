@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  absolutePositionQuantity,
   decimalVisualSign,
   isPlainPositiveDecimal,
   positionSideFromQuantity,
@@ -25,6 +26,13 @@ describe("decimal strings", () => {
     expect(positionSideFromQuantity("-0.000")).toBe("FLAT");
     expect(positionSideFromQuantity("")).toBe("FLAT");
     expect(positionSideFromQuantity("not-a-decimal")).toBe("FLAT");
+  });
+
+  it("removes exactly one leading minus and preserves the remaining digits", () => {
+    expect(absolutePositionQuantity("-0.50000000")).toBe("0.50000000");
+    expect(absolutePositionQuantity("0.50000000")).toBe("0.50000000");
+    expect(absolutePositionQuantity("1")).toBe("1");
+    expect(absolutePositionQuantity("-1.2300")).toBe("1.2300");
   });
 
   it("classifies realized PnL sign without float conversion", () => {

@@ -7,6 +7,15 @@ export function isPlainPositiveDecimal(value: string): boolean {
   return PLAIN_POSITIVE_DECIMAL.test(value);
 }
 
+/** Exact absolute quantity: drop one leading "-" and keep every other character. */
+export function absolutePositionQuantity(quantity: string): string {
+  if (quantity.startsWith("-")) {
+    return quantity.slice(1);
+  }
+
+  return quantity;
+}
+
 export type PositionVisualSide = "LONG" | "SHORT" | "FLAT";
 
 export function positionSideFromQuantity(quantity: string): PositionVisualSide {

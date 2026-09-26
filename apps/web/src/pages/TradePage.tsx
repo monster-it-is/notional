@@ -31,6 +31,7 @@ export function TradePage() {
   const { symbol, setSymbol } = useSelectedSymbol(fallback);
   const instrument = instruments.find((row) => row.symbol === symbol) ?? null;
   const [tab, setTab] = useState<"positions" | "orders" | "executions">("positions");
+  const [closePending, setClosePending] = useState(false);
 
   useEffect(() => {
     const socket = getMarketSocket();
@@ -73,14 +74,22 @@ export function TradePage() {
           <Tabs
             tabs={[
               { id: "positions", label: "Positions" },
-              { id: "orders", label: "Open orders" },
-              { id: "executions", label: "Recent executions" },
+              { id: "orders", label: "Open orders", disabled: closePending },
+              { id: "executions", label: "Recent executions", disabled: closePending },
             ]}
             value={tab}
-            onChange={setTab}
+            onChange={(id) => {
+              if (closePending && id !== "positions") {
+                return;
+              }
+
+              setTab(id);
+            }}
           />
           <div className="mt-3 min-w-0">
-            {tab === "positions" ? <PositionsTable /> : null}
+            {tab === "positions" ? (
+              <PositionsTable disabled={suspended} onClosePendingChange={setClosePending} />
+            ) : null}
             {tab === "orders" ? <OpenOrdersTable /> : null}
             {tab === "executions" ? <ExecutionsTable limit={20} offset={0} /> : null}
           </div>

@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { useCallback, useRef, useState } from "react";
 
 import { listPositions } from "../lib/api/positions.ts";
 import {
@@ -8,15 +9,44 @@ import {
   type PositionVisualSide,
 } from "../lib/decimal-string.ts";
 import { queryKeys } from "../lib/query-keys.ts";
+import { ClosePositionConfirm } from "./ClosePositionConfirm.tsx";
+import { Button } from "./ui/Button.tsx";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
 import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
-export function PositionsTable() {
+export function PositionsTable({
+  disabled = false,
+  onClosePendingChange,
+}: {
+  disabled?: boolean;
+  onClosePendingChange?: (pending: boolean) => void;
+}) {
   const query = useQuery({
     queryKey: queryKeys.positions.all,
     queryFn: listPositions,
   });
+  const [selection, setSelection] = useState<{
+    symbol: string;
+    signedQuantity: string;
+  } | null>(null);
+  const [closePending, setClosePending] = useState(false);
+  const openerRef = useRef<HTMLButtonElement | null>(null);
+  const reportClosePending = useCallback(
+    (pending: boolean) => {
+      setClosePending(pending);
+      onClosePendingChange?.(pending);
+    },
+    [onClosePendingChange],
+  );
+  const dismissClose = useCallback(() => {
+    reportClosePending(false);
+    setSelection(null);
+    const opener = openerRef.current;
+    queueMicrotask(() => {
+      opener?.focus();
+    });
+  }, [reportClosePending]);
 
   if (query.isLoading) {
     return <TableStatus>Loading positions…</TableStatus>;
@@ -28,42 +58,78 @@ export function PositionsTable() {
 
   const positions = query.data?.positions ?? [];
 
-  if (positions.length === 0) {
-    return <EmptyState>No open positions.</EmptyState>;
-  }
-
   return (
-    <DataTable>
-      <thead>
-        <tr>
-          <Th>Symbol</Th>
-          <Th>Side</Th>
-          <Th>Quantity</Th>
-          <Th>Entry</Th>
-          <Th>Realized PnL</Th>
-          <Th>Updated</Th>
-        </tr>
-      </thead>
-      <tbody>
-        {positions.map((position) => {
-          const side = positionSideFromQuantity(position.quantity);
-          const pnlSign = decimalVisualSign(position.cumulativeRealizedPnl);
-
-          return (
-            <tr key={position.symbol}>
-              <Td>{position.symbol}</Td>
-              <Td className={sideClass(side)}>{side}</Td>
-              <Td numeric>{position.quantity}</Td>
-              <Td numeric>{position.entryPrice}</Td>
-              <Td numeric className={pnlClass(pnlSign)}>
-                {position.cumulativeRealizedPnl}
-              </Td>
-              <Td>{formatTimestamp(position.updatedAt)}</Td>
+    <div className="space-y-3">
+      {selection ? (
+        <ClosePositionConfirm
+          key={`${selection.symbol}:${selection.signedQuantity}`}
+          symbol={selection.symbol}
+          signedQuantity={selection.signedQuantity}
+          disabled={disabled}
+          onDismiss={dismissClose}
+          onPendingChange={reportClosePending}
+        />
+      ) : null}
+      {positions.length === 0 ? (
+        <EmptyState>No open positions.</EmptyState>
+      ) : (
+        <DataTable>
+          <thead>
+            <tr>
+              <Th>Symbol</Th>
+              <Th>Side</Th>
+              <Th>Quantity</Th>
+              <Th>Entry</Th>
+              <Th>Realized PnL</Th>
+              <Th>Updated</Th>
+              <Th>Action</Th>
             </tr>
-          );
-        })}
-      </tbody>
-    </DataTable>
+          </thead>
+          <tbody>
+            {positions.map((position) => {
+              const side = positionSideFromQuantity(position.quantity);
+              const pnlSign = decimalVisualSign(position.cumulativeRealizedPnl);
+
+              return (
+                <tr key={position.symbol}>
+                  <Td>{position.symbol}</Td>
+                  <Td className={sideClass(side)}>{side}</Td>
+                  <Td numeric>{position.quantity}</Td>
+                  <Td numeric>{position.entryPrice}</Td>
+                  <Td numeric className={pnlClass(pnlSign)}>
+                    {position.cumulativeRealizedPnl}
+                  </Td>
+                  <Td>{formatTimestamp(position.updatedAt)}</Td>
+                  <Td>
+                    {side === "FLAT" ? null : (
+                      <Button
+                        type="button"
+                        size="sm"
+                        disabled={disabled || closePending}
+                        aria-label={`Close ${position.symbol}`}
+                        onClick={(event) => {
+                          if (closePending) {
+                            return;
+                          }
+
+                          openerRef.current = event.currentTarget;
+                          setSelection({
+                            symbol: position.symbol,
+                            signedQuantity: position.quantity,
+                          });
+                        }}
+                      >
+                        Close
+                      </Button>
+                    )}
+                  </Td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </DataTable>
+      )}
+    </div>
   );
 }
 

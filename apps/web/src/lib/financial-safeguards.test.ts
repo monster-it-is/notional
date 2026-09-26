@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 const files = [
   "src/components/OrderForm.tsx",
   "src/components/PositionsTable.tsx",
+  "src/components/ClosePositionConfirm.tsx",
   "src/components/OpenOrdersTable.tsx",
   "src/components/MarketTicker.tsx",
   "src/components/ExecutionsTable.tsx",
@@ -38,6 +39,7 @@ describe("financial number safeguards", () => {
       expect(source).not.toMatch(/\bparseFloat\s*\(/);
       expect(source).not.toMatch(/\bparseInt\s*\(/);
       expect(source).not.toMatch(/\bNumber\s*\(/);
+      expect(source).not.toMatch(/\.toFixed\s*\(/);
     }
   });
 });

@@ -9,7 +9,7 @@ import { TradePage } from "./TradePage.tsx";
 import { listExecutions } from "../lib/api/executions.ts";
 import { listInstruments } from "../lib/api/instruments.ts";
 import { getMarginSettings } from "../lib/api/margin.ts";
-import { cancelOrder, listOrders } from "../lib/api/orders.ts";
+import { cancelOrder, listOrders, placeOrder } from "../lib/api/orders.ts";
 import { listPositions } from "../lib/api/positions.ts";
 
 const { setDesiredSymbol } = vi.hoisted(() => ({
@@ -25,6 +25,7 @@ vi.mock("../lib/api/positions.ts", () => ({
 vi.mock("../lib/api/orders.ts", () => ({
   listOrders: vi.fn(),
   cancelOrder: vi.fn(),
+  placeOrder: vi.fn(),
 }));
 vi.mock("../lib/api/executions.ts", () => ({
   listExecutions: vi.fn(),
@@ -43,6 +44,7 @@ const mockedInstruments = vi.mocked(listInstruments);
 const mockedPositions = vi.mocked(listPositions);
 const mockedOrders = vi.mocked(listOrders);
 const mockedCancel = vi.mocked(cancelOrder);
+const mockedPlace = vi.mocked(placeOrder);
 const mockedExecutions = vi.mocked(listExecutions);
 const mockedMargin = vi.mocked(getMarginSettings);
 
@@ -103,6 +105,7 @@ describe("TradePage", () => {
     mockedPositions.mockReset();
     mockedOrders.mockReset();
     mockedCancel.mockReset();
+    mockedPlace.mockReset();
     mockedExecutions.mockReset();
     mockedMargin.mockReset();
     mockedInstruments.mockResolvedValue({ instruments: [btc, eth] });
@@ -225,5 +228,134 @@ describe("TradePage", () => {
     await user.click(screen.getByRole("tab", { name: "Open orders" }));
     await user.click(await screen.findByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(mockedCancel).toHaveBeenCalledWith("ord-1"));
+  });
+
+  it("disables position Close while the account is suspended", async () => {
+    mockedPositions.mockResolvedValue({
+      positions: [
+        {
+          symbol: "BTCUSDT",
+          quantity: "1.5",
+          entryPrice: "100",
+          cumulativeRealizedPnl: "0",
+          updatedAt: "t",
+        },
+      ],
+    });
+    renderTrade({ suspended: true });
+    expect(await screen.findByRole("button", { name: "Close BTCUSDT" })).toBeDisabled();
+  });
+
+  it("keeps Positions mounted while a close POST is pending", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [
+        {
+          symbol: "BTCUSDT",
+          quantity: "1.5",
+          entryPrice: "100",
+          cumulativeRealizedPnl: "0",
+          updatedAt: "t",
+        },
+      ],
+    });
+    mockedPlace.mockReturnValue(new Promise(() => undefined));
+    renderTrade();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("tab", { name: "Open orders" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Recent executions" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: "Positions" })).toBeEnabled();
+    await user.click(screen.getByRole("tab", { name: "Open orders" }));
+    await user.click(screen.getByRole("tab", { name: "Recent executions" }));
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Positions" })).toHaveAttribute("aria-selected", "true");
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows Trade tab changes after a failed close", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [
+        {
+          symbol: "BTCUSDT",
+          quantity: "1.5",
+          entryPrice: "100",
+          cumulativeRealizedPnl: "0",
+          updatedAt: "t",
+        },
+      ],
+    });
+    mockedPlace.mockRejectedValue(new Error("network"));
+    renderTrade();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    expect(await screen.findByText("network")).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBeInTheDocument();
+    const ordersTab = screen.getByRole("tab", { name: "Open orders" });
+    expect(ordersTab).toBeEnabled();
+    await user.click(ordersTab);
+    expect(screen.queryByRole("dialog", { name: "Close BTCUSDT" })).not.toBeInTheDocument();
+    expect(await screen.findByText("No open orders.")).toBeInTheDocument();
+  });
+
+  it("allows Trade tab changes after a successful close", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [
+        {
+          symbol: "BTCUSDT",
+          quantity: "1.5",
+          entryPrice: "100",
+          cumulativeRealizedPnl: "0",
+          updatedAt: "t",
+        },
+      ],
+    });
+    mockedPlace.mockResolvedValue({
+      id: "close-1",
+      symbol: "BTCUSDT",
+      side: "SELL",
+      type: "MARKET",
+      quantity: "1.5",
+      limitPrice: null,
+      reduceOnly: true,
+      status: "FILLED",
+      origin: "USER",
+      createdAt: "t",
+      updatedAt: "t",
+    });
+    renderTrade();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const ordersTab = screen.getByRole("tab", { name: "Open orders" });
+    expect(ordersTab).toBeEnabled();
+    await user.click(ordersTab);
+    expect(await screen.findByText("No open orders.")).toBeInTheDocument();
+  });
+
+  it("still allows tab changes while an idle Close confirmation is open", async () => {
+    const user = userEvent.setup();
+    mockedPositions.mockResolvedValue({
+      positions: [
+        {
+          symbol: "BTCUSDT",
+          quantity: "1.5",
+          entryPrice: "100",
+          cumulativeRealizedPnl: "0",
+          updatedAt: "t",
+        },
+      ],
+    });
+    renderTrade();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    expect(await screen.findByRole("dialog", { name: "Close BTCUSDT" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Open orders" })).toBeEnabled();
+    await user.click(screen.getByRole("tab", { name: "Open orders" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(await screen.findByText("No open orders.")).toBeInTheDocument();
+    expect(mockedPlace).not.toHaveBeenCalled();
   });
 });
