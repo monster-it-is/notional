@@ -1,4 +1,4 @@
-import type { OrderSide, PositionListResponse } from "@notional/contracts";
+import type { OrderResponse, OrderSide, PositionListResponse } from "@notional/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -22,17 +22,20 @@ export function ClosePositionConfirm({
   signedQuantity,
   disabled,
   onDismiss,
+  onSuccess,
   onPendingChange,
 }: {
   symbol: string;
   signedQuantity: string;
   disabled: boolean;
   onDismiss: () => void;
+  onSuccess?: (order: OrderResponse) => void;
   onPendingChange: (pending: boolean) => void;
 }) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
   const placedRef = useRef(false);
+  const deliveredOrderIdRef = useRef<string | null>(null);
   const queryClient = useQueryClient();
   const order = usePlaceOrder();
   const [stale, setStale] = useState(false);
@@ -57,10 +60,14 @@ export function ClosePositionConfirm({
   }, [onPendingChange, order.pending]);
 
   useEffect(() => {
-    if (order.data) {
-      onDismiss();
+    if (!order.data || deliveredOrderIdRef.current === order.data.id) {
+      return;
     }
-  }, [order.data, onDismiss]);
+
+    deliveredOrderIdRef.current = order.data.id;
+    onSuccess?.(order.data);
+    onDismiss();
+  }, [order.data, onSuccess, onDismiss]);
 
   function confirmClose(): void {
     if (disabled || order.pending || placedRef.current || closeSide === null) {

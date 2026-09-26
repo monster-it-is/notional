@@ -5,6 +5,7 @@ import { isApiError } from "../lib/api/errors.ts";
 import { isPlainPositiveDecimal } from "../lib/decimal-string.ts";
 import { cn } from "../lib/cn.ts";
 import { usePlaceOrder } from "../hooks/use-place-order.ts";
+import { OrderAcknowledgement } from "./OrderAcknowledgement.tsx";
 import { Button } from "./ui/Button.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
 import { Input } from "./ui/Input.tsx";
@@ -257,6 +258,7 @@ export function OrderForm({
           </Button>
         ) : null}
       </div>
+      {order.data ? <OrderAcknowledgement order={order.data} /> : null}
     </form>
   );
 }

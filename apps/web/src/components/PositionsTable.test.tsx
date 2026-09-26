@@ -248,6 +248,10 @@ function filledClose(side: "BUY" | "SELL", quantity: string): OrderResponse {
   };
 }
 
+function appearsBefore(first: HTMLElement, second: HTMLElement): boolean {
+  return (first.compareDocumentPosition(second) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+}
+
 function renderPositions(ui: ReactElement = <PositionsTable />) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -597,6 +601,121 @@ describe("PositionsTable close", () => {
     await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
     expect(within(await screen.findByRole("dialog")).getByText("9.5")).toBeInTheDocument();
     expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("shows the returned close acknowledgement after the dialog dismisses", async () => {
+    const user = userEvent.setup();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    mockedPlace.mockResolvedValue(filledClose("SELL", "1.25"));
+    renderPositions();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(mockedPlace).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/^BTCUSDT · MARKET SELL · FILLED$/);
+    expect(status).toHaveClass("text-sm", "text-secondary");
+    expect(appearsBefore(status, screen.getByRole("table"))).toBe(true);
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    expect(mockedPlace.mock.calls[0]?.[0]).toEqual({
+      type: "MARKET",
+      symbol: "BTCUSDT",
+      side: "SELL",
+      quantity: "1.25",
+      reduceOnly: true,
+    });
+  });
+
+  it("keeps the close acknowledgement when the position list becomes empty", async () => {
+    const user = userEvent.setup();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    mockedPlace.mockResolvedValue(filledClose("SELL", "1.25"));
+    const { client } = renderPositions();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET SELL · FILLED$/);
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+
+    mocked.mockResolvedValue({ positions: [] });
+    await client.refetchQueries({ queryKey: queryKeys.positions.all });
+
+    expect(await screen.findByText("No open positions.")).toBeInTheDocument();
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent(/^BTCUSDT · MARKET SELL · FILLED$/);
+    expect(appearsBefore(status, screen.getByText("No open positions."))).toBe(true);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+  });
+
+  it("clears the previous close acknowledgement when another confirmation opens", async () => {
+    const user = userEvent.setup();
+    mocked.mockResolvedValue({
+      positions: [position("BTCUSDT", "1.25"), position("ETHUSDT", "-2")],
+    });
+    mockedPlace.mockResolvedValue(filledClose("SELL", "1.25"));
+    renderPositions();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET SELL · FILLED$/);
+
+    await user.click(screen.getByRole("button", { name: "Close ETHUSDT" }));
+    expect(await screen.findByRole("dialog", { name: "Close ETHUSDT" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not acknowledge a failed close", async () => {
+    const user = userEvent.setup();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    mockedPlace.mockRejectedValue(new Error("close failed"));
+    renderPositions();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("close failed");
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces the previous close acknowledgement after the next success", async () => {
+    const user = userEvent.setup();
+    mocked.mockResolvedValue({
+      positions: [position("BTCUSDT", "1.25"), position("ETHUSDT", "-2")],
+    });
+    mockedPlace.mockResolvedValueOnce(filledClose("SELL", "1.25"));
+    mockedPlace.mockResolvedValueOnce({
+      ...filledClose("BUY", "2"),
+      id: "close-2",
+      symbol: "ETHUSDT",
+      status: "OPEN",
+    });
+    renderPositions();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET SELL · FILLED$/);
+
+    await user.click(screen.getByRole("button", { name: "Close ETHUSDT" }));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: "Confirm close" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/^ETHUSDT · MARKET BUY · OPEN$/);
+    expect(screen.queryByText("BTCUSDT · MARKET SELL · FILLED")).not.toBeInTheDocument();
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(mockedPlace).toHaveBeenCalledTimes(2);
+    expect(mockedPlace.mock.calls[1]?.[0]).toEqual({
+      type: "MARKET",
+      symbol: "ETHUSDT",
+      side: "BUY",
+      quantity: "2",
+      reduceOnly: true,
+    });
   });
 
   it("keeps REDUCE_ONLY_VIOLATION visible in the confirmation", async () => {

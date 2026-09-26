@@ -1,3 +1,4 @@
+import type { OrderResponse, OrderSide, OrderStatus, OrderType } from "@notional/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -193,7 +194,243 @@ describe("OrderForm", () => {
   it("does not auto-retry POST /api/orders", () => {
     expect(PLACE_ORDER_MUTATION_OPTIONS.retry).toBe(false);
   });
+
+  it("renders a filled market acknowledgement from the response", async () => {
+    const user = userEvent.setup();
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        symbol: "BTCUSDT",
+        type: "MARKET",
+        side: "BUY",
+        status: "FILLED",
+      }),
+    );
+    render(<OrderForm symbol="BTCUSDT" disabled={false} />, { wrapper });
+    await user.type(screen.getByLabelText("Quantity"), "0.001");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+
+    const status = await screen.findByRole("status");
+    expect(status).toHaveTextContent(/^BTCUSDT · MARKET BUY · FILLED$/);
+    expect(status).toHaveClass("text-sm", "text-secondary");
+    expect(status.className).not.toContain("text-positive");
+    expect(status.className).not.toContain("text-negative");
+    expect(mockedPlace.mock.calls[0]?.[0]).toMatchObject({
+      type: "MARKET",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.001",
+    });
+  });
+
+  it("renders a resting limit acknowledgement from the response", async () => {
+    const user = userEvent.setup();
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        symbol: "ETHUSDT",
+        type: "LIMIT",
+        side: "BUY",
+        status: "OPEN",
+      }),
+    );
+    render(<OrderForm symbol="ETHUSDT" disabled={false} />, { wrapper });
+    await user.click(screen.getByRole("button", { name: "LIMIT" }));
+    await user.type(screen.getByLabelText("Quantity"), "0.5");
+    await user.type(screen.getByLabelText("Limit price"), "2500");
+    await user.click(screen.getByRole("button", { name: /Place LIMIT BUY/i }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/^ETHUSDT · LIMIT BUY · OPEN$/);
+    expect(mockedPlace.mock.calls[0]?.[0]).toMatchObject({
+      type: "LIMIT",
+      symbol: "ETHUSDT",
+      side: "BUY",
+      quantity: "0.5",
+      limitPrice: "2500",
+    });
+  });
+
+  it("renders response status instead of inferring it from the request type", async () => {
+    const user = userEvent.setup();
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        symbol: "ETHUSDT",
+        type: "LIMIT",
+        side: "SELL",
+        status: "OPEN",
+      }),
+    );
+    render(<OrderForm symbol="BTCUSDT" disabled={false} />, { wrapper });
+    await user.type(screen.getByLabelText("Quantity"), "0.001");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+
+    await waitFor(() => expect(mockedPlace).toHaveBeenCalledTimes(1));
+    expect(mockedPlace.mock.calls[0]?.[0]).toMatchObject({
+      type: "MARKET",
+      symbol: "BTCUSDT",
+      side: "BUY",
+    });
+    expect(await screen.findByRole("status")).toHaveTextContent(/^ETHUSDT · LIMIT SELL · OPEN$/);
+    expect(screen.queryByText("BTCUSDT · MARKET BUY · FILLED")).not.toBeInTheDocument();
+  });
+
+  it("clears the previous acknowledgement while a new submission is pending", async () => {
+    const user = userEvent.setup();
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        symbol: "BTCUSDT",
+        type: "MARKET",
+        side: "BUY",
+        status: "FILLED",
+      }),
+    );
+    render(<OrderForm symbol="BTCUSDT" disabled={false} />, { wrapper });
+    await user.type(screen.getByLabelText("Quantity"), "0.001");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET BUY · FILLED$/);
+
+    mockedPlace.mockReturnValueOnce(new Promise(() => undefined));
+    await user.clear(screen.getByLabelText("Quantity"));
+    await user.type(screen.getByLabelText("Quantity"), "0.002");
+    expect(screen.getByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET BUY · FILLED$/);
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+
+    await waitFor(() => expect(screen.queryByRole("status")).not.toBeInTheDocument());
+    expect(screen.getByRole("button", { name: "Placing…" })).toBeDisabled();
+    expect(mockedPlace).toHaveBeenCalledTimes(2);
+  });
+
+  it("replaces the acknowledgement when the next submission succeeds", async () => {
+    const user = userEvent.setup();
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        id: "first",
+        symbol: "BTCUSDT",
+        type: "MARKET",
+        side: "BUY",
+        status: "FILLED",
+      }),
+    );
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        id: "second",
+        symbol: "ETHUSDT",
+        type: "LIMIT",
+        side: "SELL",
+        status: "OPEN",
+      }),
+    );
+    render(<OrderForm symbol="BTCUSDT" disabled={false} />, { wrapper });
+    await user.type(screen.getByLabelText("Quantity"), "0.001");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET BUY · FILLED$/);
+
+    await user.click(screen.getByRole("button", { name: "LIMIT" }));
+    await user.click(screen.getByRole("button", { name: "SELL" }));
+    await user.clear(screen.getByLabelText("Quantity"));
+    await user.type(screen.getByLabelText("Quantity"), "0.002");
+    await user.type(screen.getByLabelText("Limit price"), "2500");
+    await user.click(screen.getByRole("button", { name: /Place LIMIT SELL/i }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent(/^ETHUSDT · LIMIT SELL · OPEN$/);
+    expect(screen.queryByText("BTCUSDT · MARKET BUY · FILLED")).not.toBeInTheDocument();
+    expect(mockedPlace).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not present the previous acknowledgement as the result of a failed submission", async () => {
+    const user = userEvent.setup();
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        symbol: "BTCUSDT",
+        type: "MARKET",
+        side: "BUY",
+        status: "FILLED",
+      }),
+    );
+    mockedPlace.mockRejectedValueOnce(new Error("network"));
+    render(<OrderForm symbol="BTCUSDT" disabled={false} />, { wrapper });
+    await user.type(screen.getByLabelText("Quantity"), "0.001");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET BUY · FILLED$/);
+
+    await user.clear(screen.getByLabelText("Quantity"));
+    await user.type(screen.getByLabelText("Quantity"), "0.002");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("network");
+    expect(screen.getByRole("button", { name: "Retry same order" })).toBeInTheDocument();
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    expect(screen.queryByText("BTCUSDT · MARKET BUY · FILLED")).not.toBeInTheDocument();
+  });
+
+  it("renders the acknowledgement returned by a successful retry of the same order", async () => {
+    const user = userEvent.setup();
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        id: "first",
+        symbol: "BTCUSDT",
+        type: "MARKET",
+        side: "BUY",
+        status: "FILLED",
+      }),
+    );
+    mockedPlace.mockRejectedValueOnce(new Error("network"));
+    mockedPlace.mockResolvedValueOnce(
+      orderResponse({
+        id: "retry",
+        symbol: "BTCUSDT",
+        type: "MARKET",
+        side: "BUY",
+        status: "OPEN",
+      }),
+    );
+    render(<OrderForm symbol="BTCUSDT" disabled={false} />, { wrapper });
+    await user.type(screen.getByLabelText("Quantity"), "0.001");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET BUY · FILLED$/);
+
+    await user.clear(screen.getByLabelText("Quantity"));
+    await user.type(screen.getByLabelText("Quantity"), "0.002");
+    await user.click(screen.getByRole("button", { name: /Place MARKET BUY/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("network");
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+    const failedKey = mockedPlace.mock.calls[1]?.[1];
+
+    await user.click(screen.getByRole("button", { name: "Retry same order" }));
+    expect(await screen.findByRole("status")).toHaveTextContent(/^BTCUSDT · MARKET BUY · OPEN$/);
+    expect(screen.queryByText("BTCUSDT · MARKET BUY · FILLED")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(mockedPlace).toHaveBeenCalledTimes(3);
+    expect(mockedPlace.mock.calls[2]?.[1]).toBe(failedKey);
+    expect(mockedPlace.mock.calls[2]?.[0]).toMatchObject({
+      type: "MARKET",
+      symbol: "BTCUSDT",
+      side: "BUY",
+      quantity: "0.002",
+    });
+  });
 });
+
+function orderResponse(overrides: {
+  id?: string;
+  symbol: string;
+  type: OrderType;
+  side: OrderSide;
+  status: OrderStatus;
+  quantity?: string;
+}): OrderResponse {
+  return {
+    id: overrides.id ?? "1",
+    symbol: overrides.symbol,
+    side: overrides.side,
+    type: overrides.type,
+    quantity: overrides.quantity ?? "0.001",
+    limitPrice: overrides.type === "LIMIT" ? "2500" : null,
+    reduceOnly: false,
+    status: overrides.status,
+    origin: "USER",
+    createdAt: "t",
+    updatedAt: "t",
+  };
+}
 
 function filledMarket(overrides: {
   side?: "BUY" | "SELL";

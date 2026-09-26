@@ -1,4 +1,4 @@
-import type { OrderSide } from "@notional/contracts";
+import type { OrderResponse, OrderSide } from "@notional/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 
@@ -11,6 +11,7 @@ import {
 } from "../lib/decimal-string.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { ClosePositionConfirm } from "./ClosePositionConfirm.tsx";
+import { OrderAcknowledgement } from "./OrderAcknowledgement.tsx";
 import { Button } from "./ui/Button.tsx";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
@@ -40,6 +41,7 @@ export function PositionsTable({
     symbol: string;
     signedQuantity: string;
   } | null>(null);
+  const [closeAcknowledgement, setCloseAcknowledgement] = useState<OrderResponse | null>(null);
   const [closePending, setClosePending] = useState(false);
   const openerRef = useRef<HTMLButtonElement | null>(null);
   const reportClosePending = useCallback(
@@ -49,6 +51,9 @@ export function PositionsTable({
     },
     [onClosePendingChange],
   );
+  const acknowledgeClose = useCallback((placed: OrderResponse) => {
+    setCloseAcknowledgement(placed);
+  }, []);
   const dismissClose = useCallback(() => {
     reportClosePending(false);
     setSelection(null);
@@ -79,9 +84,11 @@ export function PositionsTable({
           signedQuantity={selection.signedQuantity}
           disabled={disabled}
           onDismiss={dismissClose}
+          onSuccess={acknowledgeClose}
           onPendingChange={reportClosePending}
         />
       ) : null}
+      {closeAcknowledgement ? <OrderAcknowledgement order={closeAcknowledgement} /> : null}
       {positions.length === 0 ? (
         <EmptyState>No open positions.</EmptyState>
       ) : (
@@ -160,6 +167,7 @@ export function PositionsTable({
                             }
 
                             openerRef.current = event.currentTarget;
+                            setCloseAcknowledgement(null);
                             setSelection({
                               symbol: position.symbol,
                               signedQuantity: position.quantity,
