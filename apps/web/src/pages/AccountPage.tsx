@@ -13,7 +13,7 @@ import { Panel } from "../components/ui/Panel.tsx";
 import { getAccount } from "../lib/api/account.ts";
 import { cn } from "../lib/cn.ts";
 import { decimalVisualSign } from "../lib/decimal-string.ts";
-import { formatExactMoneyDisplay } from "../lib/format-exact-money.ts";
+import { formatExactMoneyDisplay, formatMoneySummaryDisplay } from "../lib/format-exact-money.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { stopRealtime } from "../realtime/runtime.ts";
 
@@ -89,7 +89,7 @@ export function AccountPage() {
               <p className="text-sm text-secondary">Paper trading balance</p>
               <p className="mt-2" title={account.balance}>
                 <NumericText>
-                  {formatExactMoneyDisplay(account.balance)} {account.currency}
+                  {formatMoneySummaryDisplay(account.balance)} {account.currency}
                 </NumericText>
               </p>
               <p

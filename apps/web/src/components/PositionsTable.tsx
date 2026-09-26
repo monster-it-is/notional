@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useRef, useState } from "react";
 
 import { listPositions } from "../lib/api/positions.ts";
+import { cn } from "../lib/cn.ts";
 import {
   decimalVisualSign,
   positionSideFromQuantity,
@@ -19,6 +20,23 @@ import { DataTable, TableStatus, Td, Th } from "./ui/table.tsx";
 
 const CUMULATIVE_REALIZED_HELP =
   "Lifetime realized PnL for this symbol, including earlier reductions. Not this leg only.";
+
+const POSITION_TABLE_CLASS = "table-fixed min-w-[91rem]";
+const CONTAINED_CELL = "max-w-0 overflow-hidden text-ellipsis whitespace-nowrap";
+
+const POSITION_COLUMNS = [
+  { name: "symbol", width: "7rem" },
+  { name: "side", width: "5rem" },
+  { name: "quantity", width: "8rem" },
+  { name: "entry", width: "8rem" },
+  { name: "mark", width: "8.5rem" },
+  { name: "unrealizedPnl", width: "10rem" },
+  { name: "cumulativeRealized", width: "11.5rem" },
+  { name: "mode", width: "6rem" },
+  { name: "leverage", width: "5rem" },
+  { name: "updated", width: "12rem" },
+  { name: "action", width: "10rem" },
+] as const;
 
 export function PositionsTable({
   disabled = false,
@@ -92,20 +110,27 @@ export function PositionsTable({
       {positions.length === 0 ? (
         <EmptyState>No open positions.</EmptyState>
       ) : (
-        <DataTable>
+        <DataTable className={POSITION_TABLE_CLASS}>
+          <colgroup>
+            {POSITION_COLUMNS.map((column) => (
+              <col key={column.name} style={{ width: column.width }} />
+            ))}
+          </colgroup>
           <thead>
             <tr>
-              <Th>Symbol</Th>
-              <Th>Side</Th>
-              <Th>Quantity</Th>
-              <Th>Entry</Th>
-              <Th>Mark</Th>
-              <Th>Unrealized PnL</Th>
-              <Th title={CUMULATIVE_REALIZED_HELP}>Cumulative realized</Th>
-              <Th>Mode</Th>
-              <Th>Leverage</Th>
-              <Th>Updated</Th>
-              <Th>Action</Th>
+              <Th className="whitespace-nowrap">Symbol</Th>
+              <Th className="whitespace-nowrap">Side</Th>
+              <Th className="whitespace-nowrap">Quantity</Th>
+              <Th className="whitespace-nowrap">Entry</Th>
+              <Th className="whitespace-nowrap">Mark</Th>
+              <Th className="whitespace-nowrap">Unrealized PnL</Th>
+              <Th className="whitespace-nowrap" title={CUMULATIVE_REALIZED_HELP}>
+                Cumulative realized
+              </Th>
+              <Th className="whitespace-nowrap">Mode</Th>
+              <Th className="whitespace-nowrap">Leverage</Th>
+              <Th className="whitespace-nowrap">Updated</Th>
+              <Th className="whitespace-nowrap">Action</Th>
             </tr>
           </thead>
           <tbody>
@@ -119,20 +144,34 @@ export function PositionsTable({
 
               return (
                 <tr key={position.symbol}>
-                  <Td>{position.symbol}</Td>
-                  <Td className={sideClass(side)}>{side}</Td>
-                  <Td numeric>{position.quantity}</Td>
-                  <Td numeric>{position.entryPrice}</Td>
-                  <Td numeric>{position.markPrice ?? "—"}</Td>
-                  <Td numeric className={pnlClass(unrealizedSign)}>
+                  <Td className={CONTAINED_CELL}>{position.symbol}</Td>
+                  <Td className={cn(CONTAINED_CELL, sideClass(side))}>{side}</Td>
+                  <Td numeric className={CONTAINED_CELL} title={position.quantity}>
+                    {position.quantity}
+                  </Td>
+                  <Td numeric className={CONTAINED_CELL} title={position.entryPrice}>
+                    {position.entryPrice}
+                  </Td>
+                  <Td numeric className={CONTAINED_CELL} title={position.markPrice ?? undefined}>
+                    {position.markPrice ?? "—"}
+                  </Td>
+                  <Td
+                    numeric
+                    className={cn(CONTAINED_CELL, pnlClass(unrealizedSign))}
+                    title={position.unrealizedPnl ?? undefined}
+                  >
                     {position.unrealizedPnl ?? "—"}
                   </Td>
-                  <Td numeric className={pnlClass(realizedSign)}>
+                  <Td
+                    numeric
+                    className={cn(CONTAINED_CELL, pnlClass(realizedSign))}
+                    title={position.cumulativeRealizedPnl}
+                  >
                     {position.cumulativeRealizedPnl}
                   </Td>
-                  <Td>{position.marginMode}</Td>
-                  <Td numeric>{`${position.leverage}x`}</Td>
-                  <Td>{formatTimestamp(position.updatedAt)}</Td>
+                  <Td className={CONTAINED_CELL}>{position.marginMode}</Td>
+                  <Td numeric className={CONTAINED_CELL}>{`${position.leverage}x`}</Td>
+                  <Td className={CONTAINED_CELL}>{formatTimestamp(position.updatedAt)}</Td>
                   <Td>
                     {side === "FLAT" ? null : (
                       <div className="flex flex-wrap gap-1">

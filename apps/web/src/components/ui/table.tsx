@@ -2,10 +2,16 @@ import type { ReactNode, TdHTMLAttributes, ThHTMLAttributes } from "react";
 
 import { cn } from "../../lib/cn.ts";
 
-export function DataTable({ children }: { children: ReactNode }) {
+export function DataTable({
+  children,
+  className = "",
+}: {
+  children: ReactNode;
+  className?: string;
+}) {
   return (
     <div className="overflow-x-auto">
-      <table className="data-table">{children}</table>
+      <table className={cn("data-table", className)}>{children}</table>
     </div>
   );
 }

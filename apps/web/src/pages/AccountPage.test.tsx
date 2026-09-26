@@ -128,12 +128,16 @@ describe("AccountPage", () => {
     expect(screen.queryByText("user-secret")).not.toBeInTheDocument();
   });
 
-  it("shows a formatted balance and keeps the exact string on title", async () => {
+  it("shows a compact 2dp balance and keeps the exact string on title", async () => {
+    mockedAccount.mockResolvedValue({
+      ...account,
+      balance: "1234.567891234567890123",
+    });
     renderAccount();
 
-    expect(await screen.findByText("999.999856 USDT")).toBeInTheDocument();
-    expect(screen.getByTitle("999.999856000")).toBeInTheDocument();
-    expect(screen.queryByText("999.999856000")).not.toBeInTheDocument();
+    expect(await screen.findByText("1,234.57 USDT")).toBeInTheDocument();
+    expect(screen.getByTitle("1234.567891234567890123")).toBeInTheDocument();
+    expect(screen.queryByText("1234.567891234567890123")).not.toBeInTheDocument();
   });
 
   it("renders Realized PnL (24h) from the account response without client calculation", async () => {

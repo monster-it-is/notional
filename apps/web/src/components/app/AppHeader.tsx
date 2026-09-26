@@ -4,6 +4,7 @@ import { Wordmark } from "../brand/Wordmark.tsx";
 import { ConnectionStatusChip } from "../ConnectionStatus.tsx";
 import { NumericText } from "../ui/NumericText.tsx";
 import { cn } from "../../lib/cn.ts";
+import { formatMoneySummaryDisplay } from "../../lib/format-exact-money.ts";
 import { useRealtimeStatusStore } from "../../stores/realtime-status-store.ts";
 import { ThemeToggle } from "../../theme/ThemeToggle.tsx";
 import { AccountMenu } from "./AccountMenu.tsx";
@@ -73,10 +74,13 @@ export function AppHeader({
             {showWallet ? (
               <span
                 aria-label={`Wallet ${walletBalance} USDT`}
-                className="hidden items-center gap-1.5 text-sm xl:inline-flex"
+                title={`${walletBalance} USDT`}
+                className="hidden max-w-[14rem] min-w-0 items-center gap-1.5 text-sm xl:inline-flex"
               >
-                <span className="text-secondary">Wallet</span>
-                <NumericText>{walletBalance} USDT</NumericText>
+                <span className="shrink-0 text-secondary">Wallet</span>
+                <NumericText className="truncate">
+                  {formatMoneySummaryDisplay(walletBalance)} USDT
+                </NumericText>
               </span>
             ) : null}
           </div>

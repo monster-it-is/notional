@@ -343,6 +343,18 @@ describe("authenticated app shell", () => {
     expect(screen.getByLabelText("Wallet 2500.00 USDT")).toBeInTheDocument();
     expect(screen.getByText(/Account disconnected/)).toBeInTheDocument();
   });
+
+  it("shows a compact wallet balance while keeping the exact amount accessible", () => {
+    renderShell({
+      accountReady: true,
+      walletBalance: "1234.567891234567890123",
+    });
+
+    const wallet = screen.getByLabelText("Wallet 1234.567891234567890123 USDT");
+    expect(wallet).toHaveAttribute("title", "1234.567891234567890123 USDT");
+    expect(wallet).toHaveTextContent("1,234.57 USDT");
+    expect(wallet.textContent).not.toContain("1234.567891234567890123");
+  });
 });
 
 function SuspendedProbe() {

@@ -211,6 +211,92 @@ describe("PositionsTable", () => {
     unmount();
     expect(query?.getObserversCount()).toBe(0);
   });
+
+  it("uses a local fixed table layout with explicit column widths", async () => {
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1")] });
+    render(<PositionsTable />, { wrapper });
+
+    const table = await screen.findByRole("table");
+    expect(table.className).toContain("table-fixed");
+    expect(table.className).toContain("min-w-[");
+
+    const cols = [...table.querySelectorAll("col")];
+    expect(table.querySelector("colgroup")).not.toBeNull();
+    expect(cols).toHaveLength(11);
+    const widths = cols.map((col) => col.style.width);
+    expect(widths.every((width) => width.endsWith("rem"))).toBe(true);
+    expect(new Set(widths).size).toBeGreaterThan(1);
+  });
+
+  it("keeps long exact mark and unrealized pnl strings inside contained columns", async () => {
+    const mark = "99999.123456789012345678";
+    const unrealizedPnl = "-1234.000000000000123";
+    mocked.mockResolvedValue({
+      positions: [
+        position("BTCUSDT", "1", {
+          markPrice: mark,
+          unrealizedPnl,
+          cumulativeRealizedPnl: "12.340000000000000000",
+        }),
+      ],
+    });
+    render(<PositionsTable />, { wrapper });
+
+    const markCell = await screen.findByText(mark);
+    expect(markCell.textContent).toBe(mark);
+    expect(markCell).toHaveAttribute("title", mark);
+    expect(markCell.className).toContain("whitespace-nowrap");
+    expect(markCell.className).toContain("overflow-hidden");
+    expect(markCell.className).toContain("text-ellipsis");
+
+    const unrealizedCell = screen.getByText(unrealizedPnl);
+    expect(unrealizedCell.textContent).toBe(unrealizedPnl);
+    expect(unrealizedCell).toHaveAttribute("title", unrealizedPnl);
+    expect(unrealizedCell.className).toContain("text-negative");
+    expect(unrealizedCell.className).toContain("whitespace-nowrap");
+    expect(unrealizedCell.className).toContain("overflow-hidden");
+
+    const realized = screen.getByText("12.340000000000000000");
+    expect(realized.textContent).toBe("12.340000000000000000");
+    expect(realized).toHaveAttribute("title", "12.340000000000000000");
+    expect(realized.className).toContain("text-positive");
+    expect(screen.getByRole("columnheader", { name: "Cumulative realized" })).toHaveAttribute(
+      "title",
+      "Lifetime realized PnL for this symbol, including earlier reductions. Not this leg only.",
+    );
+  });
+
+  it("keeps a long exact positive unrealized pnl string and class", async () => {
+    mocked.mockResolvedValue({
+      positions: [
+        position("ETHUSDT", "1", {
+          markPrice: "110",
+          unrealizedPnl: "1234.000000000000123",
+        }),
+      ],
+    });
+    render(<PositionsTable />, { wrapper });
+
+    const gain = await screen.findByText("1234.000000000000123");
+    expect(gain.textContent).toBe("1234.000000000000123");
+    expect(gain).toHaveAttribute("title", "1234.000000000000123");
+    expect(gain.className).toContain("text-positive");
+  });
+
+  it("still renders em dashes for null mark and unrealized pnl after layout containment", async () => {
+    mocked.mockResolvedValue({ positions: [position("ETHUSDT", "2")] });
+    render(<PositionsTable />, { wrapper });
+
+    expect(await screen.findByText("ETHUSDT")).toBeInTheDocument();
+    const dashes = screen.getAllByText("—");
+    expect(dashes).toHaveLength(2);
+    expect(dashes[0]).not.toHaveAttribute("title");
+    expect(dashes[1]).not.toHaveAttribute("title");
+    expect(dashes[0]?.className).not.toContain("text-positive");
+    expect(dashes[0]?.className).not.toContain("text-negative");
+    expect(dashes[1]?.className).not.toContain("text-positive");
+    expect(dashes[1]?.className).not.toContain("text-negative");
+  });
 });
 
 function position(
