@@ -1,7 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { listPositions } from "../lib/api/positions.ts";
-import { positionSideFromQuantity } from "../lib/decimal-string.ts";
+import {
+  decimalVisualSign,
+  positionSideFromQuantity,
+  type DecimalVisualSign,
+  type PositionVisualSide,
+} from "../lib/decimal-string.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
 import { ErrorBanner } from "./ui/ErrorBanner.tsx";
@@ -36,19 +41,56 @@ export function PositionsTable() {
           <Th>Quantity</Th>
           <Th>Entry</Th>
           <Th>Realized PnL</Th>
+          <Th>Updated</Th>
         </tr>
       </thead>
       <tbody>
-        {positions.map((position) => (
-          <tr key={position.symbol}>
-            <Td>{position.symbol}</Td>
-            <Td>{positionSideFromQuantity(position.quantity)}</Td>
-            <Td numeric>{position.quantity}</Td>
-            <Td numeric>{position.entryPrice}</Td>
-            <Td numeric>{position.cumulativeRealizedPnl}</Td>
-          </tr>
-        ))}
+        {positions.map((position) => {
+          const side = positionSideFromQuantity(position.quantity);
+          const pnlSign = decimalVisualSign(position.cumulativeRealizedPnl);
+
+          return (
+            <tr key={position.symbol}>
+              <Td>{position.symbol}</Td>
+              <Td className={sideClass(side)}>{side}</Td>
+              <Td numeric>{position.quantity}</Td>
+              <Td numeric>{position.entryPrice}</Td>
+              <Td numeric className={pnlClass(pnlSign)}>
+                {position.cumulativeRealizedPnl}
+              </Td>
+              <Td>{formatTimestamp(position.updatedAt)}</Td>
+            </tr>
+          );
+        })}
       </tbody>
     </DataTable>
   );
+}
+
+function sideClass(side: PositionVisualSide): string | undefined {
+  if (side === "LONG") {
+    return "text-positive";
+  }
+
+  if (side === "SHORT") {
+    return "text-negative";
+  }
+
+  return undefined;
+}
+
+function pnlClass(sign: DecimalVisualSign): string | undefined {
+  if (sign === "positive") {
+    return "text-positive";
+  }
+
+  if (sign === "negative") {
+    return "text-negative";
+  }
+
+  return undefined;
+}
+
+function formatTimestamp(value: string): string {
+  return value.replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }

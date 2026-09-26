@@ -1,3 +1,4 @@
+import type { OrderSide } from "@notional/contracts";
 import { useQuery } from "@tanstack/react-query";
 
 import { listExecutions } from "../lib/api/executions.ts";
@@ -49,9 +50,9 @@ export function ExecutionsTable({
       <tbody>
         {executions.map((execution) => (
           <tr key={execution.id}>
-            <Td>{execution.executedAt}</Td>
+            <Td>{formatTimestamp(execution.executedAt)}</Td>
             <Td>{execution.symbol}</Td>
-            <Td>{execution.side}</Td>
+            <Td className={sideClass(execution.side)}>{execution.side}</Td>
             <Td>{execution.orderType}</Td>
             <Td numeric>{execution.quantity}</Td>
             <Td numeric>{execution.price}</Td>
@@ -60,4 +61,20 @@ export function ExecutionsTable({
       </tbody>
     </DataTable>
   );
+}
+
+function sideClass(side: OrderSide): string | undefined {
+  if (side === "BUY") {
+    return "text-positive";
+  }
+
+  if (side === "SELL") {
+    return "text-negative";
+  }
+
+  return undefined;
+}
+
+function formatTimestamp(value: string): string {
+  return value.replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }

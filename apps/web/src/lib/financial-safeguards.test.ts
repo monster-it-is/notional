@@ -5,9 +5,13 @@ import { describe, expect, it } from "vitest";
 const files = [
   "src/components/OrderForm.tsx",
   "src/components/PositionsTable.tsx",
+  "src/components/OpenOrdersTable.tsx",
   "src/components/MarketTicker.tsx",
+  "src/components/ExecutionsTable.tsx",
+  "src/pages/TradePage.tsx",
   "src/hooks/use-place-order.ts",
   "src/lib/decimal-string.ts",
+  "src/lib/trade-feed-state.ts",
   "src/lib/idempotency.ts",
   "src/stores/market-store.ts",
   "src/components/landing/leverage-lab-math.ts",

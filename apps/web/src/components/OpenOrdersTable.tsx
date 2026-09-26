@@ -1,4 +1,4 @@
-import type { OrderResponse } from "@notional/contracts";
+import type { OrderResponse, OrderSide } from "@notional/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { cancelOrder, listOrders } from "../lib/api/orders.ts";
@@ -50,6 +50,7 @@ export function OpenOrdersTable({ symbol }: { symbol?: string }) {
             <Th>Quantity</Th>
             <Th>Limit</Th>
             <Th>Reduce</Th>
+            <Th>Time</Th>
             <Th>Action</Th>
           </tr>
         </thead>
@@ -80,11 +81,12 @@ function OpenOrderRow({
   return (
     <tr>
       <Td>{order.symbol}</Td>
-      <Td>{order.side}</Td>
+      <Td className={sideClass(order.side)}>{order.side}</Td>
       <Td>{order.type}</Td>
       <Td numeric>{order.quantity}</Td>
       <Td numeric>{order.limitPrice ?? "—"}</Td>
       <Td>{order.reduceOnly ? "yes" : "no"}</Td>
+      <Td>{formatTimestamp(order.createdAt)}</Td>
       <Td>
         <Button type="button" size="sm" onClick={onCancel} disabled={pending}>
           Cancel
@@ -92,4 +94,20 @@ function OpenOrderRow({
       </Td>
     </tr>
   );
+}
+
+function sideClass(side: OrderSide): string | undefined {
+  if (side === "BUY") {
+    return "text-positive";
+  }
+
+  if (side === "SELL") {
+    return "text-negative";
+  }
+
+  return undefined;
+}
+
+function formatTimestamp(value: string): string {
+  return value.replace("T", " ").replace(/\.\d{3}Z$/, " UTC");
 }

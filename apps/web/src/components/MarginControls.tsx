@@ -38,18 +38,19 @@ export function MarginControls({
   }
 
   const settings = query.data;
+  const locked = disabled || mutation.isPending || !settings;
 
   return (
-    <div className="space-y-3">
+    <div className="space-y-2">
       {query.error ? <ErrorBanner error={query.error} /> : null}
       {mutation.error ? <ErrorBanner error={mutation.error} /> : null}
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid grid-cols-2 gap-2">
         <label className="text-sm">
-          <span className="mb-1 block text-secondary">Margin mode</span>
+          <span className="mb-1 block text-xs text-secondary">Margin mode</span>
           <Select
             aria-label="Margin mode"
             value={settings?.marginMode ?? "CROSS"}
-            disabled={disabled || mutation.isPending || !settings}
+            disabled={locked}
             onChange={(event) => {
               if (!settings) {
                 return;
@@ -66,11 +67,11 @@ export function MarginControls({
           </Select>
         </label>
         <label className="text-sm">
-          <span className="mb-1 block text-secondary">Leverage</span>
+          <span className="mb-1 block text-xs text-secondary">Leverage</span>
           <Select
             aria-label="Leverage"
             value={settings ? String(settings.leverage) : "1"}
-            disabled={disabled || mutation.isPending || !settings}
+            disabled={locked}
             onChange={(event) => {
               if (!settings) {
                 return;
