@@ -244,7 +244,7 @@ describe("TradePage", () => {
     renderTrade({ suspended: true });
     expect(await screen.findByRole("button", { name: /Place MARKET BUY/i })).toBeDisabled();
     await user.click(screen.getByRole("tab", { name: "Open orders" }));
-    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+    await user.click(await screen.findByRole("button", { name: "Cancel BTCUSDT" }));
     await waitFor(() => expect(mockedCancel).toHaveBeenCalledWith("ord-1"));
   });
 

@@ -224,7 +224,7 @@ describe("OpenOrdersTable", () => {
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText("Showing 51–52")).toBeInTheDocument();
     const callsBeforeCancel = mockedList.mock.calls.length;
-    await user.click(screen.getAllByRole("button", { name: "Cancel" })[0]!);
+    await user.click(screen.getAllByRole("button", { name: "Cancel ETHUSDT" })[0]!);
 
     await waitFor(() => expect(mockedCancel).toHaveBeenCalledWith("ETHUSDT-0"));
     await waitFor(() => expect(mockedList.mock.calls.length).toBeGreaterThan(callsBeforeCancel));
@@ -256,7 +256,7 @@ describe("OpenOrdersTable", () => {
     expect(await screen.findByText("Showing 1–50")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Next" }));
     expect(await screen.findByText("ETHUSDT")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "Cancel ETHUSDT" }));
 
     expect(await screen.findByText("No more open orders.")).toBeInTheDocument();
     expect(screen.queryByText("No open orders.")).not.toBeInTheDocument();
@@ -273,7 +273,9 @@ describe("OpenOrdersTable", () => {
     renderTable();
     expect(await screen.findByText("BTCUSDT")).toBeInTheDocument();
     expect(screen.getByText("BUY")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    const cancel = await screen.findByRole("button", { name: "Cancel BTCUSDT" });
+    expect(cancel).toHaveTextContent("Cancel");
+    await user.click(cancel);
     await waitFor(() => expect(mockedCancel).toHaveBeenCalledWith("ord-1"));
   });
 
@@ -282,8 +284,8 @@ describe("OpenOrdersTable", () => {
     mockedCancel.mockReturnValue(new Promise(() => undefined));
     const user = userEvent.setup();
     renderTable();
-    await user.click(await screen.findByRole("button", { name: "Cancel" }));
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    await user.click(await screen.findByRole("button", { name: "Cancel BTCUSDT" }));
+    expect(screen.getByRole("button", { name: "Cancel BTCUSDT" })).toBeDisabled();
   });
 
   it("shows a list ErrorBanner instead of an empty page", async () => {

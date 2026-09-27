@@ -96,7 +96,13 @@ function OpenOrderRow({
       <Td>{order.reduceOnly ? "yes" : "no"}</Td>
       <Td>{formatTimestamp(order.createdAt)}</Td>
       <Td>
-        <Button type="button" size="sm" onClick={onCancel} disabled={pending}>
+        <Button
+          type="button"
+          size="sm"
+          aria-label={`Cancel ${order.symbol}`}
+          onClick={onCancel}
+          disabled={pending}
+        >
           Cancel
         </Button>
       </Td>
