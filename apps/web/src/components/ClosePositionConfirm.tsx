@@ -102,7 +102,12 @@ export function ClosePositionConfirm({
         role="dialog"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="min-w-0 space-y-3 outline-none"
+        className="min-w-0 space-y-3 focus:outline-2 focus:outline-offset-2 focus:outline-ring"
+        onKeyDown={(event) => {
+          if (event.key === "Escape" && !order.pending) {
+            onDismiss();
+          }
+        }}
       >
         <h3 id={titleId} className="font-heading text-base text-foreground">
           Close {symbol}

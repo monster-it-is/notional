@@ -423,9 +423,60 @@ describe("PositionsTable close", () => {
     expect(within(dialog).getByText("1.25")).toBeInTheDocument();
     expect(mockedPlace).not.toHaveBeenCalled();
     await waitFor(() => expect(dialog).toHaveFocus());
+    expect(dialog.className).toContain("focus:outline-2");
+    expect(dialog.className).toContain("focus:outline-offset-2");
+    expect(dialog.className).toContain("focus:outline-ring");
+    expect(dialog.className).not.toContain("outline-none");
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(opener).toHaveFocus());
     expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("dismisses the idle close confirmation on Escape from a descendant and restores opener focus", async () => {
+    const user = userEvent.setup();
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    renderPositions();
+    const opener = await screen.findByRole("button", { name: "Close BTCUSDT" });
+    await user.click(opener);
+    const dialog = await screen.findByRole("dialog", { name: "Close BTCUSDT" });
+    const cancel = within(dialog).getByRole("button", { name: "Cancel" });
+    cancel.focus();
+    expect(cancel).toHaveFocus();
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(opener).toHaveFocus();
+    expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
+  it("does not dismiss a pending close confirmation on Escape", async () => {
+    const user = userEvent.setup();
+    let resolveClose: (order: OrderResponse) => void = () => undefined;
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
+    mockedPlace.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolveClose = resolve;
+        }),
+    );
+    renderPositions();
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    const dialog = await screen.findByRole("dialog", { name: "Close BTCUSDT" });
+    await user.click(screen.getByRole("button", { name: "Confirm close" }));
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+    expect(dialog).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Confirm close" })).toBeDisabled();
+
+    dialog.focus();
+    expect(dialog).toHaveFocus();
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Confirm close" })).toBeDisabled();
+    expect(mockedPlace).toHaveBeenCalledTimes(1);
+
+    resolveClose(filledClose("SELL", "1.25"));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
   });
 
   it("keeps a long exact close quantity visible and contained", async () => {
