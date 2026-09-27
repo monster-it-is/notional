@@ -4,13 +4,16 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/web/package.json apps/web/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
+COPY packages/trading/package.json packages/trading/package.json
 COPY apps/web/tsconfig.json apps/web/tsconfig.json
 COPY apps/web/tsconfig.app.json apps/web/tsconfig.app.json
 COPY apps/web/tsconfig.node.json apps/web/tsconfig.node.json
 COPY packages/contracts/tsconfig.json packages/contracts/tsconfig.json
+COPY packages/trading/tsconfig.json packages/trading/tsconfig.json
 RUN pnpm install --frozen-lockfile
 COPY scripts/clean-dist.mjs scripts/clean-dist.mjs
 COPY packages/contracts packages/contracts
+COPY packages/trading packages/trading
 COPY apps/web apps/web
 ARG VITE_API_BASE_URL
 ENV VITE_API_BASE_URL=$VITE_API_BASE_URL
