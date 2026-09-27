@@ -96,13 +96,13 @@ export function ClosePositionConfirm({
   }
 
   return (
-    <Surface>
+    <Surface className="min-w-0">
       <div
         ref={panelRef}
         role="dialog"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="space-y-3 outline-none"
+        className="min-w-0 space-y-3 outline-none"
       >
         <h3 id={titleId} className="font-heading text-base text-foreground">
           Close {symbol}
@@ -117,10 +117,10 @@ export function ClosePositionConfirm({
             <dt className="text-secondary">Side</dt>
             <dd>{closeSide ?? "—"}</dd>
           </div>
-          <div className="flex gap-2">
-            <dt className="text-secondary">Quantity</dt>
-            <dd>
-              <NumericText>{quantity}</NumericText>
+          <div className="flex min-w-0 gap-2">
+            <dt className="shrink-0 text-secondary">Quantity</dt>
+            <dd className="min-w-0 flex-1 overflow-x-auto">
+              <NumericText className="whitespace-nowrap">{quantity}</NumericText>
             </dd>
           </div>
         </dl>

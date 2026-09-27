@@ -26,7 +26,7 @@ export function MarketTicker({
         <div className="min-w-0">
           <p className="text-xs uppercase tracking-wide text-secondary">Mark</p>
           <div className="flex flex-wrap items-baseline gap-x-2 gap-y-1">
-            <NumericText className="text-2xl leading-none xl:text-[1.75rem]">
+            <NumericText className="block min-w-0 max-w-full overflow-x-auto whitespace-nowrap text-2xl leading-none xl:text-[1.75rem]">
               {quote?.mark?.markPrice ?? "—"}
             </NumericText>
             <span className="text-xs text-secondary">{tradeFeedStatusLabel(feed)}</span>
@@ -79,12 +79,16 @@ function TickerField({
     <div className="min-w-0">
       <p className="text-xs uppercase tracking-wide text-secondary">{label}</p>
       {numeric ? (
-        <NumericText className="text-sm">{value ?? "—"}</NumericText>
+        <NumericText className="block min-w-0 max-w-full overflow-x-auto whitespace-nowrap text-sm">
+          {value ?? "—"}
+        </NumericText>
       ) : (
         <p className="font-numeric text-sm text-foreground">{value ?? "—"}</p>
       )}
       {quantity !== undefined ? (
-        <NumericText className="block text-xs text-secondary">{quantity}</NumericText>
+        <NumericText className="block min-w-0 max-w-full overflow-x-auto whitespace-nowrap text-xs text-secondary">
+          {quantity}
+        </NumericText>
       ) : null}
     </div>
   );
@@ -92,7 +96,7 @@ function TickerField({
 
 function ContractConstraints({ instrument }: { instrument: InstrumentResponse }) {
   return (
-    <p className="text-xs text-secondary">
+    <p className="min-w-0 max-w-full overflow-x-auto text-xs text-secondary">
       Tick <NumericText className="text-xs text-secondary">{instrument.tickSize}</NumericText>
       {" · "}
       Step <NumericText className="text-xs text-secondary">{instrument.stepSize}</NumericText>

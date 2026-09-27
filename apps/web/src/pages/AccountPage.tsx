@@ -85,7 +85,7 @@ export function AccountPage() {
       {account ? (
         <>
           <div className="grid gap-4 md:grid-cols-2">
-            <Panel title="Paper wallet">
+            <Panel title="Paper wallet" className="min-w-0">
               <p className="text-sm text-secondary">Paper trading balance</p>
               <p className="mt-2" title={account.balance}>
                 <NumericText>
@@ -98,8 +98,13 @@ export function AccountPage() {
               >
                 Realized PnL (24h)
               </p>
-              <p className="mt-2" title={account.realizedPnl24h}>
-                <span className={cn("font-numeric", realizedPnlClass(account.realizedPnl24h))}>
+              <p className="mt-2 min-w-0 overflow-x-auto" title={account.realizedPnl24h}>
+                <span
+                  className={cn(
+                    "font-numeric whitespace-nowrap",
+                    realizedPnlClass(account.realizedPnl24h),
+                  )}
+                >
                   {formatSignedRealizedPnl(account.realizedPnl24h)} {account.currency}
                 </span>
               </p>
@@ -132,15 +137,15 @@ export function AccountPage() {
         </>
       ) : null}
 
-      <Panel title="Session">
+      <Panel title="Session" className="min-w-0">
         <dl className="space-y-2 text-sm">
           <div>
             <dt className="text-secondary">Name</dt>
-            <dd className="text-foreground">{user?.name ?? "—"}</dd>
+            <dd className="break-words text-foreground">{user?.name ?? "—"}</dd>
           </div>
           <div>
             <dt className="text-secondary">Email</dt>
-            <dd className="text-foreground">{user?.email ?? "—"}</dd>
+            <dd className="break-words text-foreground">{user?.email ?? "—"}</dd>
           </div>
         </dl>
         <div className="mt-4">

@@ -141,4 +141,64 @@ describe("MarketTicker", () => {
     });
     expect(screen.getByText("Disconnected")).toBeInTheDocument();
   });
+
+  it("contains long exact market strings without changing them", () => {
+    const now = Date.now();
+    const markPrice = "123456789.123456789012345678";
+    const indexPrice = "123456788.123456789012345678";
+    const fundingRate = "0.000123456789012345678";
+    const bestBidPrice = "123456787.123456789012345678";
+    const bestBidQty = "123456.123456789012345678";
+    const bestAskPrice = "123456790.123456789012345678";
+    const bestAskQty = "654321.123456789012345678";
+
+    useRealtimeStatusStore.setState({ market: "ready" });
+    useMarketStore.getState().applyMark({
+      type: "market.mark",
+      symbol: "BTCUSDT",
+      markPrice,
+      indexPrice,
+      fundingRate,
+      nextFundingTime: now + 28_800_000,
+      markEventTime: now,
+    });
+    useMarketStore.getState().applyBbo({
+      type: "market.bbo",
+      symbol: "BTCUSDT",
+      bestBidPrice,
+      bestBidQty,
+      bestAskPrice,
+      bestAskQty,
+      bookEventTime: now,
+    });
+
+    render(<MarketTicker symbol="BTCUSDT" instrument={instrument} />);
+
+    const mark = screen.getByText(markPrice);
+    expect(mark.textContent).toBe(markPrice);
+    expect(mark.className).toContain("block");
+    expect(mark.className).toContain("min-w-0");
+    expect(mark.className).toContain("max-w-full");
+    expect(mark.className).toContain("overflow-x-auto");
+    expect(mark.className).toContain("whitespace-nowrap");
+
+    const index = screen.getByText(indexPrice);
+    expect(index.textContent).toBe(indexPrice);
+    expect(index.className).toContain("block");
+    expect(index.className).toContain("overflow-x-auto");
+    expect(index.className).toContain("whitespace-nowrap");
+
+    expect(screen.getByText(bestBidPrice).textContent).toBe(bestBidPrice);
+    expect(screen.getByText(bestAskPrice).textContent).toBe(bestAskPrice);
+    expect(screen.getByText(fundingRate).textContent).toBe(fundingRate);
+
+    const bidQty = screen.getByText(bestBidQty);
+    expect(bidQty.textContent).toBe(bestBidQty);
+    expect(bidQty.className).toContain("block");
+    expect(bidQty.className).toContain("min-w-0");
+    expect(bidQty.className).toContain("max-w-full");
+    expect(bidQty.className).toContain("overflow-x-auto");
+    expect(bidQty.className).toContain("whitespace-nowrap");
+    expect(screen.getByText(bestAskQty).textContent).toBe(bestAskQty);
+  });
 });

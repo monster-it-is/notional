@@ -140,6 +140,24 @@ describe("AccountPage", () => {
     expect(screen.queryByText("1234.567891234567890123")).not.toBeInTheDocument();
   });
 
+  it("contains a long exact realized PnL (24h) without rounding it", async () => {
+    mockedAccount.mockResolvedValue({
+      ...account,
+      realizedPnl24h: "123456789.123456789012345678",
+    });
+    renderAccount();
+
+    const pnl = await screen.findByText("+123,456,789.123456789012345678 USDT");
+    expect(pnl.className).toContain("whitespace-nowrap");
+    expect(pnl.className).toContain("text-positive");
+    expect(pnl.parentElement).toHaveAttribute("title", "123456789.123456789012345678");
+    expect(pnl.parentElement?.className).toContain("min-w-0");
+    expect(pnl.parentElement?.className).toContain("overflow-x-auto");
+    expect(screen.getByRole("heading", { name: "Paper wallet" }).closest("section")?.className).toContain(
+      "min-w-0",
+    );
+  });
+
   it("renders Realized PnL (24h) from the account response without client calculation", async () => {
     mockedAccount.mockResolvedValue({ ...account, realizedPnl24h: "23.47" });
     renderAccount();
@@ -262,6 +280,23 @@ describe("AccountPage", () => {
     renderAccount();
     expect(await screen.findByText("Ada")).toBeInTheDocument();
     expect(screen.getByText("ada@example.com")).toBeInTheDocument();
+  });
+
+  it("wraps long unbroken session name and email instead of widening the page", async () => {
+    const name = "AVeryLongUnbrokenDisplayNameForOverflowAudit";
+    const email = "averylongunbrokenlocalpartforoverflowaudit@example.com";
+    signedIn({ name, email });
+    renderAccount();
+
+    const nameValue = await screen.findByText(name);
+    const emailValue = screen.getByText(email);
+    expect(nameValue.textContent).toBe(name);
+    expect(emailValue.textContent).toBe(email);
+    expect(nameValue.className).toContain("break-words");
+    expect(emailValue.className).toContain("break-words");
+    expect(screen.getByRole("heading", { name: "Session" }).closest("section")?.className).toContain(
+      "min-w-0",
+    );
   });
 
   it("logs out with stopRealtime, signOut, clear, then /signin", async () => {

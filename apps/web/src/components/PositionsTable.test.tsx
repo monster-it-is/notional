@@ -428,6 +428,25 @@ describe("PositionsTable close", () => {
     expect(mockedPlace).not.toHaveBeenCalled();
   });
 
+  it("keeps a long exact close quantity visible and contained", async () => {
+    const user = userEvent.setup();
+    const signedQuantity = "123456789.123456789012345678";
+    mocked.mockResolvedValue({ positions: [position("BTCUSDT", signedQuantity)] });
+    renderPositions();
+
+    await user.click(await screen.findByRole("button", { name: "Close BTCUSDT" }));
+    const dialog = await screen.findByRole("dialog", { name: "Close BTCUSDT" });
+    const quantity = within(dialog).getByText(signedQuantity);
+
+    expect(quantity.textContent).toBe(signedQuantity);
+    expect(quantity.className).toContain("whitespace-nowrap");
+    expect(quantity.closest("dd")?.className).toContain("min-w-0");
+    expect(quantity.closest("dd")?.className).toContain("flex-1");
+    expect(quantity.closest("dd")?.className).toContain("overflow-x-auto");
+    expect(screen.getByRole("button", { name: "Confirm close" })).toBeEnabled();
+    expect(mockedPlace).not.toHaveBeenCalled();
+  });
+
   it("closes a long with SELL, the exact quantity, and reduceOnly market", async () => {
     const user = userEvent.setup();
     mocked.mockResolvedValue({ positions: [position("BTCUSDT", "1.25")] });
