@@ -1,8 +1,19 @@
-import type { MarketBboMessage, MarketMarkMessage } from "@notional/contracts";
+import type {
+  CandleInterval,
+  MarketBboMessage,
+  MarketCandleMessage,
+  MarketMarkMessage,
+  RealtimeClientMessage,
+} from "@notional/contracts";
 
 import type { ConnectionStatus, WebSocketLike } from "./reconnect.ts";
 import { defaultCreateWebSocket, PING_INTERVAL_MS, reconnectDelay } from "./reconnect.ts";
 import { inboundText, isValidHello, parseServerMessage } from "./parse-message.ts";
+
+export type DesiredCandle = {
+  symbol: string;
+  interval: CandleInterval;
+};
 
 export type MarketSocketDeps = {
   url: () => string;
@@ -16,6 +27,8 @@ export type MarketSocketDeps = {
 export class MarketSocketManager {
   private readonly deps: MarketSocketDeps;
   private readonly createWebSocket: (url: string) => WebSocketLike;
+  private readonly candleListeners = new Set<(message: MarketCandleMessage) => void>();
+  private readonly reconnectListeners = new Set<() => void>();
   private socket: WebSocketLike | null = null;
   private refCount = 0;
   private releaseTimer: ReturnType<typeof setTimeout> | null = null;
@@ -25,8 +38,11 @@ export class MarketSocketManager {
   private intentionalClose = false;
   private protocolReady = false;
   private reconnectStopped = false;
+  private hadSuccessfulReady = false;
   private desiredSymbol: string | null = null;
   private subscribedSymbol: string | null = null;
+  private desiredCandle: DesiredCandle | null = null;
+  private subscribedCandle: DesiredCandle | null = null;
   private constructors = 0;
 
   constructor(deps: MarketSocketDeps) {
@@ -89,6 +105,47 @@ export class MarketSocketManager {
     }
   }
 
+  setDesiredCandle(desired: DesiredCandle | null): void {
+    const previous = this.desiredCandle;
+    this.desiredCandle = desired;
+
+    if (!this.protocolReady || !this.socket) {
+      return;
+    }
+
+    if (previous && !sameDesiredCandle(previous, desired)) {
+      this.send({
+        type: "market.candles.unsubscribe",
+        symbol: previous.symbol,
+        interval: previous.interval,
+      });
+      this.subscribedCandle = null;
+    }
+
+    if (desired && !sameDesiredCandle(desired, this.subscribedCandle)) {
+      this.send({
+        type: "market.candles.subscribe",
+        symbol: desired.symbol,
+        interval: desired.interval,
+      });
+      this.subscribedCandle = desired;
+    }
+  }
+
+  subscribeMarketCandles(listener: (message: MarketCandleMessage) => void): () => void {
+    this.candleListeners.add(listener);
+    return () => {
+      this.candleListeners.delete(listener);
+    };
+  }
+
+  subscribeReconnectReady(listener: () => void): () => void {
+    this.reconnectListeners.add(listener);
+    return () => {
+      this.reconnectListeners.delete(listener);
+    };
+  }
+
   connect(): void {
     if (this.reconnectStopped || this.socket) {
       return;
@@ -97,7 +154,8 @@ export class MarketSocketManager {
     this.intentionalClose = false;
     this.protocolReady = false;
     this.subscribedSymbol = null;
-    this.deps.setStatus(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
+    this.subscribedCandle = null;
+    this.deps.setStatus(this.reconnectAttempt > 0 || this.hadSuccessfulReady ? "reconnecting" : "connecting");
     this.constructors += 1;
     const socket = this.createWebSocket(this.deps.url());
     this.socket = socket;
@@ -154,11 +212,20 @@ export class MarketSocketManager {
         return;
       }
 
+      const reconnecting = this.hadSuccessfulReady;
       this.protocolReady = true;
+      this.hadSuccessfulReady = true;
       this.reconnectAttempt = 0;
       this.deps.setStatus("ready");
       this.startPing();
       this.resubscribe();
+
+      if (reconnecting) {
+        for (const listener of this.reconnectListeners) {
+          listener();
+        }
+      }
+
       return;
     }
 
@@ -174,12 +241,27 @@ export class MarketSocketManager {
       if (this.desiredSymbol && message.symbol === this.desiredSymbol) {
         this.deps.onMark(message);
       }
+
+      return;
+    }
+
+    if (message.type === "market.candle") {
+      if (
+        this.desiredCandle &&
+        message.symbol === this.desiredCandle.symbol &&
+        message.interval === this.desiredCandle.interval
+      ) {
+        for (const listener of this.candleListeners) {
+          listener(message);
+        }
+      }
     }
   }
 
   private onClose(code: number): void {
     this.protocolReady = false;
     this.subscribedSymbol = null;
+    this.subscribedCandle = null;
 
     if (this.intentionalClose || this.reconnectStopped) {
       if (!this.intentionalClose && this.reconnectStopped) {
@@ -194,15 +276,26 @@ export class MarketSocketManager {
   }
 
   private resubscribe(): void {
-    if (!this.desiredSymbol || !this.socket) {
+    if (!this.socket) {
       return;
     }
 
-    this.send({ type: "market.subscribe", symbol: this.desiredSymbol });
-    this.subscribedSymbol = this.desiredSymbol;
+    if (this.desiredSymbol) {
+      this.send({ type: "market.subscribe", symbol: this.desiredSymbol });
+      this.subscribedSymbol = this.desiredSymbol;
+    }
+
+    if (this.desiredCandle) {
+      this.send({
+        type: "market.candles.subscribe",
+        symbol: this.desiredCandle.symbol,
+        interval: this.desiredCandle.interval,
+      });
+      this.subscribedCandle = this.desiredCandle;
+    }
   }
 
-  private send(message: { type: string; symbol?: string }): void {
+  private send(message: RealtimeClientMessage): void {
     this.socket?.send(JSON.stringify(message));
   }
 
@@ -266,7 +359,13 @@ export class MarketSocketManager {
     this.socket = null;
     this.protocolReady = false;
     this.subscribedSymbol = null;
+    this.subscribedCandle = null;
+    this.hadSuccessfulReady = false;
     this.reconnectAttempt = 0;
     this.deps.setStatus("idle");
   }
+}
+
+function sameDesiredCandle(left: DesiredCandle | null, right: DesiredCandle | null): boolean {
+  return left?.symbol === right?.symbol && left?.interval === right?.interval;
 }

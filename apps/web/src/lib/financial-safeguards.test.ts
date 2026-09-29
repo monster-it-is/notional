@@ -30,6 +30,8 @@ const files = [
   "src/stores/market-store.ts",
   "src/components/trade/MarketChart.tsx",
   "src/lib/api/candles.ts",
+  "src/lib/chart/merge-live-candle.ts",
+  "src/lib/chart/classify-series-mutation.ts",
   "src/components/landing/leverage-lab-math.ts",
   "src/components/landing/format-decimal.ts",
 ];

@@ -1,8 +1,10 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import type { CandleListResponse } from "@notional/contracts";
 import {
   CandlestickSeries,
   ColorType,
   createChart,
+  type CandlestickData,
   type IChartApi,
   type ISeriesApi,
 } from "lightweight-charts";
@@ -11,8 +13,11 @@ import { useEffect, useMemo, useRef } from "react";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { ErrorBanner } from "../ui/ErrorBanner.tsx";
 import { getCandles, TRADE_CHART_INTERVAL, TRADE_CHART_LIMIT } from "../../lib/api/candles.ts";
+import { classifyChartSeriesMutation } from "../../lib/chart/classify-series-mutation.ts";
+import { mergeLiveCandle } from "../../lib/chart/merge-live-candle.ts";
 import { toChartCandles } from "../../lib/chart/to-chart-candles.ts";
 import { queryKeys } from "../../lib/query-keys.ts";
+import { getMarketSocket } from "../../realtime/runtime.ts";
 import { useTheme } from "../../theme/ThemeProvider.tsx";
 
 const HOST_CLASS =
@@ -20,10 +25,12 @@ const HOST_CLASS =
 
 export function MarketChart({ symbol }: { symbol: string | null }) {
   const { theme } = useTheme();
+  const queryClient = useQueryClient();
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const fittedKeyRef = useRef<string | null>(null);
+  const previousPointsRef = useRef<CandlestickData[]>([]);
   const candlesQuery = useQuery({
     queryKey: symbol
       ? queryKeys.candles.list({
@@ -52,6 +59,40 @@ export function MarketChart({ symbol }: { symbol: string | null }) {
   const hasRenderableData = points.length > 0;
 
   useEffect(() => {
+    const socket = getMarketSocket();
+    const candleQueryKey = symbol
+      ? queryKeys.candles.list({
+          symbol,
+          interval: TRADE_CHART_INTERVAL,
+          limit: TRADE_CHART_LIMIT,
+        })
+      : queryKeys.candles.all;
+    socket.setDesiredCandle(symbol ? { symbol, interval: TRADE_CHART_INTERVAL } : null);
+    const unsubscribeCandles = socket.subscribeMarketCandles((message) => {
+      if (!symbol || message.symbol !== symbol || message.interval !== TRADE_CHART_INTERVAL) {
+        return;
+      }
+
+      queryClient.setQueryData<CandleListResponse>(candleQueryKey, (current) => {
+        return mergeLiveCandle(current, message, TRADE_CHART_LIMIT) ?? current;
+      });
+    });
+    const unsubscribeReconnect = socket.subscribeReconnectReady(() => {
+      if (!symbol) {
+        return;
+      }
+
+      void queryClient.refetchQueries({ queryKey: candleQueryKey });
+    });
+
+    return () => {
+      unsubscribeCandles();
+      unsubscribeReconnect();
+      socket.setDesiredCandle(null);
+    };
+  }, [symbol, queryClient]);
+
+  useEffect(() => {
     const host = hostRef.current;
 
     if (!host || !symbol || !hasRenderableData) {
@@ -69,12 +110,14 @@ export function MarketChart({ symbol }: { symbol: string | null }) {
     );
     chartRef.current = chart;
     seriesRef.current = series;
+    previousPointsRef.current = [];
 
     return () => {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = null;
       fittedKeyRef.current = null;
+      previousPointsRef.current = [];
     };
   }, [symbol, hasRenderableData]);
 
@@ -86,13 +129,23 @@ export function MarketChart({ symbol }: { symbol: string | null }) {
       return;
     }
 
-    series.setData(points);
+    const previous = previousPointsRef.current;
+    const mutation = classifyChartSeriesMutation(previous, points);
+    const last = points[points.length - 1];
+
+    if (mutation === "update" && last) {
+      series.update(last);
+    } else {
+      series.setData(points);
+    }
 
     const fitKey = `${symbol}:${TRADE_CHART_INTERVAL}`;
     if (fittedKeyRef.current !== fitKey) {
       chart.timeScale().fitContent();
       fittedKeyRef.current = fitKey;
     }
+
+    previousPointsRef.current = points;
   }, [points, symbol]);
 
   useEffect(() => {

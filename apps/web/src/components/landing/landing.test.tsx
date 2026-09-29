@@ -24,6 +24,9 @@ vi.mock("../../realtime/runtime.ts", () => ({
     acquire: () => undefined,
     release: () => undefined,
     setDesiredSymbol: () => undefined,
+    setDesiredCandle: () => undefined,
+    subscribeMarketCandles: () => () => undefined,
+    subscribeReconnectReady: () => () => undefined,
   }),
 }));
 

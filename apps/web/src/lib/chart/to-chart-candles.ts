@@ -10,26 +10,34 @@ export function toChartCandles(candles: readonly Candle[]): CandlestickData[] {
   const points: CandlestickData[] = [];
 
   for (const candle of candles) {
-    const time = toUtcTimestamp(candle.openTime);
-    const open = Number(candle.open);
-    const high = Number(candle.high);
-    const low = Number(candle.low);
-    const close = Number(candle.close);
+    const point = toChartCandle(candle);
 
-    if (
-      time === null ||
-      !Number.isFinite(open) ||
-      !Number.isFinite(high) ||
-      !Number.isFinite(low) ||
-      !Number.isFinite(close)
-    ) {
-      continue;
+    if (point) {
+      points.push(point);
     }
-
-    points.push({ time, open, high, low, close });
   }
 
   return points;
+}
+
+export function toChartCandle(candle: Candle): CandlestickData | null {
+  const time = toUtcTimestamp(candle.openTime);
+  const open = Number(candle.open);
+  const high = Number(candle.high);
+  const low = Number(candle.low);
+  const close = Number(candle.close);
+
+  if (
+    time === null ||
+    !Number.isFinite(open) ||
+    !Number.isFinite(high) ||
+    !Number.isFinite(low) ||
+    !Number.isFinite(close)
+  ) {
+    return null;
+  }
+
+  return { time, open, high, low, close };
 }
 
 function toUtcTimestamp(openTimeMs: number): UTCTimestamp | null {

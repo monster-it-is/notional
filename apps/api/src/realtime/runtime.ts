@@ -2,14 +2,17 @@ import type {
   HelloMessage,
   RealtimeChannel,
   RealtimeErrorMessage,
+  CandleInterval,
+  MarketCandleMessage,
 } from "@notional/contracts";
-import { REALTIME_PROTOCOL_VERSION } from "@notional/contracts";
+import { REALTIME_PROTOCOL_VERSION, WS_CLOSE_PRIVATE_BACKPRESSURE } from "@notional/contracts";
 import { db, findInstrumentBySymbol } from "@notional/db";
 import type { IncomingHttpHeaders } from "node:http";
 
 import type { Logger, Scheduler, TimeoutHandle } from "../market-data/types.js";
 import { silentLogger, systemScheduler } from "../market-data/types.js";
 import {
+  MAX_CANDLE_SUBSCRIPTIONS,
   MAX_INBOUND_PAYLOAD_BYTES,
   MAX_MARKET_SUBSCRIPTIONS,
 } from "./constants.js";
@@ -20,6 +23,11 @@ import {
   type MarketClient,
   type MarketLatestSource,
 } from "./market-fanout.js";
+import {
+  candleSubscriptionKey,
+  createCandleFanout,
+  parseCandleSubscriptionKey,
+} from "./candle-fanout.js";
 import { createPrivateEventBus, type AccountClient } from "./private-bus.js";
 import { inboundByteLength, inboundText, parseClientMessage } from "./protocol.js";
 
@@ -55,6 +63,7 @@ type BoundConnection = {
 export type RealtimeRuntime = {
   noteBook(symbol: string): void;
   noteMark(symbol: string): void;
+  noteCandle(message: MarketCandleMessage): void;
   onPrivateCommitted(effect: CommittedPrivateEffect): void;
   attachMarketSocket(socket: RealtimeSocket): void;
   attachAccountSocket(
@@ -76,6 +85,8 @@ export function createRealtimeRuntime(options: {
   logger?: Logger;
   getSession?: SessionLookup;
   findInstrument?: InstrumentLookup;
+  acquireKline?: (symbol: string, interval: CandleInterval) => void;
+  releaseKline?: (symbol: string, interval: CandleInterval) => void;
 }): RealtimeRuntime {
   const scheduler = options.scheduler ?? systemScheduler;
   const logger = options.logger ?? silentLogger;
@@ -86,8 +97,20 @@ export function createRealtimeRuntime(options: {
     coalesceMs: options.coalesceMs,
     latest: options.latest,
   });
-  const bus = createPrivateEventBus({ clock: scheduler });
   const connections = new Set<BoundConnection>();
+  const candles = createCandleFanout({
+    onOverflow(client) {
+      for (const connection of connections) {
+        if (connection.marketClient === client) {
+          closeConnection(connection, WS_CLOSE_PRIVATE_BACKPRESSURE, "PRIVATE_BACKPRESSURE");
+          return;
+        }
+      }
+    },
+  });
+  const acquireKline = options.acquireKline ?? (() => {});
+  const releaseKline = options.releaseKline ?? (() => {});
+  const bus = createPrivateEventBus({ clock: scheduler });
   let nextId = 1;
   let stopped = false;
 
@@ -171,7 +194,17 @@ export function createRealtimeRuntime(options: {
     clearIdle(connection);
 
     if (connection.marketClient) {
+      for (const key of connection.marketClient.candleSubscriptions) {
+        const parsed = parseCandleSubscriptionKey(key);
+
+        if (parsed) {
+          releaseKline(parsed.symbol, parsed.interval);
+        }
+      }
+
+      connection.marketClient.candleSubscriptions.clear();
       fanout.removeClient(connection.marketClient);
+      candles.removeClient(connection.marketClient);
     }
 
     if (connection.accountClient) {
@@ -282,6 +315,16 @@ export function createRealtimeRuntime(options: {
 
     if (message.type === "market.unsubscribe") {
       connection.marketClient.subscriptions.delete(message.symbol);
+      return;
+    }
+
+    if (message.type === "market.candles.subscribe") {
+      await handleCandleSubscribe(connection, message.symbol, message.interval);
+      return;
+    }
+
+    if (message.type === "market.candles.unsubscribe") {
+      handleCandleUnsubscribe(connection.marketClient, message.symbol, message.interval);
     }
   }
 
@@ -304,6 +347,55 @@ export function createRealtimeRuntime(options: {
 
     client.subscriptions.add(instrument.symbol);
     fanout.sendSnapshot(client, instrument.symbol);
+  }
+
+  async function handleCandleSubscribe(
+    connection: BoundConnection,
+    symbol: string,
+    interval: CandleInterval,
+  ): Promise<void> {
+    const instrument = await findInstrument(symbol);
+
+    if (stopped || connection.closed || !connection.marketClient) {
+      return;
+    }
+
+    const socket = connection.socket;
+    const client = connection.marketClient;
+
+    if (!instrument) {
+      sendError(socket, "INVALID_SYMBOL", "unknown symbol");
+      return;
+    }
+
+    const key = candleSubscriptionKey(instrument.symbol, interval);
+
+    if (client.candleSubscriptions.has(key)) {
+      return;
+    }
+
+    if (client.candleSubscriptions.size >= MAX_CANDLE_SUBSCRIPTIONS) {
+      sendError(socket, "SUBSCRIBE_LIMIT", "subscription limit exceeded");
+      return;
+    }
+
+    client.candleSubscriptions.add(key);
+    acquireKline(instrument.symbol, interval);
+  }
+
+  function handleCandleUnsubscribe(
+    client: MarketClient,
+    symbol: string,
+    interval: CandleInterval,
+  ): void {
+    const key = candleSubscriptionKey(symbol, interval);
+
+    if (!client.candleSubscriptions.delete(key)) {
+      return;
+    }
+
+    releaseKline(symbol, interval);
+    candles.removeSubscription(client, symbol, interval);
   }
 
   function attach(
@@ -337,11 +429,13 @@ export function createRealtimeRuntime(options: {
       const marketClient: MarketClient = {
         id: connection.id,
         subscriptions: new Set(),
+        candleSubscriptions: new Set(),
         bufferedAmount: () => socket.getBufferedAmount(),
         sendJson: (payload) => sendJson(socket, payload),
       };
       connection.marketClient = marketClient;
       fanout.addClient(marketClient);
+      candles.addClient(marketClient);
     } else if (binding) {
       const accountClient: AccountClient = {
         id: connection.id,
@@ -368,6 +462,9 @@ export function createRealtimeRuntime(options: {
     noteMark(symbol) {
       fanout.noteMark(symbol);
     },
+    noteCandle(message) {
+      candles.noteCandle(message);
+    },
     onPrivateCommitted(effect) {
       if (stopped) {
         return;
@@ -384,6 +481,7 @@ export function createRealtimeRuntime(options: {
     async shutdown() {
       stopped = true;
       fanout.shutdown();
+      candles.shutdown();
       bus.shutdown();
 
       for (const connection of [...connections]) {

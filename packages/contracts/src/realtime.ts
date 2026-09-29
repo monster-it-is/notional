@@ -1,3 +1,5 @@
+import type { CandleInterval } from "./market-data.js";
+
 export const REALTIME_PROTOCOL_VERSION = 1 as const;
 
 export const WS_CLOSE_AUTH_EXPIRED = 4401;
@@ -38,6 +40,18 @@ export type MarketUnsubscribeMessage = {
   symbol: string;
 };
 
+export type MarketCandlesSubscribeMessage = {
+  type: "market.candles.subscribe";
+  symbol: string;
+  interval: CandleInterval;
+};
+
+export type MarketCandlesUnsubscribeMessage = {
+  type: "market.candles.unsubscribe";
+  symbol: string;
+  interval: CandleInterval;
+};
+
 export type PingMessage = {
   type: "ping";
   ts?: number;
@@ -46,6 +60,8 @@ export type PingMessage = {
 export type RealtimeClientMessage =
   | MarketSubscribeMessage
   | MarketUnsubscribeMessage
+  | MarketCandlesSubscribeMessage
+  | MarketCandlesUnsubscribeMessage
   | PingMessage;
 
 export type HelloMessage = {
@@ -75,6 +91,20 @@ export type MarketMarkMessage = {
   markEventTime: number;
 };
 
+export type MarketCandleMessage = {
+  type: "market.candle";
+  symbol: string;
+  interval: CandleInterval;
+  openTime: number;
+  closeTime: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+  isClosed: boolean;
+};
+
 export type PrivateInvalidateMessage = {
   type: "private.invalidate";
   eventId: string;
@@ -99,6 +129,7 @@ export type RealtimeServerMessage =
   | HelloMessage
   | MarketBboMessage
   | MarketMarkMessage
+  | MarketCandleMessage
   | PrivateInvalidateMessage
   | PongMessage
   | RealtimeErrorMessage;

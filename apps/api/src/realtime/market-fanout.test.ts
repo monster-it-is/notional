@@ -8,6 +8,7 @@ function client(id: string, bufferedAmount = 0): MarketClient & { sent: unknown[
   return {
     id,
     subscriptions: new Set(),
+    candleSubscriptions: new Set(),
     sent,
     bufferedAmount: () => bufferedAmount,
     sendJson(payload) {

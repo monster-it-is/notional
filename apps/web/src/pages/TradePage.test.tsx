@@ -15,9 +15,13 @@ import { cancelOrder, listOrders, placeOrder } from "../lib/api/orders.ts";
 import { listPositions } from "../lib/api/positions.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 
-const { setDesiredSymbol } = vi.hoisted(() => ({
-  setDesiredSymbol: vi.fn(),
-}));
+const { setDesiredSymbol, setDesiredCandle, subscribeMarketCandles, subscribeReconnectReady } =
+  vi.hoisted(() => ({
+    setDesiredSymbol: vi.fn(),
+    setDesiredCandle: vi.fn(),
+    subscribeMarketCandles: vi.fn(() => () => undefined),
+    subscribeReconnectReady: vi.fn(() => () => undefined),
+  }));
 
 vi.mock("../lib/api/instruments.ts", () => ({
   listInstruments: vi.fn(),
@@ -47,6 +51,9 @@ vi.mock("../lib/api/margin.ts", () => ({
 vi.mock("../realtime/runtime.ts", () => ({
   getMarketSocket: () => ({
     setDesiredSymbol,
+    setDesiredCandle,
+    subscribeMarketCandles,
+    subscribeReconnectReady,
   }),
 }));
 
@@ -131,6 +138,11 @@ function tradePosition(overrides: Partial<PositionResponse> = {}): PositionRespo
 describe("TradePage", () => {
   beforeEach(() => {
     setDesiredSymbol.mockReset();
+    setDesiredCandle.mockReset();
+    subscribeMarketCandles.mockReset();
+    subscribeMarketCandles.mockReturnValue(() => undefined);
+    subscribeReconnectReady.mockReset();
+    subscribeReconnectReady.mockReturnValue(() => undefined);
     mockedInstruments.mockReset();
     mockedCandles.mockReset();
     mockedPositions.mockReset();
@@ -498,6 +510,11 @@ describe("TradePage", () => {
 describe("TradePage reduce prefill", () => {
   beforeEach(() => {
     setDesiredSymbol.mockReset();
+    setDesiredCandle.mockReset();
+    subscribeMarketCandles.mockReset();
+    subscribeMarketCandles.mockReturnValue(() => undefined);
+    subscribeReconnectReady.mockReset();
+    subscribeReconnectReady.mockReturnValue(() => undefined);
     mockedInstruments.mockReset();
     mockedCandles.mockReset();
     mockedPositions.mockReset();

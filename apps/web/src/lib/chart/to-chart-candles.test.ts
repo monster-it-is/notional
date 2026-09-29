@@ -1,7 +1,7 @@
 import type { Candle } from "@notional/contracts";
 import { describe, expect, it } from "vitest";
 
-import { toChartCandles } from "./to-chart-candles.ts";
+import { toChartCandle, toChartCandles } from "./to-chart-candles.ts";
 
 const sample: Candle = {
   openTime: 1_499_040_000_000,
@@ -64,5 +64,10 @@ describe("toChartCandles", () => {
   it("returns only candlestick plotting fields", () => {
     const keys = Object.keys(toChartCandles([sample])[0] ?? {}).sort();
     expect(keys).toEqual(["close", "high", "low", "open", "time"]);
+  });
+
+  it("exposes a single-candle adapter with the same Number boundary", () => {
+    expect(toChartCandle(sample)).toEqual(toChartCandles([sample])[0]);
+    expect(toChartCandle({ ...sample, open: "not-a-price" })).toBeNull();
   });
 });

@@ -1,4 +1,5 @@
 import type { RealtimeClientMessage } from "@notional/contracts";
+import { CANDLE_INTERVALS } from "@notional/contracts";
 import { z } from "zod";
 
 const CANONICAL_SYMBOL = /^[A-Z0-9]+$/;
@@ -14,6 +15,20 @@ const clientMessageSchema = z.discriminatedUnion("type", [
     .object({
       type: z.literal("market.unsubscribe"),
       symbol: z.string().regex(CANONICAL_SYMBOL),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("market.candles.subscribe"),
+      symbol: z.string().regex(CANONICAL_SYMBOL),
+      interval: z.enum(CANDLE_INTERVALS),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("market.candles.unsubscribe"),
+      symbol: z.string().regex(CANONICAL_SYMBOL),
+      interval: z.enum(CANDLE_INTERVALS),
     })
     .strict(),
   z

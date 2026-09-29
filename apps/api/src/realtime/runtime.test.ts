@@ -1,8 +1,13 @@
-import { afterEach, describe, expect, it } from "vitest";
+import type { MarketCandleMessage } from "@notional/contracts";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createMarketDataStore } from "../market-data/market-data-store.js";
 import { FakeScheduler } from "../market-data/test-helpers.js";
-import { MAX_INBOUND_PAYLOAD_BYTES, MAX_MARKET_SUBSCRIPTIONS } from "./constants.js";
+import {
+  MARKET_BACKPRESSURE_BYTES,
+  MAX_INBOUND_PAYLOAD_BYTES,
+  MAX_MARKET_SUBSCRIPTIONS,
+} from "./constants.js";
 import { createRealtimeRuntime, latestFromStore, type InstrumentLookup } from "./runtime.js";
 import { FakeRealtimeSocket } from "./test-helpers.js";
 
@@ -253,6 +258,200 @@ describe("realtime runtime", () => {
     ).not.toThrow();
   });
 
+  it("accepts candle subscribe/unsubscribe and fans out to the exact pair", async () => {
+    const scheduler = new FakeScheduler();
+    const acquireKline = vi.fn();
+    const releaseKline = vi.fn();
+    const runtime = createRealtimeRuntime({
+      latest: latestFromStore(createMarketDataStore(scheduler)),
+      scheduler,
+      coalesceMs: 100,
+      idleTimeoutMs: 45_000,
+      findInstrument: catalog(["BTCUSDT", "ETHUSDT"]),
+      acquireKline,
+      releaseKline,
+    });
+    runtimes.push(runtime);
+    const first = new FakeRealtimeSocket();
+    const second = new FakeRealtimeSocket();
+    const landing = new FakeRealtimeSocket();
+    runtime.attachMarketSocket(first);
+    runtime.attachMarketSocket(second);
+    runtime.attachMarketSocket(landing);
+    await subscribe(landing, "BTCUSDT");
+    await subscribeCandles(first, "BTCUSDT", "15m");
+    await subscribeCandles(second, "BTCUSDT", "15m");
+    await subscribeCandles(first, "BTCUSDT", "15m");
+    expect(acquireKline).toHaveBeenCalledTimes(2);
+    expect(acquireKline).toHaveBeenCalledWith("BTCUSDT", "15m");
+
+    const frame = {
+      type: "market.candle" as const,
+      symbol: "BTCUSDT",
+      interval: "15m" as const,
+      openTime: 1,
+      closeTime: 2,
+      open: "1",
+      high: "1",
+      low: "1",
+      close: "1",
+      volume: "0",
+      isClosed: true,
+    };
+    runtime.noteBook("BTCUSDT");
+    runtime.noteCandle(frame);
+    expect(first.parsed()).toEqual(expect.arrayContaining([frame]));
+    expect(second.parsed()).toEqual(expect.arrayContaining([frame]));
+    expect(landing.parsed().some((row) => (row as { type?: string }).type === "market.candle")).toBe(
+      false,
+    );
+    first.emit(JSON.stringify({ type: "market.candles.unsubscribe", symbol: "BTCUSDT", interval: "15m" }));
+    await drain(first);
+    expect(releaseKline).toHaveBeenCalledTimes(1);
+    first.emit(JSON.stringify({ type: "market.candles.unsubscribe", symbol: "BTCUSDT", interval: "15m" }));
+    await drain(first);
+    expect(releaseKline).toHaveBeenCalledTimes(1);
+    first.close(1000, "client");
+    second.close(1000, "client");
+    expect(releaseKline).toHaveBeenCalledTimes(2);
+  });
+
+  it("rejects a bad candle interval and unknown candle symbol without changing quote subscriptions", async () => {
+    const scheduler = new FakeScheduler();
+    const acquireKline = vi.fn();
+    const runtime = createRealtimeRuntime({
+      latest: latestFromStore(createMarketDataStore(scheduler)),
+      scheduler,
+      coalesceMs: 100,
+      idleTimeoutMs: 45_000,
+      findInstrument: catalog(["BTCUSDT"]),
+      acquireKline,
+    });
+    runtimes.push(runtime);
+    const socket = new FakeRealtimeSocket();
+    runtime.attachMarketSocket(socket);
+    socket.emit(
+      JSON.stringify({ type: "market.candles.subscribe", symbol: "BTCUSDT", interval: "3m" }),
+    );
+    await drain(socket);
+    expect(socket.parsed().some((row) => (row as { code?: string }).code === "INVALID_MESSAGE")).toBe(
+      true,
+    );
+    await subscribeCandles(socket, "UNKNOWN", "15m");
+    expect(socket.parsed().some((row) => (row as { code?: string }).code === "INVALID_SYMBOL")).toBe(
+      true,
+    );
+    expect(acquireKline).not.toHaveBeenCalled();
+    expect(socket.closed).toBeNull();
+  });
+
+  it("enforces the per-connection candle subscription cap and treats pairs as distinct", async () => {
+    const scheduler = new FakeScheduler();
+    const acquireKline = vi.fn();
+    const runtime = createRealtimeRuntime({
+      latest: latestFromStore(createMarketDataStore(scheduler)),
+      scheduler,
+      coalesceMs: 100,
+      idleTimeoutMs: 45_000,
+      findInstrument: catalog(["BTCUSDT", "ETHUSDT", "SOLUSDT"]),
+      acquireKline,
+    });
+    runtimes.push(runtime);
+    const socket = new FakeRealtimeSocket();
+    runtime.attachMarketSocket(socket);
+    await subscribeCandles(socket, "BTCUSDT", "15m");
+    await subscribeCandles(socket, "ETHUSDT", "15m");
+    await subscribeCandles(socket, "SOLUSDT", "15m");
+    expect(acquireKline).toHaveBeenCalledTimes(2);
+    expect(socket.parsed().some((row) => (row as { code?: string }).code === "SUBSCRIBE_LIMIT")).toBe(
+      true,
+    );
+  });
+
+  it("does not acquire a kline after the browser disconnects during instrument lookup", async () => {
+    const scheduler = new FakeScheduler();
+    const acquireKline = vi.fn();
+    let resolveLookup: ((value: { symbol: string } | null) => void) | undefined;
+    let lookupStarted: () => void = () => {};
+    const started = new Promise<void>((resolve) => {
+      lookupStarted = resolve;
+    });
+    const runtime = createRealtimeRuntime({
+      latest: latestFromStore(createMarketDataStore(scheduler)),
+      scheduler,
+      coalesceMs: 100,
+      idleTimeoutMs: 45_000,
+      findInstrument: () => {
+        lookupStarted();
+        return new Promise((resolve) => {
+          resolveLookup = resolve;
+        });
+      },
+      acquireKline,
+    });
+    runtimes.push(runtime);
+    const socket = new FakeRealtimeSocket();
+    runtime.attachMarketSocket(socket);
+    socket.emit(
+      JSON.stringify({ type: "market.candles.subscribe", symbol: "BTCUSDT", interval: "15m" }),
+    );
+    await started;
+    socket.close(1000, "client");
+    resolveLookup?.({ symbol: "BTCUSDT" });
+    await flush();
+    await flush();
+    expect(acquireKline).not.toHaveBeenCalled();
+  });
+
+  it("closes a slow market socket instead of dropping a second finalized candle", async () => {
+    const scheduler = new FakeScheduler();
+    const runtime = createRealtimeRuntime({
+      latest: latestFromStore(createMarketDataStore(scheduler)),
+      scheduler,
+      coalesceMs: 100,
+      idleTimeoutMs: 45_000,
+      findInstrument: catalog(["BTCUSDT"]),
+    });
+    runtimes.push(runtime);
+    const socket = new FakeRealtimeSocket();
+    runtime.attachMarketSocket(socket);
+    await subscribeCandles(socket, "BTCUSDT", "15m");
+    socket.bufferedAmount = MARKET_BACKPRESSURE_BYTES + 1;
+    runtime.noteCandle(candleFrame({ isClosed: true, openTime: 1, closeTime: 2, close: "1" }));
+    runtime.noteCandle(candleFrame({ openTime: 3, closeTime: 4, close: "2" }));
+    runtime.noteCandle(candleFrame({ isClosed: true, openTime: 3, closeTime: 4, close: "2" }));
+    expect(socket.closed).toBeNull();
+    runtime.noteCandle(candleFrame({ openTime: 5, closeTime: 6, close: "3" }));
+    expect(socket.closed).toEqual({ code: 4429, reason: "PRIVATE_BACKPRESSURE" });
+  });
+
+  it("does not flush a pending pair after the browser unsubscribes it", async () => {
+    const scheduler = new FakeScheduler();
+    const runtime = createRealtimeRuntime({
+      latest: latestFromStore(createMarketDataStore(scheduler)),
+      scheduler,
+      coalesceMs: 100,
+      idleTimeoutMs: 45_000,
+      findInstrument: catalog(["BTCUSDT", "ETHUSDT"]),
+    });
+    runtimes.push(runtime);
+    const socket = new FakeRealtimeSocket();
+    runtime.attachMarketSocket(socket);
+    await subscribeCandles(socket, "BTCUSDT", "15m");
+    await subscribeCandles(socket, "ETHUSDT", "15m");
+    socket.bufferedAmount = MARKET_BACKPRESSURE_BYTES + 1;
+    const btc = candleFrame({ symbol: "BTCUSDT", isClosed: true, close: "btc" });
+    runtime.noteCandle(btc);
+    socket.emit(JSON.stringify({ type: "market.candles.unsubscribe", symbol: "BTCUSDT", interval: "15m" }));
+    await drain(socket);
+    socket.bufferedAmount = 0;
+    const eth = candleFrame({ symbol: "ETHUSDT", close: "eth" });
+    runtime.noteCandle(eth);
+    expect(socket.parsed()).toContainEqual(eth);
+    expect(socket.parsed()).not.toContainEqual(btc);
+    expect(socket.closed).toBeNull();
+  });
+
   function runtimeWith(
     scheduler: FakeScheduler,
     store: ReturnType<typeof createMarketDataStore>,
@@ -274,6 +473,32 @@ describe("realtime runtime", () => {
 function catalog(symbols: string[]): InstrumentLookup {
   const known = new Set(symbols);
   return async (symbol) => (known.has(symbol) ? { symbol } : null);
+}
+
+function candleFrame(overrides: Partial<MarketCandleMessage> = {}): MarketCandleMessage {
+  return {
+    type: "market.candle",
+    symbol: "BTCUSDT",
+    interval: "15m",
+    openTime: 1,
+    closeTime: 2,
+    open: "1",
+    high: "1",
+    low: "1",
+    close: "1",
+    volume: "0",
+    isClosed: false,
+    ...overrides,
+  };
+}
+
+async function subscribeCandles(
+  socket: FakeRealtimeSocket,
+  symbol: string,
+  interval: string,
+): Promise<void> {
+  socket.emit(JSON.stringify({ type: "market.candles.subscribe", symbol, interval }));
+  await drain(socket);
 }
 
 async function subscribe(socket: FakeRealtimeSocket, symbol: string): Promise<void> {

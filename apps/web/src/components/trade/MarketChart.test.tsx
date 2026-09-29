@@ -1,4 +1,4 @@
-import type { Candle, CandleListResponse } from "@notional/contracts";
+import type { Candle, CandleListResponse, MarketCandleMessage } from "@notional/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -15,6 +15,7 @@ import { ApiError } from "../../lib/api/errors.ts";
 const {
   createChart,
   setData,
+  update,
   remove,
   fitContent,
   addSeries,
@@ -22,11 +23,12 @@ const {
   seriesApplyOptions,
 } = vi.hoisted(() => {
   const setData = vi.fn();
+  const update = vi.fn();
   const remove = vi.fn();
   const fitContent = vi.fn();
   const chartApplyOptions = vi.fn();
   const seriesApplyOptions = vi.fn();
-  const addSeries = vi.fn(() => ({ setData, applyOptions: seriesApplyOptions }));
+  const addSeries = vi.fn(() => ({ setData, update, applyOptions: seriesApplyOptions }));
   const createChart = vi.fn(() => ({
     addSeries,
     applyOptions: chartApplyOptions,
@@ -36,11 +38,44 @@ const {
   return {
     createChart,
     setData,
+    update,
     remove,
     fitContent,
     addSeries,
     chartApplyOptions,
     seriesApplyOptions,
+  };
+});
+
+const marketSocket = vi.hoisted(() => {
+  const candleListeners = new Set<(message: MarketCandleMessage) => void>();
+  const reconnectListeners = new Set<() => void>();
+  return {
+    candleListeners,
+    reconnectListeners,
+    setDesiredCandle: vi.fn(),
+    subscribeMarketCandles: vi.fn((listener: (message: MarketCandleMessage) => void) => {
+      candleListeners.add(listener);
+      return () => {
+        candleListeners.delete(listener);
+      };
+    }),
+    subscribeReconnectReady: vi.fn((listener: () => void) => {
+      reconnectListeners.add(listener);
+      return () => {
+        reconnectListeners.delete(listener);
+      };
+    }),
+    emitCandle(message: MarketCandleMessage) {
+      for (const listener of candleListeners) {
+        listener(message);
+      }
+    },
+    emitReconnect() {
+      for (const listener of reconnectListeners) {
+        listener();
+      }
+    },
   };
 });
 
@@ -58,11 +93,15 @@ vi.mock("../../lib/api/candles.ts", async (importOriginal) => {
   };
 });
 
+vi.mock("../../realtime/runtime.ts", () => ({
+  getMarketSocket: () => marketSocket,
+}));
+
 const mockedGetCandles = vi.mocked(getCandles);
 
 const btcCandle: Candle = {
   openTime: 1_499_040_000_000,
-  closeTime: 1_499_644_799_999,
+  closeTime: 1_499_040_899_999,
   open: "100.00",
   high: "110.00",
   low: "90.00",
@@ -89,6 +128,23 @@ const ethCandles: CandleListResponse = {
     },
   ],
 };
+
+function liveFrame(overrides: Partial<MarketCandleMessage> = {}): MarketCandleMessage {
+  return {
+    type: "market.candle",
+    symbol: "BTCUSDT",
+    interval: "15m",
+    openTime: btcCandle.openTime,
+    closeTime: btcCandle.closeTime,
+    open: btcCandle.open,
+    high: btcCandle.high,
+    low: btcCandle.low,
+    close: btcCandle.close,
+    volume: btcCandle.volume,
+    isClosed: false,
+    ...overrides,
+  };
+}
 
 function ThemeToggleProbe() {
   const { theme, setTheme } = useTheme();
@@ -125,11 +181,17 @@ describe("MarketChart", () => {
     mockedGetCandles.mockReset();
     createChart.mockClear();
     setData.mockClear();
+    update.mockClear();
     remove.mockClear();
     fitContent.mockClear();
     addSeries.mockClear();
     chartApplyOptions.mockClear();
     seriesApplyOptions.mockClear();
+    marketSocket.setDesiredCandle.mockClear();
+    marketSocket.subscribeMarketCandles.mockClear();
+    marketSocket.subscribeReconnectReady.mockClear();
+    marketSocket.candleListeners.clear();
+    marketSocket.reconnectListeners.clear();
     mockedGetCandles.mockResolvedValue(btcCandles);
   });
 
@@ -158,7 +220,7 @@ describe("MarketChart", () => {
     expect(createChart).not.toHaveBeenCalled();
   });
 
-  it("passes adapted historical candles into the chart series", async () => {
+  it("passes adapted historical candles into the chart series with setData", async () => {
     renderChart();
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
     expect(mockedGetCandles).toHaveBeenCalledWith({
@@ -169,44 +231,126 @@ describe("MarketChart", () => {
     expect(addSeries).toHaveBeenCalledTimes(1);
     expect(setData).toHaveBeenCalledTimes(1);
     expect(setData).toHaveBeenCalledWith(toChartCandles(btcCandles.candles));
+    expect(update).not.toHaveBeenCalled();
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(marketSocket.setDesiredCandle).toHaveBeenCalledWith({
+      symbol: "BTCUSDT",
+      interval: "15m",
+    });
+  });
+
+  it("updates the live current candle with series.update", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(update).toHaveBeenCalledWith(toChartCandles([{ ...btcCandle, close: "106.00" }])[0]);
+    expect(setData).toHaveBeenCalledTimes(1);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(addSeries).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("does not resubscribe the desired candle when same-symbol live data rerenders", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(marketSocket.setDesiredCandle).toHaveBeenCalledWith({
+      symbol: "BTCUSDT",
+      interval: "15m",
+    });
+    expect(marketSocket.setDesiredCandle).not.toHaveBeenCalledWith(null);
+    const desiredCalls = marketSocket.setDesiredCandle.mock.calls.map((call) => call[0]);
+    const subscribeCalls = marketSocket.subscribeMarketCandles.mock.calls.length;
+    const reconnectCalls = marketSocket.subscribeReconnectReady.mock.calls.length;
+
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    marketSocket.emitCandle(liveFrame({ close: "107.00" }));
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: 1_499_040_900_000,
+        closeTime: 1_499_041_799_999,
+        close: "108.00",
+      }),
+    );
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(3));
+
+    expect(marketSocket.setDesiredCandle.mock.calls.map((call) => call[0])).toEqual(desiredCalls);
+    expect(marketSocket.setDesiredCandle).not.toHaveBeenCalledWith(null);
+    expect(marketSocket.subscribeMarketCandles.mock.calls.length).toBe(subscribeCalls);
+    expect(marketSocket.subscribeReconnectReady.mock.calls.length).toBe(reconnectCalls);
+  });
+
+  it("appends the next candle with series.update", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: 1_499_040_900_000,
+        closeTime: 1_499_041_799_999,
+        close: "108.00",
+      }),
+    );
+    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    expect(setData).toHaveBeenCalledTimes(1);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(addSeries).toHaveBeenCalledTimes(1);
     expect(fitContent).toHaveBeenCalledTimes(1);
   });
 
-  it("updates the existing series when the same symbol's history changes", async () => {
+  it("uses setData when older history changes", async () => {
     const { client } = renderChart();
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
-    expect(addSeries).toHaveBeenCalledTimes(1);
-    expect(setData).toHaveBeenCalledTimes(1);
-    expect(fitContent).toHaveBeenCalledTimes(1);
-
-    const refreshed: CandleListResponse = {
-      ...btcCandles,
-      candles: [
-        btcCandle,
-        {
-          ...btcCandle,
-          openTime: 1_499_040_900_000,
-          closeTime: 1_499_041_799_999,
-          close: "106.00",
-        },
-      ],
-    };
-
     client.setQueryData(
       queryKeys.candles.list({
         symbol: "BTCUSDT",
         interval: TRADE_CHART_INTERVAL,
         limit: TRADE_CHART_LIMIT,
       }),
-      refreshed,
+      {
+        ...btcCandles,
+        candles: [
+          { ...btcCandle, open: "99.00" },
+          {
+            ...btcCandle,
+            openTime: 1_499_040_900_000,
+            closeTime: 1_499_041_799_999,
+            close: "108.00",
+          },
+        ],
+      },
     );
-
     await waitFor(() => expect(setData).toHaveBeenCalledTimes(2));
-    expect(setData).toHaveBeenLastCalledWith(toChartCandles(refreshed.candles));
-    expect(createChart).toHaveBeenCalledTimes(1);
-    expect(addSeries).toHaveBeenCalledTimes(1);
+    expect(update).not.toHaveBeenCalled();
     expect(fitContent).toHaveBeenCalledTimes(1);
-    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("uses setData for a 500-window rollover", async () => {
+    const windowed: CandleListResponse = {
+      ...btcCandles,
+      candles: Array.from({ length: 500 }, (_, index) => ({
+        ...btcCandle,
+        openTime: btcCandle.openTime + index * 900_000,
+        closeTime: btcCandle.closeTime + index * 900_000,
+      })),
+    };
+    mockedGetCandles.mockResolvedValue(windowed);
+    renderChart();
+    await waitFor(() => expect(setData).toHaveBeenCalledTimes(1));
+    const last = windowed.candles[windowed.candles.length - 1]!;
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: last.openTime + 900_000,
+        closeTime: last.closeTime + 900_000,
+        close: "9.00",
+      }),
+    );
+    await waitFor(() => expect(setData).toHaveBeenCalledTimes(2));
+    expect(update).not.toHaveBeenCalled();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
   });
 
   it("loads a new query when the selected symbol changes", async () => {
@@ -241,6 +385,39 @@ describe("MarketChart", () => {
     await waitFor(() => expect(addSeries).toHaveBeenCalledTimes(2));
     expect(setData).toHaveBeenLastCalledWith(toChartCandles(ethCandles.candles));
     expect(fitContent).toHaveBeenCalledTimes(2);
+    expect(marketSocket.setDesiredCandle.mock.calls.map((call) => call[0])).toEqual([
+      { symbol: "BTCUSDT", interval: "15m" },
+      null,
+      { symbol: "ETHUSDT", interval: "15m" },
+    ]);
+  });
+
+  it("repairs history with setData after a reconnect refetch", async () => {
+    const later: Candle = {
+      ...btcCandle,
+      openTime: 1_499_040_900_000,
+      closeTime: 1_499_041_799_999,
+      close: "108.00",
+    };
+    mockedGetCandles.mockResolvedValue({
+      ...btcCandles,
+      candles: [btcCandle, later],
+    });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    mockedGetCandles.mockResolvedValue({
+      ...btcCandles,
+      candles: [{ ...btcCandle, open: "98.00" }, later],
+    });
+    marketSocket.emitReconnect();
+    await waitFor(() => expect(mockedGetCandles).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(setData).toHaveBeenCalledTimes(2));
+    expect(setData).toHaveBeenLastCalledWith(
+      toChartCandles([{ ...btcCandle, open: "98.00" }, later]),
+    );
+    expect(update).not.toHaveBeenCalled();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
   });
 
   it("applies theme colors without recreating the chart", async () => {
@@ -266,5 +443,8 @@ describe("MarketChart", () => {
     const removesBeforeUnmount = remove.mock.calls.length;
     view.unmount();
     expect(remove.mock.calls.length).toBeGreaterThan(removesBeforeUnmount);
+    expect(marketSocket.setDesiredCandle).toHaveBeenLastCalledWith(null);
+    expect(marketSocket.candleListeners.size).toBe(0);
+    expect(marketSocket.reconnectListeners.size).toBe(0);
   });
 });

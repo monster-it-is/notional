@@ -1,10 +1,12 @@
-import type { MarketDataResponse, MarketDataStatusResponse } from "@notional/contracts";
+import type { CandleInterval, MarketDataResponse, MarketDataStatusResponse } from "@notional/contracts";
 import { db, listInstrumentSymbols } from "@notional/db";
 
 import type { ApiEnv } from "../env.js";
 import { unknownErrorDiagnostic } from "../logging.js";
 import { createBookTickerFeed, type BookTickerFeed } from "./book-ticker-feed.js";
+import { createKlineFeed, type KlineFeed } from "./kline-feed.js";
 import { syncInstrumentCatalog } from "./instrument-sync.js";
+import type { LiveKline } from "./parse-live-kline.js";
 import {
   createMarketDataStore,
   type FreshBook,
@@ -41,6 +43,8 @@ export type MarketDataRuntime = MarketDataAccess & {
   stopScheduling(): void;
   waitForSyncIdle(): Promise<void>;
   stop(): Promise<void>;
+  acquireKline(symbol: string, interval: CandleInterval): void;
+  releaseKline(symbol: string, interval: CandleInterval): void;
 };
 
 export function unavailableMarketDataAccess(): MarketDataAccess {
@@ -78,6 +82,7 @@ export function createMarketDataRuntime(options: {
   afterSuccessfulCatalogSync?: () => Promise<void>;
   onAcceptedBook?: (symbol: string) => void;
   onAcceptedMark?: (symbol: string) => void;
+  onAcceptedCandle?: (kline: LiveKline) => void;
 }): MarketDataRuntime {
   const env = options.env;
   const logger = options.logger ?? silentLogger;
@@ -100,6 +105,18 @@ export function createMarketDataRuntime(options: {
   let syncTimer: TimeoutHandle | undefined;
   let markWs: ReconnectingWsClient | undefined;
   let bookFeed: BookTickerFeed | undefined;
+  const klineFeed: KlineFeed = createKlineFeed({
+    publicWsBaseUrl: env.BINANCE_FAPI_PUBLIC_WS_BASE_URL,
+    transport,
+    reconnectMaxMs: env.BINANCE_WS_RECONNECT_MAX_MS,
+    scheduler,
+    random: options.random,
+    connectionMaxMs: options.connectionMaxMs,
+    logger,
+    onKline(kline) {
+      options.onAcceptedCandle?.(kline);
+    },
+  });
   let started = false;
   let schedulingStopped = false;
 
@@ -280,6 +297,7 @@ export function createMarketDataRuntime(options: {
       await syncOnce();
       markWs.start();
       bookFeed.start();
+      klineFeed.start();
       scheduleSync();
     },
     stopScheduling,
@@ -292,6 +310,13 @@ export function createMarketDataRuntime(options: {
 
       markWs?.stop();
       bookFeed?.stop();
+      klineFeed.stop();
+    },
+    acquireKline(symbol, interval) {
+      klineFeed.acquire(symbol, interval);
+    },
+    releaseKline(symbol, interval) {
+      klineFeed.release(symbol, interval);
     },
   };
 }

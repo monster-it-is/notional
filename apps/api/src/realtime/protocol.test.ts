@@ -24,6 +24,22 @@ describe("realtime protocol", () => {
       ok: true,
       message: { type: "market.unsubscribe", symbol: "ETHUSDT" },
     });
+    expect(
+      parseClientMessage(
+        JSON.stringify({ type: "market.candles.subscribe", symbol: "BTCUSDT", interval: "15m" }),
+      ),
+    ).toEqual({
+      ok: true,
+      message: { type: "market.candles.subscribe", symbol: "BTCUSDT", interval: "15m" },
+    });
+    expect(
+      parseClientMessage(
+        JSON.stringify({ type: "market.candles.unsubscribe", symbol: "ETHUSDT", interval: "1h" }),
+      ),
+    ).toEqual({
+      ok: true,
+      message: { type: "market.candles.unsubscribe", symbol: "ETHUSDT", interval: "1h" },
+    });
   });
 
   it("rejects extra keys, invalid JSON, and non-canonical symbols", () => {
@@ -37,6 +53,26 @@ describe("realtime protocol", () => {
       parseClientMessage(JSON.stringify({ type: "market.subscribe", symbol: "btc-usdt" })).ok,
     ).toBe(false);
     expect(parseClientMessage(JSON.stringify({ type: "unknown" })).ok).toBe(false);
+    expect(
+      parseClientMessage(
+        JSON.stringify({ type: "market.candles.subscribe", symbol: "BTCUSDT", interval: "3m" }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseClientMessage(
+        JSON.stringify({
+          type: "market.candles.subscribe",
+          symbol: "BTCUSDT",
+          interval: "15m",
+          extra: true,
+        }),
+      ).ok,
+    ).toBe(false);
+    expect(
+      parseClientMessage(
+        JSON.stringify({ type: "market.subscribe", symbol: "BTCUSDT", interval: "15m" }),
+      ).ok,
+    ).toBe(false);
   });
 
   it("measures inbound bytes", () => {

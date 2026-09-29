@@ -6,6 +6,7 @@ import { auth } from "./auth.js";
 import { env } from "./env.js";
 import { createLoggerProxy } from "./logging.js";
 import { createMarketDataRuntime } from "./market-data/coordinator.js";
+import type { LiveKline } from "./market-data/parse-live-kline.js";
 import { createBinanceRestClient } from "./market-data/rest-client.js";
 import { createRealtimeRuntime, latestFromStore } from "./realtime/runtime.js";
 import { createFundingScanner } from "./services/funding-scanner.js";
@@ -23,6 +24,7 @@ export async function startServer(): Promise<void> {
   let tickSchedulingEnabled = true;
   let notifyAcceptedBook: (symbol: string) => void = () => {};
   let notifyAcceptedMark: (symbol: string) => void = () => {};
+  let notifyAcceptedCandle: (kline: LiveKline) => void = () => {};
   const marketData = createMarketDataRuntime({
     env,
     logger,
@@ -34,12 +36,21 @@ export async function startServer(): Promise<void> {
     onAcceptedMark(symbol) {
       notifyAcceptedMark(symbol);
     },
+    onAcceptedCandle(kline) {
+      notifyAcceptedCandle(kline);
+    },
   });
   const realtime = createRealtimeRuntime({
     latest: latestFromStore(marketData.store),
     coalesceMs: env.WS_MARKET_COALESCE_MS,
     idleTimeoutMs: env.WS_IDLE_TIMEOUT_MS,
     logger,
+    acquireKline(symbol, interval) {
+      marketData.acquireKline(symbol, interval);
+    },
+    releaseKline(symbol, interval) {
+      marketData.releaseKline(symbol, interval);
+    },
     async getSession(headers) {
       const session = await auth.api.getSession({
         headers: fromNodeHeaders(headers),
@@ -76,6 +87,9 @@ export async function startServer(): Promise<void> {
   };
   notifyAcceptedMark = (symbol) => {
     realtime.noteMark(symbol);
+  };
+  notifyAcceptedCandle = (kline) => {
+    realtime.noteCandle({ type: "market.candle", ...kline });
   };
   const app = await buildApp({
     marketData,

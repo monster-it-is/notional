@@ -11,6 +11,7 @@ export type MarketLatestSource = {
 export type MarketClient = {
   id: string;
   subscriptions: Set<string>;
+  candleSubscriptions: Set<string>;
   bufferedAmount(): number;
   sendJson(payload: unknown): void;
 };

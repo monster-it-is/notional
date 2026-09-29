@@ -83,6 +83,9 @@ export type {
 export type {
   HelloMessage,
   MarketBboMessage,
+  MarketCandleMessage,
+  MarketCandlesSubscribeMessage,
+  MarketCandlesUnsubscribeMessage,
   MarketMarkMessage,
   MarketSubscribeMessage,
   MarketUnsubscribeMessage,
