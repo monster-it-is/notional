@@ -1,4 +1,5 @@
-import type { Candle, CandleListResponse, MarketCandleMessage } from "@notional/contracts";
+import type { Candle, CandleInterval, CandleListResponse, MarketCandleMessage } from "@notional/contracts";
+import { CANDLE_INTERVALS } from "@notional/contracts";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -6,44 +7,61 @@ import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarketChart } from "./MarketChart.tsx";
-import { getCandles, TRADE_CHART_INTERVAL, TRADE_CHART_LIMIT } from "../../lib/api/candles.ts";
-import { toChartCandles } from "../../lib/chart/to-chart-candles.ts";
+import { getCandles, TRADE_CHART_LIMIT } from "../../lib/api/candles.ts";
+import {
+  colorChartVolumePoints,
+  toAlignedChartPoints,
+  toChartLinePoints,
+} from "../../lib/chart/to-chart-candles.ts";
 import { queryKeys } from "../../lib/query-keys.ts";
 import { ThemeProvider, useTheme } from "../../theme/ThemeProvider.tsx";
 import { ApiError } from "../../lib/api/errors.ts";
 
+const VOLUME_COLORS = { up: "#2ebd85", down: "#f0544c" };
+
 const {
   createChart,
-  setData,
-  update,
   remove,
   fitContent,
   addSeries,
   chartApplyOptions,
-  seriesApplyOptions,
+  candlestick,
+  line,
+  volume,
 } = vi.hoisted(() => {
-  const setData = vi.fn();
-  const update = vi.fn();
-  const remove = vi.fn();
+  const candlestick = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
+  const line = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
+  const volume = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
   const fitContent = vi.fn();
   const chartApplyOptions = vi.fn();
-  const seriesApplyOptions = vi.fn();
-  const addSeries = vi.fn(() => ({ setData, update, applyOptions: seriesApplyOptions }));
+  const addSeries = vi.fn((definition: { type: string }) => {
+    if (definition.type === "Line") {
+      return line;
+    }
+
+    if (definition.type === "Histogram") {
+      return volume;
+    }
+
+    return candlestick;
+  });
   const createChart = vi.fn(() => ({
     addSeries,
     applyOptions: chartApplyOptions,
     timeScale: () => ({ fitContent }),
+    priceScale: () => ({ applyOptions: vi.fn() }),
     remove,
   }));
+  const remove = vi.fn();
   return {
     createChart,
-    setData,
-    update,
     remove,
     fitContent,
     addSeries,
     chartApplyOptions,
-    seriesApplyOptions,
+    candlestick,
+    line,
+    volume,
   };
 });
 
@@ -82,6 +100,8 @@ const marketSocket = vi.hoisted(() => {
 vi.mock("lightweight-charts", () => ({
   createChart,
   CandlestickSeries: { type: "Candlestick" },
+  LineSeries: { type: "Line" },
+  HistogramSeries: { type: "Histogram" },
   ColorType: { Solid: "solid" },
 }));
 
@@ -146,6 +166,15 @@ function liveFrame(overrides: Partial<MarketCandleMessage> = {}): MarketCandleMe
   };
 }
 
+function aligned(candles: Candle[]) {
+  return toAlignedChartPoints(candles);
+}
+
+function coloredVolume(candles: Candle[]) {
+  const points = aligned(candles);
+  return colorChartVolumePoints(points.volume, points.candles, VOLUME_COLORS);
+}
+
 function ThemeToggleProbe() {
   const { theme, setTheme } = useTheme();
 
@@ -159,7 +188,15 @@ function ThemeToggleProbe() {
 function renderChart(
   symbol: string | null = "BTCUSDT",
   strict = false,
-  { themeToggle = false }: { themeToggle?: boolean } = {},
+  {
+    themeToggle = false,
+    interval = "15m",
+    onIntervalChange = vi.fn(),
+  }: {
+    themeToggle?: boolean;
+    interval?: CandleInterval;
+    onIntervalChange?: (interval: CandleInterval) => void;
+  } = {},
 ) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -168,7 +205,7 @@ function renderChart(
     <ThemeProvider>
       <QueryClientProvider client={client}>
         {themeToggle ? <ThemeToggleProbe /> : null}
-        <MarketChart symbol={symbol} />
+        <MarketChart symbol={symbol} interval={interval} onIntervalChange={onIntervalChange} />
       </QueryClientProvider>
     </ThemeProvider>
   );
@@ -180,13 +217,19 @@ describe("MarketChart", () => {
   beforeEach(() => {
     mockedGetCandles.mockReset();
     createChart.mockClear();
-    setData.mockClear();
-    update.mockClear();
+    candlestick.setData.mockClear();
+    candlestick.update.mockClear();
+    candlestick.applyOptions.mockClear();
+    line.setData.mockClear();
+    line.update.mockClear();
+    line.applyOptions.mockClear();
+    volume.setData.mockClear();
+    volume.update.mockClear();
+    volume.applyOptions.mockClear();
     remove.mockClear();
     fitContent.mockClear();
     addSeries.mockClear();
     chartApplyOptions.mockClear();
-    seriesApplyOptions.mockClear();
     marketSocket.setDesiredCandle.mockClear();
     marketSocket.subscribeMarketCandles.mockClear();
     marketSocket.subscribeReconnectReady.mockClear();
@@ -199,7 +242,7 @@ describe("MarketChart", () => {
     mockedGetCandles.mockReturnValue(new Promise(() => undefined));
     renderChart();
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
-    expect(screen.getByText("15m")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByText("Loading historical candles")).toBeInTheDocument();
     expect(createChart).not.toHaveBeenCalled();
   });
@@ -220,7 +263,7 @@ describe("MarketChart", () => {
     expect(createChart).not.toHaveBeenCalled();
   });
 
-  it("passes adapted historical candles into the chart series with setData", async () => {
+  it("passes adapted historical candles, line closes, and volume into the series with setData", async () => {
     renderChart();
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
     expect(mockedGetCandles).toHaveBeenCalledWith({
@@ -228,10 +271,16 @@ describe("MarketChart", () => {
       interval: "15m",
       limit: 500,
     });
-    expect(addSeries).toHaveBeenCalledTimes(1);
-    expect(setData).toHaveBeenCalledTimes(1);
-    expect(setData).toHaveBeenCalledWith(toChartCandles(btcCandles.candles));
-    expect(update).not.toHaveBeenCalled();
+    expect(addSeries).toHaveBeenCalledTimes(3);
+    expect(candlestick.setData).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData).toHaveBeenCalledWith(aligned(btcCandles.candles).candles);
+    expect(line.setData).toHaveBeenCalledTimes(1);
+    expect(line.setData).toHaveBeenCalledWith(toChartLinePoints(btcCandles.candles));
+    expect(volume.setData).toHaveBeenCalledTimes(1);
+    expect(volume.setData).toHaveBeenCalledWith(coloredVolume(btcCandles.candles));
+    expect(candlestick.update).not.toHaveBeenCalled();
+    expect(line.update).not.toHaveBeenCalled();
+    expect(volume.update).not.toHaveBeenCalled();
     expect(fitContent).toHaveBeenCalledTimes(1);
     expect(marketSocket.setDesiredCandle).toHaveBeenCalledWith({
       symbol: "BTCUSDT",
@@ -239,15 +288,35 @@ describe("MarketChart", () => {
     });
   });
 
-  it("updates the live current candle with series.update", async () => {
+  it("requests 1h history and subscribes to the 1h live candle pair", async () => {
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, interval: "1h" });
+    renderChart("BTCUSDT", false, { interval: "1h" });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(mockedGetCandles).toHaveBeenCalledWith({
+      symbol: "BTCUSDT",
+      interval: "1h",
+      limit: 500,
+    });
+    expect(marketSocket.setDesiredCandle).toHaveBeenCalledWith({
+      symbol: "BTCUSDT",
+      interval: "1h",
+    });
+  });
+
+  it("updates the live current candle on all three series with update", async () => {
     renderChart();
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
     marketSocket.emitCandle(liveFrame({ close: "106.00" }));
-    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
-    expect(update).toHaveBeenCalledWith(toChartCandles([{ ...btcCandle, close: "106.00" }])[0]);
-    expect(setData).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(1));
+    const next = [{ ...btcCandle, close: "106.00" }];
+    expect(candlestick.update).toHaveBeenCalledWith(aligned(next).candles[0]);
+    expect(line.update).toHaveBeenCalledWith(toChartLinePoints(next)[0]);
+    expect(volume.update).toHaveBeenCalledWith(coloredVolume(next)[0]);
+    expect(candlestick.setData).toHaveBeenCalledTimes(1);
+    expect(line.setData).toHaveBeenCalledTimes(1);
+    expect(volume.setData).toHaveBeenCalledTimes(1);
     expect(createChart).toHaveBeenCalledTimes(1);
-    expect(addSeries).toHaveBeenCalledTimes(1);
+    expect(addSeries).toHaveBeenCalledTimes(3);
     expect(fitContent).toHaveBeenCalledTimes(1);
     expect(remove).not.toHaveBeenCalled();
   });
@@ -265,9 +334,9 @@ describe("MarketChart", () => {
     const reconnectCalls = marketSocket.subscribeReconnectReady.mock.calls.length;
 
     marketSocket.emitCandle(liveFrame({ close: "106.00" }));
-    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(1));
     marketSocket.emitCandle(liveFrame({ close: "107.00" }));
-    await waitFor(() => expect(update).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(2));
     marketSocket.emitCandle(
       liveFrame({
         openTime: 1_499_040_900_000,
@@ -275,7 +344,7 @@ describe("MarketChart", () => {
         close: "108.00",
       }),
     );
-    await waitFor(() => expect(update).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(3));
 
     expect(marketSocket.setDesiredCandle.mock.calls.map((call) => call[0])).toEqual(desiredCalls);
     expect(marketSocket.setDesiredCandle).not.toHaveBeenCalledWith(null);
@@ -283,7 +352,7 @@ describe("MarketChart", () => {
     expect(marketSocket.subscribeReconnectReady.mock.calls.length).toBe(reconnectCalls);
   });
 
-  it("appends the next candle with series.update", async () => {
+  it("appends the next candle with series.update on all three series", async () => {
     renderChart();
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
     marketSocket.emitCandle(
@@ -293,41 +362,49 @@ describe("MarketChart", () => {
         close: "108.00",
       }),
     );
-    await waitFor(() => expect(update).toHaveBeenCalledTimes(1));
-    expect(setData).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(1));
+    expect(line.update).toHaveBeenCalledTimes(1);
+    expect(volume.update).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData).toHaveBeenCalledTimes(1);
     expect(createChart).toHaveBeenCalledTimes(1);
-    expect(addSeries).toHaveBeenCalledTimes(1);
+    expect(addSeries).toHaveBeenCalledTimes(3);
     expect(fitContent).toHaveBeenCalledTimes(1);
   });
 
-  it("uses setData when older history changes", async () => {
+  it("uses setData on all three series when older history changes", async () => {
     const { client } = renderChart();
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const repaired: Candle[] = [
+      { ...btcCandle, open: "99.00" },
+      {
+        ...btcCandle,
+        openTime: 1_499_040_900_000,
+        closeTime: 1_499_041_799_999,
+        close: "108.00",
+      },
+    ];
     client.setQueryData(
       queryKeys.candles.list({
         symbol: "BTCUSDT",
-        interval: TRADE_CHART_INTERVAL,
+        interval: "15m",
         limit: TRADE_CHART_LIMIT,
       }),
       {
         ...btcCandles,
-        candles: [
-          { ...btcCandle, open: "99.00" },
-          {
-            ...btcCandle,
-            openTime: 1_499_040_900_000,
-            closeTime: 1_499_041_799_999,
-            close: "108.00",
-          },
-        ],
+        candles: repaired,
       },
     );
-    await waitFor(() => expect(setData).toHaveBeenCalledTimes(2));
-    expect(update).not.toHaveBeenCalled();
+    await waitFor(() => expect(candlestick.setData).toHaveBeenCalledTimes(2));
+    expect(line.setData).toHaveBeenCalledTimes(2);
+    expect(volume.setData).toHaveBeenCalledTimes(2);
+    expect(volume.setData).toHaveBeenLastCalledWith(coloredVolume(repaired));
+    expect(candlestick.update).not.toHaveBeenCalled();
+    expect(line.update).not.toHaveBeenCalled();
+    expect(volume.update).not.toHaveBeenCalled();
     expect(fitContent).toHaveBeenCalledTimes(1);
   });
 
-  it("uses setData for a 500-window rollover", async () => {
+  it("uses setData on all three series for a 500-window rollover", async () => {
     const windowed: CandleListResponse = {
       ...btcCandles,
       candles: Array.from({ length: 500 }, (_, index) => ({
@@ -338,7 +415,7 @@ describe("MarketChart", () => {
     };
     mockedGetCandles.mockResolvedValue(windowed);
     renderChart();
-    await waitFor(() => expect(setData).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(candlestick.setData).toHaveBeenCalledTimes(1));
     const last = windowed.candles[windowed.candles.length - 1]!;
     marketSocket.emitCandle(
       liveFrame({
@@ -347,8 +424,10 @@ describe("MarketChart", () => {
         close: "9.00",
       }),
     );
-    await waitFor(() => expect(setData).toHaveBeenCalledTimes(2));
-    expect(update).not.toHaveBeenCalled();
+    await waitFor(() => expect(candlestick.setData).toHaveBeenCalledTimes(2));
+    expect(line.setData).toHaveBeenCalledTimes(2);
+    expect(volume.setData).toHaveBeenCalledTimes(2);
+    expect(candlestick.update).not.toHaveBeenCalled();
     expect(createChart).toHaveBeenCalledTimes(1);
     expect(fitContent).toHaveBeenCalledTimes(1);
   });
@@ -363,7 +442,7 @@ describe("MarketChart", () => {
     const tree = (symbol: string) => (
       <ThemeProvider>
         <QueryClientProvider client={client}>
-          <MarketChart symbol={symbol} />
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
         </QueryClientProvider>
       </ThemeProvider>
     );
@@ -372,7 +451,7 @@ describe("MarketChart", () => {
       expect(mockedGetCandles).toHaveBeenCalledWith(expect.objectContaining({ symbol: "BTCUSDT" })),
     );
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
-    expect(setData).toHaveBeenCalledWith(toChartCandles(btcCandles.candles));
+    expect(candlestick.setData).toHaveBeenCalledWith(aligned(btcCandles.candles).candles);
     expect(fitContent).toHaveBeenCalledTimes(1);
 
     view.rerender(tree("ETHUSDT"));
@@ -382,8 +461,10 @@ describe("MarketChart", () => {
     );
     await waitFor(() => expect(remove).toHaveBeenCalled());
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(addSeries).toHaveBeenCalledTimes(2));
-    expect(setData).toHaveBeenLastCalledWith(toChartCandles(ethCandles.candles));
+    await waitFor(() => expect(addSeries).toHaveBeenCalledTimes(6));
+    expect(candlestick.setData).toHaveBeenLastCalledWith(aligned(ethCandles.candles).candles);
+    expect(line.setData).toHaveBeenLastCalledWith(toChartLinePoints(ethCandles.candles));
+    expect(volume.setData).toHaveBeenLastCalledWith(coloredVolume(ethCandles.candles));
     expect(fitContent).toHaveBeenCalledTimes(2);
     expect(marketSocket.setDesiredCandle.mock.calls.map((call) => call[0])).toEqual([
       { symbol: "BTCUSDT", interval: "15m" },
@@ -392,7 +473,73 @@ describe("MarketChart", () => {
     ]);
   });
 
-  it("repairs history with setData after a reconnect refetch", async () => {
+  it("replaces history when the selected interval changes and does not treat it as a live update", async () => {
+    const hourCandles: CandleListResponse = { ...btcCandles, interval: "1h" };
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h" ? hourCandles : btcCandles,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (interval: CandleInterval) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol="BTCUSDT" interval={interval} onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("15m"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(marketSocket.setDesiredCandle).toHaveBeenCalledWith({
+      symbol: "BTCUSDT",
+      interval: "15m",
+    });
+
+    view.rerender(tree("1h"));
+    expect(await screen.findByText("Loading historical candles")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(mockedGetCandles).toHaveBeenCalledWith({
+        symbol: "BTCUSDT",
+        interval: "1h",
+        limit: 500,
+      }),
+    );
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    expect(candlestick.setData).toHaveBeenLastCalledWith(aligned(hourCandles.candles).candles);
+    expect(line.setData).toHaveBeenLastCalledWith(toChartLinePoints(hourCandles.candles));
+    expect(volume.setData).toHaveBeenLastCalledWith(coloredVolume(hourCandles.candles));
+    expect(candlestick.update).not.toHaveBeenCalled();
+    expect(line.update).not.toHaveBeenCalled();
+    expect(volume.update).not.toHaveBeenCalled();
+    expect(fitContent).toHaveBeenCalledTimes(2);
+    expect(marketSocket.setDesiredCandle.mock.calls.map((call) => call[0])).toEqual([
+      { symbol: "BTCUSDT", interval: "15m" },
+      null,
+      { symbol: "BTCUSDT", interval: "1h" },
+    ]);
+  });
+
+  it("ignores a live 15m frame while the active interval is 1h", async () => {
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, interval: "1h" });
+    renderChart("BTCUSDT", false, { interval: "1h" });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    candlestick.setData.mockClear();
+    line.setData.mockClear();
+    volume.setData.mockClear();
+
+    marketSocket.emitCandle(liveFrame({ interval: "15m", close: "106.00" }));
+    await waitFor(() => expect(candlestick.update).not.toHaveBeenCalled());
+    expect(line.update).not.toHaveBeenCalled();
+    expect(volume.update).not.toHaveBeenCalled();
+    expect(candlestick.setData).not.toHaveBeenCalled();
+
+    marketSocket.emitCandle(liveFrame({ interval: "1h", close: "106.00" }));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(1));
+    expect(line.update).toHaveBeenCalledTimes(1);
+    expect(volume.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("repairs history with setData after a reconnect refetch of the current interval", async () => {
     const later: Candle = {
       ...btcCandle,
       openTime: 1_499_040_900_000,
@@ -401,23 +548,95 @@ describe("MarketChart", () => {
     };
     mockedGetCandles.mockResolvedValue({
       ...btcCandles,
+      interval: "1h",
       candles: [btcCandle, later],
     });
-    renderChart();
+    renderChart("BTCUSDT", false, { interval: "1h" });
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
     mockedGetCandles.mockResolvedValue({
       ...btcCandles,
+      interval: "1h",
       candles: [{ ...btcCandle, open: "98.00" }, later],
     });
     marketSocket.emitReconnect();
     await waitFor(() => expect(mockedGetCandles).toHaveBeenCalledTimes(2));
-    await waitFor(() => expect(setData).toHaveBeenCalledTimes(2));
-    expect(setData).toHaveBeenLastCalledWith(
-      toChartCandles([{ ...btcCandle, open: "98.00" }, later]),
+    expect(mockedGetCandles).toHaveBeenLastCalledWith({
+      symbol: "BTCUSDT",
+      interval: "1h",
+      limit: 500,
+    });
+    await waitFor(() => expect(candlestick.setData).toHaveBeenCalledTimes(2));
+    expect(line.setData).toHaveBeenCalledTimes(2);
+    expect(volume.setData).toHaveBeenCalledTimes(2);
+    expect(candlestick.setData).toHaveBeenLastCalledWith(
+      aligned([{ ...btcCandle, open: "98.00" }, later]).candles,
     );
-    expect(update).not.toHaveBeenCalled();
+    expect(candlestick.update).not.toHaveBeenCalled();
     expect(createChart).toHaveBeenCalledTimes(1);
     expect(fitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles Candles and Line without recreating, refetching, or refitting", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const subscribeCalls = marketSocket.subscribeMarketCandles.mock.calls.length;
+    const reconnectCalls = marketSocket.subscribeReconnectReady.mock.calls.length;
+    const desiredCalls = marketSocket.setDesiredCandle.mock.calls.length;
+    candlestick.applyOptions.mockClear();
+    line.applyOptions.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Candles" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "aria-label",
+      "BTCUSDT 15m historical line chart",
+    );
+    expect(line.applyOptions).toHaveBeenCalledWith({ visible: true });
+    expect(candlestick.applyOptions).toHaveBeenCalledWith({ visible: false });
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(mockedGetCandles).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(marketSocket.subscribeMarketCandles.mock.calls.length).toBe(subscribeCalls);
+    expect(marketSocket.subscribeReconnectReady.mock.calls.length).toBe(reconnectCalls);
+    expect(marketSocket.setDesiredCandle.mock.calls.length).toBe(desiredCalls);
+
+    await user.click(screen.getByRole("button", { name: "Candles" }));
+    expect(screen.getByRole("button", { name: "Candles" })).toHaveAttribute("aria-pressed", "true");
+    expect(line.applyOptions).toHaveBeenCalledWith({ visible: false });
+    expect(candlestick.applyOptions).toHaveBeenCalledWith({ visible: true });
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(mockedGetCandles).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "aria-label",
+      "BTCUSDT 15m historical candlestick chart",
+    );
+  });
+
+  it("exposes accessible timeframe and mode controls", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    for (const interval of CANDLE_INTERVALS) {
+      expect(screen.getByRole("button", { name: interval })).toBeEnabled();
+    }
+    expect(screen.getByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "1h" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("button", { name: "Candles" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "false");
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "aria-label",
+      "BTCUSDT 15m historical candlestick chart",
+    );
+  });
+
+  it("notifies the parent when a timeframe is selected", async () => {
+    const user = userEvent.setup();
+    const onIntervalChange = vi.fn();
+    renderChart("BTCUSDT", false, { onIntervalChange });
+    await user.click(await screen.findByRole("button", { name: "5m" }));
+    expect(onIntervalChange).toHaveBeenCalledWith("5m");
   });
 
   it("applies theme colors without recreating the chart", async () => {
@@ -426,15 +645,22 @@ describe("MarketChart", () => {
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
 
     chartApplyOptions.mockClear();
-    seriesApplyOptions.mockClear();
+    candlestick.applyOptions.mockClear();
+    line.applyOptions.mockClear();
+    volume.applyOptions.mockClear();
+    const volumeSetsBeforeTheme = volume.setData.mock.calls.length;
 
     await user.click(screen.getByRole("button", { name: "Toggle theme" }));
 
     await waitFor(() => expect(chartApplyOptions).toHaveBeenCalled());
-    expect(seriesApplyOptions).toHaveBeenCalled();
+    expect(candlestick.applyOptions).toHaveBeenCalled();
+    expect(line.applyOptions).toHaveBeenCalled();
+    expect(volume.applyOptions).toHaveBeenCalled();
+    expect(volume.setData.mock.calls.length).toBeGreaterThan(volumeSetsBeforeTheme);
     expect(createChart).toHaveBeenCalledTimes(1);
-    expect(addSeries).toHaveBeenCalledTimes(1);
+    expect(addSeries).toHaveBeenCalledTimes(3);
     expect(remove).not.toHaveBeenCalled();
+    expect(fitContent).toHaveBeenCalledTimes(1);
   });
 
   it("disposes the chart on unmount including Strict Mode remount", async () => {

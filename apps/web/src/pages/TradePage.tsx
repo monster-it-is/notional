@@ -15,6 +15,7 @@ import { ErrorBanner } from "../components/ui/ErrorBanner.tsx";
 import { Surface } from "../components/ui/Surface.tsx";
 import { Tabs } from "../components/ui/Tabs.tsx";
 import { useSelectedSymbol } from "../hooks/use-selected-symbol.ts";
+import { useTradeChartInterval } from "../hooks/use-trade-chart-interval.ts";
 import { listInstruments } from "../lib/api/instruments.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { getMarketSocket } from "../realtime/runtime.ts";
@@ -31,6 +32,7 @@ export function TradePage() {
   const instruments = instrumentsQuery.data?.instruments ?? [];
   const fallback = instruments[0]?.symbol ?? null;
   const { symbol, setSymbol } = useSelectedSymbol(fallback);
+  const { interval, setChartInterval } = useTradeChartInterval();
   const instrument = instruments.find((row) => row.symbol === symbol) ?? null;
   const [tab, setTab] = useState<"positions" | "orders" | "executions">("positions");
   const [closePending, setClosePending] = useState(false);
@@ -91,7 +93,7 @@ export function TradePage() {
 
       <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-stretch">
         <Surface as="section" className="min-w-0 flex-1">
-          <MarketChart symbol={symbol} />
+          <MarketChart symbol={symbol} interval={interval} onIntervalChange={setChartInterval} />
         </Surface>
 
         <Surface

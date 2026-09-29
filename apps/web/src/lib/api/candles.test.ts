@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import type { CandleListResponse } from "@notional/contracts";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { getCandles, TRADE_CHART_INTERVAL, TRADE_CHART_LIMIT } from "./candles.ts";
+import { DEFAULT_TRADE_CHART_INTERVAL, getCandles, TRADE_CHART_LIMIT } from "./candles.ts";
 import { apiRequest } from "./client.ts";
 import { queryKeys } from "../query-keys.ts";
 
@@ -25,15 +25,23 @@ describe("getCandles", () => {
     mockedRequest.mockResolvedValue(payload);
   });
 
-  it("requests Notional historical candles for 15m and limit 500", async () => {
+  it("requests Notional historical candles for the selected interval and limit 500", async () => {
     await getCandles({
       symbol: "BTCUSDT",
-      interval: TRADE_CHART_INTERVAL,
+      interval: DEFAULT_TRADE_CHART_INTERVAL,
       limit: TRADE_CHART_LIMIT,
     });
 
     expect(mockedRequest).toHaveBeenCalledWith(
       "/api/market-data/BTCUSDT/candles?interval=15m&limit=500",
+    );
+  });
+
+  it("requests the selected 1h interval", async () => {
+    await getCandles({ symbol: "BTCUSDT", interval: "1h", limit: 500 });
+
+    expect(mockedRequest).toHaveBeenCalledWith(
+      "/api/market-data/BTCUSDT/candles?interval=1h&limit=500",
     );
   });
 
@@ -61,5 +69,13 @@ describe("candle query keys", () => {
     expect(btc).not.toEqual(eth);
     expect(btc[0]).toBe("candles");
     expect(btc[1]).toBe("list");
+  });
+
+  it("separates historical queries by interval", () => {
+    const fifteen = queryKeys.candles.list({ symbol: "BTCUSDT", interval: "15m", limit: 500 });
+    const hour = queryKeys.candles.list({ symbol: "BTCUSDT", interval: "1h", limit: 500 });
+
+    expect(fifteen).not.toEqual(hour);
+    expect(hour).toEqual(["candles", "list", { symbol: "BTCUSDT", interval: "1h", limit: 500 }]);
   });
 });

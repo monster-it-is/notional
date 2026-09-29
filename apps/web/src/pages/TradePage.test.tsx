@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { MemoryRouter, Outlet, Route, Routes } from "react-router";
+import { MemoryRouter, Outlet, Route, Routes, useLocation } from "react-router";
 
 import { TradePage } from "./TradePage.tsx";
 import { ThemeProvider } from "../theme/ThemeProvider.tsx";
@@ -92,6 +92,17 @@ const eth: InstrumentResponse = {
   baseAsset: "ETH",
 };
 
+function SearchProbe() {
+  const location = useLocation();
+
+  return (
+    <>
+      <span data-testid="trade-pathname">{location.pathname}</span>
+      <span data-testid="trade-search">{location.search}</span>
+    </>
+  );
+}
+
 function renderTrade({
   suspended = false,
   path = "/trade",
@@ -109,7 +120,15 @@ function renderTrade({
         <MemoryRouter initialEntries={[path]}>
           <Routes>
             <Route element={<Outlet context={{ suspended }} />}>
-              <Route path="/trade" element={<TradePage />} />
+              <Route
+                path="/trade"
+                element={
+                  <>
+                    <TradePage />
+                    <SearchProbe />
+                  </>
+                }
+              />
             </Route>
           </Routes>
         </MemoryRouter>
@@ -152,7 +171,11 @@ describe("TradePage", () => {
     mockedExecutions.mockReset();
     mockedMargin.mockReset();
     mockedInstruments.mockResolvedValue({ instruments: [btc, eth] });
-    mockedCandles.mockResolvedValue({ symbol: "BTCUSDT", interval: "15m", candles: [] });
+    mockedCandles.mockImplementation(async ({ symbol, interval }) => ({
+      symbol,
+      interval,
+      candles: [],
+    }));
     mockedPositions.mockResolvedValue({ positions: [] });
     mockedOrders.mockResolvedValue({ orders: [] });
     mockedExecutions.mockResolvedValue({ executions: [] });
@@ -199,6 +222,74 @@ describe("TradePage", () => {
       interval: "15m",
       limit: 500,
     });
+  });
+
+  it("defaults the chart interval to 15m when the query param is missing", async () => {
+    renderTrade();
+    expect(await screen.findByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(mockedCandles).toHaveBeenCalledWith({
+        symbol: "BTCUSDT",
+        interval: "15m",
+        limit: 500,
+      }),
+    );
+    expect(setDesiredCandle).toHaveBeenCalledWith({ symbol: "BTCUSDT", interval: "15m" });
+  });
+
+  it("honors ?interval=1h for historical candles and the live pair", async () => {
+    renderTrade({ path: "/trade?interval=1h" });
+    expect(await screen.findByRole("button", { name: "1h" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() =>
+      expect(mockedCandles).toHaveBeenCalledWith({
+        symbol: "BTCUSDT",
+        interval: "1h",
+        limit: 500,
+      }),
+    );
+    expect(setDesiredCandle).toHaveBeenCalledWith({ symbol: "BTCUSDT", interval: "1h" });
+  });
+
+  it("falls back to 15m when the interval query param is invalid", async () => {
+    renderTrade({ path: "/trade?interval=9h" });
+    expect(await screen.findByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(mockedCandles).toHaveBeenCalledWith({
+        symbol: "BTCUSDT",
+        interval: "15m",
+        limit: 500,
+      }),
+    );
+  });
+
+  it("updates the URL interval while preserving symbol and unrelated search params", async () => {
+    const user = userEvent.setup();
+    renderTrade({ path: "/trade?symbol=ETHUSDT&foo=bar" });
+    expect(await screen.findByRole("combobox", { name: "Instrument" })).toHaveValue("ETHUSDT");
+    await user.click(screen.getByRole("button", { name: "5m" }));
+    await waitFor(() => expect(screen.getByTestId("trade-search").textContent).toContain("interval=5m"));
+    expect(screen.getByTestId("trade-pathname")).toHaveTextContent("/trade");
+    expect(screen.getByTestId("trade-search").textContent).toContain("symbol=ETHUSDT");
+    expect(screen.getByTestId("trade-search").textContent).toContain("foo=bar");
+    expect(screen.getByRole("button", { name: "5m" })).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(mockedCandles).toHaveBeenCalledWith({
+        symbol: "ETHUSDT",
+        interval: "5m",
+        limit: 500,
+      }),
+    );
+  });
+
+  it("keeps chart mode out of the URL", async () => {
+    const user = userEvent.setup();
+    renderTrade({ path: "/trade?symbol=BTCUSDT" });
+    await user.click(await screen.findByRole("button", { name: "Line" }));
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("trade-search").textContent).not.toMatch(/mode=/);
+    expect(screen.getByTestId("trade-search").textContent).not.toMatch(/line/i);
+    expect(screen.getByTestId("trade-pathname")).toHaveTextContent("/trade");
   });
 
   it("shows instrument loading copy", () => {
@@ -524,7 +615,11 @@ describe("TradePage reduce prefill", () => {
     mockedExecutions.mockReset();
     mockedMargin.mockReset();
     mockedInstruments.mockResolvedValue({ instruments: [btc, eth] });
-    mockedCandles.mockResolvedValue({ symbol: "BTCUSDT", interval: "15m", candles: [] });
+    mockedCandles.mockImplementation(async ({ symbol, interval }) => ({
+      symbol,
+      interval,
+      candles: [],
+    }));
     mockedPositions.mockResolvedValue({ positions: [] });
     mockedOrders.mockResolvedValue({ orders: [] });
     mockedExecutions.mockResolvedValue({ executions: [] });

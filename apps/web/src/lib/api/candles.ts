@@ -2,7 +2,7 @@ import type { CandleInterval, CandleListResponse } from "@notional/contracts";
 
 import { apiRequest } from "./client.ts";
 
-export const TRADE_CHART_INTERVAL = "15m" satisfies CandleInterval;
+export const DEFAULT_TRADE_CHART_INTERVAL = "15m" satisfies CandleInterval;
 export const TRADE_CHART_LIMIT = 500;
 
 export function getCandles(params: {
