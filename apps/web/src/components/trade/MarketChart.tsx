@@ -29,8 +29,9 @@ import { queryKeys } from "../../lib/query-keys.ts";
 import { getMarketSocket } from "../../realtime/runtime.ts";
 import { useTheme } from "../../theme/ThemeProvider.tsx";
 
-const HOST_CLASS =
-  "h-72 w-full min-w-0 overflow-hidden md:h-[22rem] lg:h-[26rem] xl:h-[28rem]";
+const HOST_HEIGHT_CLASS = "h-72 w-full min-w-0 md:h-[22rem] lg:h-[26rem] xl:h-[28rem]";
+const HOST_CLASS = `${HOST_HEIGHT_CLASS} overflow-hidden`;
+const CHART_SLOT_CLASS = `${HOST_HEIGHT_CLASS} flex items-center justify-center`;
 
 const EMPTY_POINTS: AlignedChartPoints = {
   candles: [],
@@ -262,16 +263,18 @@ export function MarketChart({
 
   if (!symbol) {
     return (
-      <div>
+      <div className="min-w-0">
         {heading}
-        <EmptyState>Select an instrument to load historical candles.</EmptyState>
+        <div className={CHART_SLOT_CLASS}>
+          <EmptyState>Select an instrument to load historical candles.</EmptyState>
+        </div>
       </div>
     );
   }
 
   if (candlesQuery.isLoading) {
     return (
-      <div>
+      <div className="min-w-0" aria-busy="true">
         {heading}
         <div
           className={`${HOST_CLASS} animate-pulse rounded-md bg-surface-subtle`}
@@ -284,18 +287,22 @@ export function MarketChart({
 
   if (candlesQuery.error) {
     return (
-      <div>
+      <div className="min-w-0">
         {heading}
-        <ErrorBanner error={candlesQuery.error} />
+        <div className={CHART_SLOT_CLASS}>
+          <ErrorBanner error={candlesQuery.error} />
+        </div>
       </div>
     );
   }
 
   if (points.candles.length === 0) {
     return (
-      <div>
+      <div className="min-w-0">
         {heading}
-        <EmptyState>No candle data available</EmptyState>
+        <div className={CHART_SLOT_CLASS}>
+          <EmptyState>No candle data available</EmptyState>
+        </div>
       </div>
     );
   }
@@ -303,7 +310,7 @@ export function MarketChart({
   const chartKind = mode === "line" ? "line" : "candlestick";
 
   return (
-    <div>
+    <div className="min-w-0">
       {heading}
       <div
         ref={hostRef}
@@ -330,11 +337,11 @@ function ChartToolbar({
 }) {
   return (
     <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
-      <h2 className="font-heading text-base text-foreground">{symbol ?? "Chart"}</h2>
+      <h2 className="shrink-0 font-heading text-base text-foreground">{symbol ?? "Chart"}</h2>
       <div
         role="group"
         aria-label="Chart interval"
-        className="flex min-w-0 max-w-full flex-1 items-center gap-1 overflow-x-auto"
+        className="flex min-w-0 max-w-full flex-[1_1_12rem] items-center gap-1 overflow-x-auto overscroll-x-contain scrollbar-thin"
       >
         {CANDLE_INTERVALS.map((value) => {
           const selected = value === interval;
@@ -346,7 +353,7 @@ function ChartToolbar({
               size="sm"
               variant={selected ? "primary" : "secondary"}
               aria-pressed={selected}
-              className="shrink-0 px-2"
+              className="min-w-11 shrink-0 px-2 lg:min-w-0"
               onClick={() => onIntervalChange(value)}
             >
               {value}

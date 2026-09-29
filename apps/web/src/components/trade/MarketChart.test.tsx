@@ -242,17 +242,29 @@ describe("MarketChart", () => {
     mockedGetCandles.mockReturnValue(new Promise(() => undefined));
     renderChart();
     expect(screen.getByText("BTCUSDT")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "BTCUSDT" }).className).toContain("shrink-0");
     expect(screen.getByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "1h" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Line" })).toBeEnabled();
     expect(screen.getByText("Loading historical candles")).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Chart interval" }).className).toContain("overflow-x-auto");
+    expect(screen.getByRole("button", { name: "1m" }).className).toContain("min-w-11");
     expect(createChart).not.toHaveBeenCalled();
   });
 
-  it("shows an API error without crashing", async () => {
+  it("shows an API error without crashing and keeps interval controls usable", async () => {
+    const user = userEvent.setup();
+    const onIntervalChange = vi.fn();
     mockedGetCandles.mockRejectedValue(
       new ApiError({ status: 503, code: "MARKET_DATA_UNAVAILABLE" }),
     );
-    renderChart();
+    renderChart("BTCUSDT", false, { onIntervalChange });
     expect(await screen.findByRole("alert")).toHaveTextContent("MARKET_DATA_UNAVAILABLE");
+    expect(screen.getByRole("alert").parentElement?.className).toContain("h-72");
+    expect(screen.getByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "1h" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "1h" }));
+    expect(onIntervalChange).toHaveBeenCalledWith("1h");
     expect(createChart).not.toHaveBeenCalled();
   });
 
@@ -260,6 +272,9 @@ describe("MarketChart", () => {
     mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: [] });
     renderChart();
     expect(await screen.findByText("No candle data available")).toBeInTheDocument();
+    expect(screen.getByText("No candle data available").parentElement?.className).toContain("h-72");
+    expect(screen.getByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Line" })).toBeEnabled();
     expect(createChart).not.toHaveBeenCalled();
   });
 
@@ -271,6 +286,10 @@ describe("MarketChart", () => {
       interval: "15m",
       limit: 500,
     });
+    expect(createChart).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ autoSize: true }),
+    );
     expect(addSeries).toHaveBeenCalledTimes(3);
     expect(candlestick.setData).toHaveBeenCalledTimes(1);
     expect(candlestick.setData).toHaveBeenCalledWith(aligned(btcCandles.candles).candles);
@@ -519,6 +538,169 @@ describe("MarketChart", () => {
     ]);
   });
 
+  it("keeps the final interval identity when switches happen before REST completes", async () => {
+    const resolvers = new Map<CandleInterval, (value: CandleListResponse) => void>();
+    mockedGetCandles.mockImplementation(
+      ({ interval }) =>
+        new Promise((resolve) => {
+          resolvers.set(interval, resolve);
+        }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (interval: CandleInterval) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol="BTCUSDT" interval={interval} onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("15m"));
+    expect(await screen.findByText("Loading historical candles")).toBeInTheDocument();
+
+    view.rerender(tree("1h"));
+    view.rerender(tree("5m"));
+    view.rerender(tree("1d"));
+    expect(screen.getByRole("button", { name: "1d" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("Loading historical candles")).toBeInTheDocument();
+    expect(createChart).not.toHaveBeenCalled();
+    expect(marketSocket.setDesiredCandle).toHaveBeenLastCalledWith({
+      symbol: "BTCUSDT",
+      interval: "1d",
+    });
+
+    resolvers.get("15m")?.({ ...btcCandles, interval: "15m" });
+    resolvers.get("1h")?.({ ...btcCandles, interval: "1h" });
+    resolvers.get("5m")?.({ ...btcCandles, interval: "5m" });
+    await waitFor(() =>
+      expect(
+        client.getQueryData(
+          queryKeys.candles.list({ symbol: "BTCUSDT", interval: "15m", limit: TRADE_CHART_LIMIT }),
+        ),
+      ).toEqual({ ...btcCandles, interval: "15m" }),
+    );
+    expect(createChart).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "1d" })).toHaveAttribute("aria-pressed", "true");
+
+    resolvers.get("1d")?.({ ...btcCandles, interval: "1d" });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(candlestick.setData).toHaveBeenCalledTimes(1);
+    expect(line.setData).toHaveBeenCalledTimes(1);
+    expect(volume.setData).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "aria-label",
+      "BTCUSDT 1d historical candlestick chart",
+    );
+
+    marketSocket.emitCandle(liveFrame({ interval: "15m", close: "106.00" }));
+    expect(candlestick.update).not.toHaveBeenCalled();
+    marketSocket.emitCandle(liveFrame({ interval: "1d", close: "106.00" }));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(1));
+    expect(line.update).toHaveBeenCalledTimes(1);
+    expect(volume.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the final symbol and interval identity when both change before REST completes", async () => {
+    const resolvers = new Map<string, (value: CandleListResponse) => void>();
+    mockedGetCandles.mockImplementation(
+      ({ symbol, interval }) =>
+        new Promise((resolve) => {
+          resolvers.set(`${symbol}:${interval}`, resolve);
+        }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (symbol: string, interval: CandleInterval) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval={interval} onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT", "15m"));
+    expect(await screen.findByText("Loading historical candles")).toBeInTheDocument();
+
+    view.rerender(tree("ETHUSDT", "15m"));
+    view.rerender(tree("ETHUSDT", "1h"));
+    view.rerender(tree("BTCUSDT", "5m"));
+    expect(screen.getByRole("heading", { name: "BTCUSDT" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "5m" })).toHaveAttribute("aria-pressed", "true");
+    expect(marketSocket.setDesiredCandle).toHaveBeenLastCalledWith({
+      symbol: "BTCUSDT",
+      interval: "5m",
+    });
+
+    resolvers.get("BTCUSDT:15m")?.({ ...btcCandles, interval: "15m" });
+    resolvers.get("ETHUSDT:15m")?.({ ...ethCandles, interval: "15m" });
+    resolvers.get("ETHUSDT:1h")?.({ ...ethCandles, interval: "1h" });
+    await waitFor(() =>
+      expect(
+        client.getQueryData(
+          queryKeys.candles.list({ symbol: "ETHUSDT", interval: "1h", limit: TRADE_CHART_LIMIT }),
+        ),
+      ).toEqual({ ...ethCandles, interval: "1h" }),
+    );
+    expect(createChart).not.toHaveBeenCalled();
+
+    marketSocket.emitCandle(liveFrame({ symbol: "ETHUSDT", interval: "1h", close: "211.00" }));
+    expect(candlestick.update).not.toHaveBeenCalled();
+
+    resolvers.get("BTCUSDT:5m")?.({ ...btcCandles, interval: "5m" });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "aria-label",
+      "BTCUSDT 5m historical candlestick chart",
+    );
+
+    marketSocket.emitCandle(liveFrame({ symbol: "ETHUSDT", interval: "15m", close: "211.00" }));
+    expect(candlestick.update).not.toHaveBeenCalled();
+    marketSocket.emitCandle(liveFrame({ interval: "5m", close: "106.00" }));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps local chart mode while an uncached interval is loading", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    let resolveHour: (value: CandleListResponse) => void = () => undefined;
+    mockedGetCandles.mockImplementation(({ interval }) => {
+      if (interval === "1h") {
+        return new Promise((resolve) => {
+          resolveHour = resolve;
+        });
+      }
+
+      return Promise.resolve(btcCandles);
+    });
+    const tree = (interval: CandleInterval) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol="BTCUSDT" interval={interval} onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("15m"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+
+    view.rerender(tree("1h"));
+    expect(await screen.findByText("Loading historical candles")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1h" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByRole("img")).not.toBeInTheDocument();
+
+    resolveHour({ ...btcCandles, interval: "1h" });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("img")).toHaveAttribute("aria-label", "BTCUSDT 1h historical line chart");
+  });
+
   it("ignores a live 15m frame while the active interval is 1h", async () => {
     mockedGetCandles.mockResolvedValue({ ...btcCandles, interval: "1h" });
     renderChart("BTCUSDT", false, { interval: "1h" });
@@ -615,6 +797,25 @@ describe("MarketChart", () => {
     );
   });
 
+  it("applies live updates to all three series after toggling Line", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    await waitFor(() => expect(line.update).toHaveBeenCalledTimes(1));
+    expect(candlestick.update).toHaveBeenCalledTimes(1);
+    expect(volume.update).toHaveBeenCalledTimes(1);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(mockedGetCandles).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "aria-label",
+      "BTCUSDT 15m historical line chart",
+    );
+  });
+
   it("exposes accessible timeframe and mode controls", async () => {
     renderChart();
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
@@ -661,11 +862,25 @@ describe("MarketChart", () => {
     expect(addSeries).toHaveBeenCalledTimes(3);
     expect(remove).not.toHaveBeenCalled();
     expect(fitContent).toHaveBeenCalledTimes(1);
+
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(1));
+    expect(line.update).toHaveBeenCalledTimes(1);
+    expect(volume.update).toHaveBeenCalledTimes(1);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(addSeries).toHaveBeenCalledTimes(3);
+    expect(fitContent).toHaveBeenCalledTimes(1);
   });
 
   it("disposes the chart on unmount including Strict Mode remount", async () => {
     const view = renderChart("BTCUSDT", true);
     await waitFor(() => expect(createChart).toHaveBeenCalled());
+    expect(marketSocket.candleListeners.size).toBe(1);
+    expect(marketSocket.reconnectListeners.size).toBe(1);
+    expect(marketSocket.setDesiredCandle).toHaveBeenLastCalledWith({
+      symbol: "BTCUSDT",
+      interval: "15m",
+    });
     const removesBeforeUnmount = remove.mock.calls.length;
     view.unmount();
     expect(remove.mock.calls.length).toBeGreaterThan(removesBeforeUnmount);

@@ -282,6 +282,73 @@ describe("TradePage", () => {
     );
   });
 
+  it("keeps the URL and live pair on the last interval when switches outrun REST", async () => {
+    const user = userEvent.setup();
+    const resolvers = new Map<string, (value: Awaited<ReturnType<typeof getCandles>>) => void>();
+    mockedCandles.mockImplementation(
+      ({ symbol, interval }) =>
+        new Promise((resolve) => {
+          resolvers.set(`${symbol}:${interval}`, resolve);
+        }),
+    );
+    renderTrade();
+    expect(await screen.findByRole("combobox", { name: "Instrument" })).toHaveValue("BTCUSDT");
+    expect(screen.getByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "1h" }));
+    await user.click(screen.getByRole("button", { name: "5m" }));
+    await user.click(screen.getByRole("button", { name: "1d" }));
+    expect(screen.getByTestId("trade-search").textContent).toContain("interval=1d");
+    expect(screen.getByRole("button", { name: "1d" })).toHaveAttribute("aria-pressed", "true");
+    expect(setDesiredCandle).toHaveBeenLastCalledWith({ symbol: "BTCUSDT", interval: "1d" });
+    expect(screen.getByText("Loading historical candles")).toBeInTheDocument();
+
+    resolvers.get("BTCUSDT:15m")?.({ symbol: "BTCUSDT", interval: "15m", candles: [] });
+    resolvers.get("BTCUSDT:1h")?.({ symbol: "BTCUSDT", interval: "1h", candles: [] });
+    resolvers.get("BTCUSDT:5m")?.({ symbol: "BTCUSDT", interval: "5m", candles: [] });
+    await waitFor(() => expect(mockedCandles).toHaveBeenCalled());
+    expect(screen.getByRole("button", { name: "1d" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("trade-search").textContent).toContain("interval=1d");
+    expect(setDesiredCandle).toHaveBeenLastCalledWith({ symbol: "BTCUSDT", interval: "1d" });
+
+    resolvers.get("BTCUSDT:1d")?.({ symbol: "BTCUSDT", interval: "1d", candles: [] });
+    expect(await screen.findByText("No candle data available")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "1d" })).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("keeps the final symbol and interval when both change before REST completes", async () => {
+    const user = userEvent.setup();
+    const resolvers = new Map<string, (value: Awaited<ReturnType<typeof getCandles>>) => void>();
+    mockedCandles.mockImplementation(
+      ({ symbol, interval }) =>
+        new Promise((resolve) => {
+          resolvers.set(`${symbol}:${interval}`, resolve);
+        }),
+    );
+    renderTrade({ path: "/trade?symbol=BTCUSDT" });
+    const selector = await screen.findByRole("combobox", { name: "Instrument" });
+    await user.click(selector);
+    await user.click(await screen.findByRole("option", { name: /ETHUSDT/ }));
+    await waitFor(() => expect(selector).toHaveValue("ETHUSDT"));
+    await user.click(screen.getByRole("button", { name: "1h" }));
+    await user.click(selector);
+    await user.click(await screen.findByRole("option", { name: /BTCUSDT/ }));
+    await waitFor(() => expect(selector).toHaveValue("BTCUSDT"));
+    await user.click(screen.getByRole("button", { name: "5m" }));
+
+    expect(screen.getByTestId("trade-search").textContent).toContain("symbol=BTCUSDT");
+    expect(screen.getByTestId("trade-search").textContent).toContain("interval=5m");
+    expect(screen.getByRole("button", { name: "5m" })).toHaveAttribute("aria-pressed", "true");
+    expect(setDesiredCandle).toHaveBeenLastCalledWith({ symbol: "BTCUSDT", interval: "5m" });
+    expect(setDesiredSymbol).toHaveBeenLastCalledWith("BTCUSDT");
+
+    resolvers.get("ETHUSDT:15m")?.({ symbol: "ETHUSDT", interval: "15m", candles: [] });
+    resolvers.get("ETHUSDT:1h")?.({ symbol: "ETHUSDT", interval: "1h", candles: [] });
+    await waitFor(() => expect(mockedCandles).toHaveBeenCalled());
+    expect(screen.getByRole("combobox", { name: "Instrument" })).toHaveValue("BTCUSDT");
+    expect(screen.getByRole("button", { name: "5m" })).toHaveAttribute("aria-pressed", "true");
+    expect(setDesiredCandle).toHaveBeenLastCalledWith({ symbol: "BTCUSDT", interval: "5m" });
+  });
+
   it("keeps chart mode out of the URL", async () => {
     const user = userEvent.setup();
     renderTrade({ path: "/trade?symbol=BTCUSDT" });

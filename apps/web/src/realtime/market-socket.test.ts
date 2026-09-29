@@ -1,3 +1,4 @@
+import { WS_CLOSE_PRIVATE_BACKPRESSURE } from "@notional/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarketSocketManager } from "./market-socket.ts";
@@ -266,6 +267,29 @@ describe("market socket", () => {
     vi.runOnlyPendingTimers();
     FakeWebSocket.instances[1]?.open();
     FakeWebSocket.instances[1]?.emit(hello());
+    expect(reconnect).toHaveBeenCalledTimes(1);
+  });
+
+  it("reconnects after a 4429 private-backpressure close and restores subscriptions", () => {
+    const reconnect = vi.fn();
+    const manager = createManager();
+    manager.subscribeReconnectReady(reconnect);
+    manager.setDesiredSymbol("BTCUSDT");
+    manager.setDesiredCandle({ symbol: "BTCUSDT", interval: "15m" });
+    manager.acquire();
+    FakeWebSocket.instances[0]?.open();
+    FakeWebSocket.instances[0]?.emit(hello());
+    expect(reconnect).not.toHaveBeenCalled();
+    FakeWebSocket.instances[0]?.close(WS_CLOSE_PRIVATE_BACKPRESSURE, "PRIVATE_BACKPRESSURE");
+    vi.runOnlyPendingTimers();
+    expect(FakeWebSocket.instances).toHaveLength(2);
+    const next = FakeWebSocket.instances[1]!;
+    next.open();
+    next.emit(hello());
+    expect(next.sent).toContain(JSON.stringify({ type: "market.subscribe", symbol: "BTCUSDT" }));
+    expect(next.sent).toContain(
+      JSON.stringify({ type: "market.candles.subscribe", symbol: "BTCUSDT", interval: "15m" }),
+    );
     expect(reconnect).toHaveBeenCalledTimes(1);
   });
 
