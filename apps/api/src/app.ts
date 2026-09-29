@@ -20,11 +20,17 @@ import { getInstrumentBySymbol, getInstruments } from "./instruments.js";
 import { createPinoLoggerOptions } from "./logging.js";
 import { getLiquidations } from "./liquidations.js";
 import { getMarginSettings, putMarginSettings } from "./margin-settings.js";
-import { getMarketDataBySymbol, getMarketDataStatus } from "./market-data.js";
+import {
+  getMarketDataBySymbol,
+  getMarketDataCandles,
+  getMarketDataStatus,
+  type GetKlines,
+} from "./market-data.js";
 import {
   unavailableMarketDataAccess,
   type MarketDataAccess,
 } from "./market-data/coordinator.js";
+import { createBinanceRestClient } from "./market-data/rest-client.js";
 import { getOrderById, getOrders, postOrder, cancelOrder } from "./orders.js";
 import { getPositionBySymbol, getPositions } from "./positions.js";
 import {
@@ -42,6 +48,7 @@ export const JSON_BODY_LIMIT_BYTES = 32 * 1024;
 
 export type BuildAppOptions = {
   marketData?: MarketDataAccess;
+  getKlines?: GetKlines;
   onOpenOrderCommitted?: (symbol: string) => void;
   onPrivateCommitted?: (effect: CommittedPrivateEffect) => void;
   realtime?: RealtimeRuntime;
@@ -67,6 +74,7 @@ export async function buildApp(options: BuildAppOptions = {}) {
   const app = Fastify(fastifyOptions(options.loggerDestination));
   const rateLimitEnabled = options.enableRateLimit ?? process.env.NODE_ENV !== "test";
   const marketData = options.marketData ?? unavailableMarketDataAccess();
+  const getKlines = options.getKlines ?? defaultGetKlines();
   const onPrivateCommitted =
     options.onPrivateCommitted ??
     (options.realtime
@@ -150,6 +158,9 @@ export async function buildApp(options: BuildAppOptions = {}) {
   app.get("/api/market-data/status", { preHandler: authed("reads") }, (request, reply) =>
     getMarketDataStatus(request, reply, marketData),
   );
+  app.get("/api/market-data/:symbol/candles", { preHandler: authed("reads") }, (request, reply) =>
+    getMarketDataCandles(request, reply, getKlines),
+  );
   app.get("/api/market-data/:symbol", { preHandler: authed("reads") }, (request, reply) =>
     getMarketDataBySymbol(request, reply, marketData),
   );
@@ -210,6 +221,15 @@ function fastifyOptions(destination?: NodeJS.WritableStream): FastifyServerOptio
     logController: new LogController({ disableRequestLogging: true }),
     logger: testLogger ? false : createPinoLoggerOptions(env.LOG_LEVEL, destination),
   };
+}
+
+function defaultGetKlines(): GetKlines {
+  const rest = createBinanceRestClient({
+    restBaseUrl: env.BINANCE_FAPI_REST_BASE_URL,
+    timeoutMs: env.BINANCE_HTTP_TIMEOUT_MS,
+  });
+
+  return (query) => rest.getKlines(query);
 }
 
 function toIsoString(value: Date | string): string {

@@ -1,3 +1,23 @@
+export const CANDLE_INTERVALS = ["1m", "5m", "15m", "1h", "4h", "1d"] as const;
+
+export type CandleInterval = (typeof CANDLE_INTERVALS)[number];
+
+export type Candle = {
+  openTime: number;
+  closeTime: number;
+  open: string;
+  high: string;
+  low: string;
+  close: string;
+  volume: string;
+};
+
+export type CandleListResponse = {
+  symbol: string;
+  interval: CandleInterval;
+  candles: Candle[];
+};
+
 export type MarketDataResponse = {
   symbol: string;
   markPrice: string;

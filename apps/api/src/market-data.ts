@@ -1,13 +1,29 @@
 import type {
+  CandleInterval,
+  CandleListResponse,
   InstrumentNotFoundError,
+  InvalidQueryError,
   MarketDataResponse,
   MarketDataStatusResponse,
   MarketDataUnavailableError,
 } from "@notional/contracts";
+import { CANDLE_INTERVALS } from "@notional/contracts";
 import { findInstrumentBySymbol, db } from "@notional/db";
 import type { FastifyReply, FastifyRequest } from "fastify";
 
 import type { MarketDataAccess } from "./market-data/coordinator.js";
+import { parseKlines } from "./market-data/parse-klines.js";
+
+const DEFAULT_CANDLE_INTERVAL: CandleInterval = "15m";
+const DEFAULT_CANDLE_LIMIT = 500;
+const MIN_CANDLE_LIMIT = 1;
+const MAX_CANDLE_LIMIT = 1500;
+
+export type GetKlines = (query: {
+  symbol: string;
+  interval: CandleInterval;
+  limit: number;
+}) => Promise<unknown>;
 
 export async function getMarketDataBySymbol(
   request: FastifyRequest,
@@ -49,6 +65,110 @@ export async function getMarketDataStatus(
   }
 
   return marketData.getStatus();
+}
+
+export async function getMarketDataCandles(
+  request: FastifyRequest,
+  reply: FastifyReply,
+  getKlines: GetKlines,
+): Promise<
+  CandleListResponse | InstrumentNotFoundError | InvalidQueryError | MarketDataUnavailableError | { error: string }
+> {
+  if (!request.auth) {
+    return reply.status(401).send({ error: "Unauthorized" });
+  }
+
+  const symbol = requestSymbol(request);
+
+  if (!symbol) {
+    return reply.status(404).send({ error: "INSTRUMENT_NOT_FOUND" });
+  }
+
+  const instrument = await findInstrumentBySymbol(db, symbol);
+
+  if (!instrument) {
+    return reply.status(404).send({ error: "INSTRUMENT_NOT_FOUND" });
+  }
+
+  const query = parseCandleQuery(request.query);
+
+  if (query === "invalid_query") {
+    return reply.status(400).send({ error: "INVALID_QUERY" });
+  }
+
+  try {
+    const payload = await getKlines({
+      symbol: instrument.symbol,
+      interval: query.interval,
+      limit: query.limit,
+    });
+
+    return {
+      symbol: instrument.symbol,
+      interval: query.interval,
+      candles: parseKlines(payload),
+    };
+  } catch {
+    return reply.status(503).send({ error: "MARKET_DATA_UNAVAILABLE" });
+  }
+}
+
+function parseCandleQuery(
+  query: unknown,
+): { interval: CandleInterval; limit: number } | "invalid_query" {
+  if (query === undefined || query === null || typeof query !== "object") {
+    return { interval: DEFAULT_CANDLE_INTERVAL, limit: DEFAULT_CANDLE_LIMIT };
+  }
+
+  const record = query as Record<string, unknown>;
+  const interval = parseCandleInterval(record.interval);
+  const limit = parseCandleLimit(record.limit);
+
+  if (interval === null || limit === null) {
+    return "invalid_query";
+  }
+
+  return { interval, limit };
+}
+
+function parseCandleInterval(value: unknown): CandleInterval | null {
+  if (value === undefined) {
+    return DEFAULT_CANDLE_INTERVAL;
+  }
+
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  return isCandleInterval(value) ? value : null;
+}
+
+function parseCandleLimit(value: unknown): number | null {
+  if (value === undefined) {
+    return DEFAULT_CANDLE_LIMIT;
+  }
+
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+
+  const text = String(value);
+
+  if (!/^\d+$/.test(text)) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(text, 10);
+
+  if (!Number.isSafeInteger(parsed) || parsed < MIN_CANDLE_LIMIT || parsed > MAX_CANDLE_LIMIT) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function isCandleInterval(value: string): value is CandleInterval {
+  return (CANDLE_INTERVALS as readonly string[]).includes(value);
 }
 
 function requestSymbol(request: FastifyRequest): string | null {

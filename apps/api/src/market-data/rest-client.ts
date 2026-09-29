@@ -1,3 +1,5 @@
+import type { CandleInterval } from "@notional/contracts";
+
 export type JsonFetcher = (
   url: string,
   init?: { signal?: AbortSignal },
@@ -80,6 +82,8 @@ export function createBinanceRestClient(options: {
       endTime?: number;
       limit?: number;
     }) => getJson(withQuery("/fapi/v1/markPriceKlines", query)),
+    getKlines: (query: { symbol: string; interval: CandleInterval; limit: number }) =>
+      getJson(withQuery("/fapi/v1/klines", query)),
   };
 }
 

@@ -24,10 +24,14 @@ export type {
   PerpFundingHistoryResponse,
 } from "./funding.js";
 export type {
+  Candle,
+  CandleInterval,
+  CandleListResponse,
   MarketDataResponse,
   MarketDataStatusResponse,
   MarketDataUnavailableError,
 } from "./market-data.js";
+export { CANDLE_INTERVALS } from "./market-data.js";
 export type {
   CreateOrderRequest,
   IdempotencyKeyInvalidError,
