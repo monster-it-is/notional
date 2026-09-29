@@ -1,9 +1,14 @@
-import type { OrderStatus } from "@notional/contracts";
+import type { CandleInterval, OrderStatus } from "@notional/contracts";
 
 export const queryKeys = {
   account: ["account"] as const,
   instruments: ["instruments"] as const,
   instrument: (symbol: string) => ["instruments", symbol] as const,
+  candles: {
+    all: ["candles"] as const,
+    list: (filters: { symbol: string; interval: CandleInterval; limit: number }) =>
+      ["candles", "list", filters] as const,
+  },
   orders: {
     all: ["orders"] as const,
     list: (filters: {

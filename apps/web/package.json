@@ -19,6 +19,7 @@
     "@notional/trading": "workspace:*",
     "@tanstack/react-query": "^5.102.8",
     "better-auth": "^1.7.4",
+    "lightweight-charts": "^5.2.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "react-router": "^8.3.1",

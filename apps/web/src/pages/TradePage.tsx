@@ -10,6 +10,7 @@ import { OpenOrdersTable } from "../components/OpenOrdersTable.tsx";
 import { OrderForm, type ReducePrefillCommand } from "../components/OrderForm.tsx";
 import { PositionsTable } from "../components/PositionsTable.tsx";
 import { SymbolSelector } from "../components/SymbolSelector.tsx";
+import { MarketChart } from "../components/trade/MarketChart.tsx";
 import { ErrorBanner } from "../components/ui/ErrorBanner.tsx";
 import { Surface } from "../components/ui/Surface.tsx";
 import { Tabs } from "../components/ui/Tabs.tsx";
@@ -88,41 +89,14 @@ export function TradePage() {
         </div>
       </Surface>
 
-      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-start">
-        <Surface as="section" className="order-2 min-w-0 flex-1 lg:order-1">
-          <h2 className="sr-only">Positions and orders</h2>
-          <Tabs
-            tabs={[
-              { id: "positions", label: "Positions" },
-              { id: "orders", label: "Open orders", disabled: closePending },
-              { id: "executions", label: "Recent executions", disabled: closePending },
-            ]}
-            value={tab}
-            onChange={(id) => {
-              if (closePending && id !== "positions") {
-                return;
-              }
-
-              setTab(id);
-            }}
-          />
-          <div className="mt-3 min-w-0">
-            {tab === "positions" ? (
-              <PositionsTable
-                disabled={suspended}
-                reduceDisabled={ticketPending}
-                onClosePendingChange={setClosePending}
-                onReduce={requestReduce}
-              />
-            ) : null}
-            {tab === "orders" ? <OpenOrdersTable /> : null}
-            {tab === "executions" ? <ExecutionsTable limit={20} offset={0} /> : null}
-          </div>
+      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-stretch">
+        <Surface as="section" className="min-w-0 flex-1">
+          <MarketChart symbol={symbol} />
         </Surface>
 
         <Surface
           as="section"
-          className="order-1 w-full min-w-0 lg:order-2 lg:w-[22rem] lg:shrink-0 xl:w-[24rem]"
+          className="w-full min-w-0 lg:w-[22rem] lg:shrink-0 xl:w-[24rem]"
         >
           <h2 className="mb-2 font-heading text-base text-foreground">Order ticket</h2>
           {suspended ? (
@@ -141,6 +115,37 @@ export function TradePage() {
           </div>
         </Surface>
       </div>
+
+      <Surface as="section" className="min-w-0">
+        <h2 className="sr-only">Positions and orders</h2>
+        <Tabs
+          tabs={[
+            { id: "positions", label: "Positions" },
+            { id: "orders", label: "Open orders", disabled: closePending },
+            { id: "executions", label: "Recent executions", disabled: closePending },
+          ]}
+          value={tab}
+          onChange={(id) => {
+            if (closePending && id !== "positions") {
+              return;
+            }
+
+            setTab(id);
+          }}
+        />
+        <div className="mt-3 min-w-0">
+          {tab === "positions" ? (
+            <PositionsTable
+              disabled={suspended}
+              reduceDisabled={ticketPending}
+              onClosePendingChange={setClosePending}
+              onReduce={requestReduce}
+            />
+          ) : null}
+          {tab === "orders" ? <OpenOrdersTable /> : null}
+          {tab === "executions" ? <ExecutionsTable limit={20} offset={0} /> : null}
+        </div>
+      </Surface>
     </div>
   );
 }

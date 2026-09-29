@@ -28,6 +28,8 @@ const files = [
   "src/lib/trade-feed-state.ts",
   "src/lib/idempotency.ts",
   "src/stores/market-store.ts",
+  "src/components/trade/MarketChart.tsx",
+  "src/lib/api/candles.ts",
   "src/components/landing/leverage-lab-math.ts",
   "src/components/landing/format-decimal.ts",
 ];
@@ -40,6 +42,20 @@ describe("financial number safeguards", () => {
       expect(source).not.toMatch(/\bparseInt\s*\(/);
       expect(source).not.toMatch(/\bNumber\s*\(/);
       expect(source).not.toMatch(/\.toFixed\s*\(/);
+    }
+  });
+
+  it("keeps plotting Number conversion only in to-chart-candles", () => {
+    const adapter = readFileSync(resolve(process.cwd(), "src/lib/chart/to-chart-candles.ts"), "utf8");
+    expect(adapter).toMatch(/\bNumber\s*\(/);
+    expect(adapter).toMatch(/Render-only/);
+
+    const chart = readFileSync(resolve(process.cwd(), "src/components/trade/MarketChart.tsx"), "utf8");
+    expect(chart).toMatch(/to-chart-candles/);
+
+    for (const file of files.filter((path) => path !== "src/components/trade/MarketChart.tsx")) {
+      const source = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(source).not.toMatch(/to-chart-candles/);
     }
   });
 });

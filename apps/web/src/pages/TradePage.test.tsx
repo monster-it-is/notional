@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { MemoryRouter, Outlet, Route, Routes } from "react-router";
 
 import { TradePage } from "./TradePage.tsx";
+import { ThemeProvider } from "../theme/ThemeProvider.tsx";
+import { getCandles } from "../lib/api/candles.ts";
 import { listExecutions } from "../lib/api/executions.ts";
 import { listInstruments } from "../lib/api/instruments.ts";
 import { getMarginSettings } from "../lib/api/margin.ts";
@@ -20,6 +22,13 @@ const { setDesiredSymbol } = vi.hoisted(() => ({
 vi.mock("../lib/api/instruments.ts", () => ({
   listInstruments: vi.fn(),
 }));
+vi.mock("../lib/api/candles.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/api/candles.ts")>();
+  return {
+    ...actual,
+    getCandles: vi.fn(),
+  };
+});
 vi.mock("../lib/api/positions.ts", () => ({
   listPositions: vi.fn(),
 }));
@@ -42,6 +51,7 @@ vi.mock("../realtime/runtime.ts", () => ({
 }));
 
 const mockedInstruments = vi.mocked(listInstruments);
+const mockedCandles = vi.mocked(getCandles);
 const mockedPositions = vi.mocked(listPositions);
 const mockedOrders = vi.mocked(listOrders);
 const mockedCancel = vi.mocked(cancelOrder);
@@ -87,15 +97,17 @@ function renderTrade({
   });
 
   const view = render(
-    <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={[path]}>
-        <Routes>
-          <Route element={<Outlet context={{ suspended }} />}>
-            <Route path="/trade" element={<TradePage />} />
-          </Route>
-        </Routes>
-      </MemoryRouter>
-    </QueryClientProvider>,
+    <ThemeProvider>
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[path]}>
+          <Routes>
+            <Route element={<Outlet context={{ suspended }} />}>
+              <Route path="/trade" element={<TradePage />} />
+            </Route>
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    </ThemeProvider>,
   );
 
   return { client, ...view };
@@ -120,6 +132,7 @@ describe("TradePage", () => {
   beforeEach(() => {
     setDesiredSymbol.mockReset();
     mockedInstruments.mockReset();
+    mockedCandles.mockReset();
     mockedPositions.mockReset();
     mockedOrders.mockReset();
     mockedCancel.mockReset();
@@ -127,6 +140,7 @@ describe("TradePage", () => {
     mockedExecutions.mockReset();
     mockedMargin.mockReset();
     mockedInstruments.mockResolvedValue({ instruments: [btc, eth] });
+    mockedCandles.mockResolvedValue({ symbol: "BTCUSDT", interval: "15m", candles: [] });
     mockedPositions.mockResolvedValue({ positions: [] });
     mockedOrders.mockResolvedValue({ orders: [] });
     mockedExecutions.mockResolvedValue({ executions: [] });
@@ -154,6 +168,25 @@ describe("TradePage", () => {
     expect(screen.queryByText(/Available margin/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Equity/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Free collateral/i)).not.toBeInTheDocument();
+  });
+
+  it("renders a historical chart beside the order ticket and tables", async () => {
+    mockedCandles.mockImplementation(async ({ symbol }) => ({
+      symbol,
+      interval: "15m",
+      candles: [],
+    }));
+    renderTrade({ path: "/trade?symbol=ETHUSDT" });
+    expect(await screen.findByText("ETHUSDT")).toBeInTheDocument();
+    expect(screen.getByText("15m")).toBeInTheDocument();
+    expect(await screen.findByText("No candle data available")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Order ticket" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "Positions" })).toBeInTheDocument();
+    expect(mockedCandles).toHaveBeenCalledWith({
+      symbol: "ETHUSDT",
+      interval: "15m",
+      limit: 500,
+    });
   });
 
   it("shows instrument loading copy", () => {
@@ -466,6 +499,7 @@ describe("TradePage reduce prefill", () => {
   beforeEach(() => {
     setDesiredSymbol.mockReset();
     mockedInstruments.mockReset();
+    mockedCandles.mockReset();
     mockedPositions.mockReset();
     mockedOrders.mockReset();
     mockedCancel.mockReset();
@@ -473,6 +507,7 @@ describe("TradePage reduce prefill", () => {
     mockedExecutions.mockReset();
     mockedMargin.mockReset();
     mockedInstruments.mockResolvedValue({ instruments: [btc, eth] });
+    mockedCandles.mockResolvedValue({ symbol: "BTCUSDT", interval: "15m", candles: [] });
     mockedPositions.mockResolvedValue({ positions: [] });
     mockedOrders.mockResolvedValue({ orders: [] });
     mockedExecutions.mockResolvedValue({ executions: [] });
