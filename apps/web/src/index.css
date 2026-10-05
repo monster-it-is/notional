@@ -34,6 +34,11 @@
   --font-mono-stack: "IBM Plex Mono", ui-monospace, monospace;
   --radius-control: 0.5rem;
   --radius-surface: 0.75rem;
+  --chart-sma: #6ea8ff;
+  --chart-ema: #c48ad9;
+  --chart-bb-middle: #8b9bb0;
+  --chart-bb-upper: #5f9ec9;
+  --chart-bb-lower: #5f9ec9;
 }
 
 html.dark {
@@ -72,6 +77,11 @@ html.light {
   --input-background: var(--surface);
   --disabled-background: #e8edf2;
   --shadow-raised: 0 1px 2px rgb(17 23 34 / 0.06);
+  --chart-sma: #2f6fdb;
+  --chart-ema: #8a4eab;
+  --chart-bb-middle: #5e6e80;
+  --chart-bb-upper: #2f7aa3;
+  --chart-bb-lower: #2f7aa3;
 }
 
 @theme inline {

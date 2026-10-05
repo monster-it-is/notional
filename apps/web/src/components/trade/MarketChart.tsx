@@ -7,6 +7,7 @@ import {
   createChart,
   HistogramSeries,
   LineSeries,
+  LineStyle,
   type CandlestickData,
   type HistogramData,
   type IChartApi,
@@ -17,6 +18,7 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { CandleLegend } from "./CandleLegend.tsx";
+import { IndicatorsMenu } from "./IndicatorsMenu.tsx";
 import { Button } from "../ui/Button.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { ErrorBanner } from "../ui/ErrorBanner.tsx";
@@ -40,6 +42,15 @@ import {
   type ChartCandleSelection,
 } from "../../lib/chart/resolve-legend-candle.ts";
 import { shouldRequestOlderCandles } from "../../lib/chart/should-request-older-candles.ts";
+import { computeEnabledIndicators } from "../../lib/chart/indicators/compute-enabled.ts";
+import {
+  DEFAULT_INDICATOR_SETTINGS,
+  type IndicatorSettings,
+} from "../../lib/chart/indicators/settings.ts";
+import {
+  toChartBollingerLines,
+  toChartIndicatorLine,
+} from "../../lib/chart/to-chart-indicators.ts";
 import {
   colorChartVolumePoints,
   toAlignedChartPoints,
@@ -75,6 +86,9 @@ export function MarketChart({
   const previousThemeRef = useRef(theme);
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ChartDisplayMode>("candles");
+  const [indicatorSettings, setIndicatorSettings] = useState<IndicatorSettings>(
+    DEFAULT_INDICATOR_SETTINGS,
+  );
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [selection, setSelection] = useState<ChartCandleSelection>(null);
   const [identitySession, setIdentitySession] = useState(0);
@@ -83,6 +97,12 @@ export function MarketChart({
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const lineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const smaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const emaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbUpperSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbMiddleSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const bbLowerSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const overlayValuesRef = useRef(computeEnabledIndicators([], DEFAULT_INDICATOR_SETTINGS));
   const fittedKeyRef = useRef<string | null>(null);
   const previousPointsRef = useRef<CandlestickData[]>([]);
   const pointsRef = useRef(EMPTY_POINTS);
@@ -129,6 +149,15 @@ export function MarketChart({
     [candlesQuery.data],
   );
   const hasRenderableData = points.candles.length > 0;
+  const overlayValues = useMemo(
+    () =>
+      computeEnabledIndicators(candlesQuery.data?.candles ?? EMPTY_CANDLES, indicatorSettings),
+    [candlesQuery.data, indicatorSettings],
+  );
+
+  useLayoutEffect(() => {
+    overlayValuesRef.current = overlayValues;
+  }, [overlayValues]);
 
   useLayoutEffect(() => {
     const controller = new AbortController();
@@ -386,10 +415,63 @@ export function MarketChart({
       candleSeriesRef.current = null;
       lineSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      smaSeriesRef.current = null;
+      emaSeriesRef.current = null;
+      bbUpperSeriesRef.current = null;
+      bbMiddleSeriesRef.current = null;
+      bbLowerSeriesRef.current = null;
       fittedKeyRef.current = null;
       previousPointsRef.current = [];
     };
   }, [symbol, hasRenderableData]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+
+    if (!chart || !hasRenderableData) {
+      return;
+    }
+
+    const colors = readChartColors();
+    const smaEnabled = indicatorSettings.sma.enabled;
+    const emaEnabled = indicatorSettings.ema.enabled;
+    const bollingerEnabled = indicatorSettings.bollinger.enabled;
+    reconcileOverlaySeries(
+      chart,
+      {
+        sma: smaSeriesRef,
+        ema: emaSeriesRef,
+        bbUpper: bbUpperSeriesRef,
+        bbMiddle: bbMiddleSeriesRef,
+        bbLower: bbLowerSeriesRef,
+      },
+      { smaEnabled, emaEnabled, bollingerEnabled },
+      colors,
+    );
+    applyOverlaySeriesData(
+      {
+        sma: smaSeriesRef.current,
+        ema: emaSeriesRef.current,
+        bbUpper: bbUpperSeriesRef.current,
+        bbMiddle: bbMiddleSeriesRef.current,
+        bbLower: bbLowerSeriesRef.current,
+      },
+      overlayValuesRef.current,
+    );
+  }, [symbol, hasRenderableData, indicatorSettings.sma.enabled, indicatorSettings.ema.enabled, indicatorSettings.bollinger.enabled]);
+
+  useEffect(() => {
+    applyOverlaySeriesData(
+      {
+        sma: smaSeriesRef.current,
+        ema: emaSeriesRef.current,
+        bbUpper: bbUpperSeriesRef.current,
+        bbMiddle: bbMiddleSeriesRef.current,
+        bbLower: bbLowerSeriesRef.current,
+      },
+      overlayValues,
+    );
+  }, [overlayValues]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -460,6 +542,11 @@ export function MarketChart({
     candleSeries.applyOptions(candleAppearanceOptions(colors));
     lineSeries.applyOptions(lineAppearanceOptions(colors));
     volumeSeries.applyOptions(volumeAppearanceOptions());
+    smaSeriesRef.current?.applyOptions(smaAppearanceOptions(colors));
+    emaSeriesRef.current?.applyOptions(emaAppearanceOptions(colors));
+    bbUpperSeriesRef.current?.applyOptions(bollingerBandAppearanceOptions(colors.bbUpper, true));
+    bbMiddleSeriesRef.current?.applyOptions(bollingerBandAppearanceOptions(colors.bbMiddle, false));
+    bbLowerSeriesRef.current?.applyOptions(bollingerBandAppearanceOptions(colors.bbLower, true));
 
     if (previousThemeRef.current !== theme && latest.candles.length > 0) {
       volumeSeries.setData(colorVolume(latest, colors));
@@ -486,8 +573,10 @@ export function MarketChart({
       interval={interval}
       mode={mode}
       loadingOlder={loadingOlder}
+      indicatorSettings={indicatorSettings}
       onIntervalChange={onIntervalChange}
       onModeChange={setMode}
+      onIndicatorSettingsChange={setIndicatorSettings}
     />
   );
 
@@ -569,15 +658,19 @@ function ChartToolbar({
   interval,
   mode,
   loadingOlder,
+  indicatorSettings,
   onIntervalChange,
   onModeChange,
+  onIndicatorSettingsChange,
 }: {
   symbol: string | null;
   interval: CandleInterval;
   mode: ChartDisplayMode;
   loadingOlder: boolean;
+  indicatorSettings: IndicatorSettings;
   onIntervalChange: (interval: CandleInterval) => void;
   onModeChange: (mode: ChartDisplayMode) => void;
+  onIndicatorSettingsChange: (settings: IndicatorSettings) => void;
 }) {
   return (
     <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
@@ -625,6 +718,7 @@ function ChartToolbar({
           Line
         </Button>
       </div>
+      <IndicatorsMenu settings={indicatorSettings} onSettingsChange={onIndicatorSettingsChange} />
       {loadingOlder ? (
         <p className="text-xs text-secondary" aria-live="polite">
           Loading older data…
@@ -641,6 +735,11 @@ type ChartColors = {
   positive: string;
   negative: string;
   accent: string;
+  sma: string;
+  ema: string;
+  bbUpper: string;
+  bbMiddle: string;
+  bbLower: string;
 };
 
 function colorVolume(points: AlignedChartPoints, colors: ChartColors): HistogramData[] {
@@ -695,6 +794,130 @@ function volumeAppearanceOptions() {
   };
 }
 
+function overlayLineAppearance(color: string, dashed: boolean) {
+  return {
+    color,
+    lineWidth: 1 as const,
+    lastValueVisible: false,
+    priceLineVisible: false,
+    crosshairMarkerVisible: false,
+    lineStyle: dashed ? LineStyle.Dashed : LineStyle.Solid,
+  };
+}
+
+function smaAppearanceOptions(colors: ChartColors) {
+  return overlayLineAppearance(colors.sma, false);
+}
+
+function emaAppearanceOptions(colors: ChartColors) {
+  return overlayLineAppearance(colors.ema, false);
+}
+
+function bollingerBandAppearanceOptions(color: string, dashed: boolean) {
+  return overlayLineAppearance(color, dashed);
+}
+
+type OverlaySeriesRefs = {
+  sma: { current: ISeriesApi<"Line"> | null };
+  ema: { current: ISeriesApi<"Line"> | null };
+  bbUpper: { current: ISeriesApi<"Line"> | null };
+  bbMiddle: { current: ISeriesApi<"Line"> | null };
+  bbLower: { current: ISeriesApi<"Line"> | null };
+};
+
+function reconcileOverlaySeries(
+  chart: IChartApi,
+  refs: OverlaySeriesRefs,
+  enabled: { smaEnabled: boolean; emaEnabled: boolean; bollingerEnabled: boolean },
+  colors: ChartColors,
+): void {
+  refs.sma.current = ensureLineSeries(
+    chart,
+    refs.sma.current,
+    enabled.smaEnabled,
+    smaAppearanceOptions(colors),
+  );
+  refs.ema.current = ensureLineSeries(
+    chart,
+    refs.ema.current,
+    enabled.emaEnabled,
+    emaAppearanceOptions(colors),
+  );
+  refs.bbUpper.current = ensureLineSeries(
+    chart,
+    refs.bbUpper.current,
+    enabled.bollingerEnabled,
+    bollingerBandAppearanceOptions(colors.bbUpper, true),
+  );
+  refs.bbMiddle.current = ensureLineSeries(
+    chart,
+    refs.bbMiddle.current,
+    enabled.bollingerEnabled,
+    bollingerBandAppearanceOptions(colors.bbMiddle, false),
+  );
+  refs.bbLower.current = ensureLineSeries(
+    chart,
+    refs.bbLower.current,
+    enabled.bollingerEnabled,
+    bollingerBandAppearanceOptions(colors.bbLower, true),
+  );
+}
+
+function ensureLineSeries(
+  chart: IChartApi,
+  series: ISeriesApi<"Line"> | null,
+  enabled: boolean,
+  options: ReturnType<typeof overlayLineAppearance>,
+): ISeriesApi<"Line"> | null {
+  if (enabled) {
+    if (series) {
+      series.applyOptions(options);
+      return series;
+    }
+
+    return chart.addSeries(LineSeries, options, 0);
+  }
+
+  if (series) {
+    chart.removeSeries(series);
+  }
+
+  return null;
+}
+
+function applyOverlaySeriesData(
+  series: {
+    sma: ISeriesApi<"Line"> | null;
+    ema: ISeriesApi<"Line"> | null;
+    bbUpper: ISeriesApi<"Line"> | null;
+    bbMiddle: ISeriesApi<"Line"> | null;
+    bbLower: ISeriesApi<"Line"> | null;
+  },
+  values: ReturnType<typeof computeEnabledIndicators>,
+): void {
+  if (series.sma) {
+    series.sma.setData(toChartIndicatorLine(values.sma ?? []));
+  }
+
+  if (series.ema) {
+    series.ema.setData(toChartIndicatorLine(values.ema ?? []));
+  }
+
+  const bands = toChartBollingerLines(values.bollinger ?? []);
+
+  if (series.bbUpper) {
+    series.bbUpper.setData(bands.upper);
+  }
+
+  if (series.bbMiddle) {
+    series.bbMiddle.setData(bands.middle);
+  }
+
+  if (series.bbLower) {
+    series.bbLower.setData(bands.lower);
+  }
+}
+
 function readChartColors(): ChartColors {
   const styles = getComputedStyle(document.documentElement);
 
@@ -705,6 +928,11 @@ function readChartColors(): ChartColors {
     positive: readToken(styles, "--positive", "#2ebd85"),
     negative: readToken(styles, "--negative", "#f0544c"),
     accent: readToken(styles, "--accent", "#f0b429"),
+    sma: readToken(styles, "--chart-sma", "#6ea8ff"),
+    ema: readToken(styles, "--chart-ema", "#c48ad9"),
+    bbUpper: readToken(styles, "--chart-bb-upper", "#5f9ec9"),
+    bbMiddle: readToken(styles, "--chart-bb-middle", "#8b9bb0"),
+    bbLower: readToken(styles, "--chart-bb-lower", "#5f9ec9"),
   };
 }
 

@@ -99,3 +99,61 @@ describe("D11B legend financial safeguards", () => {
     expect(source).toMatch(/\.toFixed\s*\(/);
   });
 });
+
+const indicatorCalculators = [
+  "src/lib/chart/indicators/decimal.ts",
+  "src/lib/chart/indicators/samples.ts",
+  "src/lib/chart/indicators/sma.ts",
+  "src/lib/chart/indicators/ema.ts",
+  "src/lib/chart/indicators/rsi.ts",
+  "src/lib/chart/indicators/macd.ts",
+  "src/lib/chart/indicators/bollinger.ts",
+  "src/lib/chart/indicators/compute-enabled.ts",
+];
+
+describe("D11C indicator financial safeguards", () => {
+  it("forbids JS number conversion and Math.sqrt in indicator calculators", () => {
+    for (const file of indicatorCalculators) {
+      const source = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(source).not.toMatch(/\bparseFloat\s*\(/);
+      expect(source).not.toMatch(/\bparseInt\s*\(/);
+      expect(source).not.toMatch(/\bNumber\s*\(/);
+      expect(source).not.toMatch(/Math\.sqrt/);
+    }
+  });
+
+  it("keeps Bollinger multiplier as an exact decimal in settings", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/chart/indicators/settings.ts"), "utf8");
+    expect(source).not.toMatch(/\bparseFloat\s*\(/);
+    expect(source).not.toMatch(/\bNumber\s*\(/);
+    expect(source).toMatch(/parseBollingerMultiplier/);
+    expect(source).toMatch(/Number\.parseInt/);
+  });
+
+  it("keeps plotting Number conversion only in to-chart-indicators among indicator modules", () => {
+    const adapter = readFileSync(resolve(process.cwd(), "src/lib/chart/to-chart-indicators.ts"), "utf8");
+    expect(adapter).toMatch(/\bNumber\s*\(/);
+    expect(adapter).toMatch(/Render-only/);
+    expect(adapter).toMatch(/toChartUtcTimestamp/);
+    expect(adapter).toMatch(/decimalVisualSign/);
+
+    const chart = readFileSync(resolve(process.cwd(), "src/components/trade/MarketChart.tsx"), "utf8");
+    expect(chart).toMatch(/to-chart-indicators/);
+
+    for (const file of [...files, ...indicatorCalculators, "src/components/trade/CandleLegend.tsx"]) {
+      if (file === "src/components/trade/MarketChart.tsx") {
+        continue;
+      }
+
+      const source = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(source).not.toMatch(/to-chart-indicators/);
+    }
+  });
+
+  it("does not let indicator calculators import the candle render adapter", () => {
+    for (const file of indicatorCalculators) {
+      const source = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(source).not.toMatch(/to-chart-candles/);
+    }
+  });
+});

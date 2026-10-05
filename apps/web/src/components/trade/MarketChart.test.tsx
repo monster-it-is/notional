@@ -13,6 +13,8 @@ import {
   toAlignedChartPoints,
   toChartLinePoints,
 } from "../../lib/chart/to-chart-candles.ts";
+import { computeSma } from "../../lib/chart/indicators/sma.ts";
+import { toChartIndicatorLine } from "../../lib/chart/to-chart-indicators.ts";
 import { queryKeys } from "../../lib/query-keys.ts";
 import { ThemeProvider, useTheme } from "../../theme/ThemeProvider.tsx";
 import { ApiError } from "../../lib/api/errors.ts";
@@ -22,12 +24,14 @@ const VOLUME_COLORS = { up: "#2ebd85", down: "#f0544c" };
 const {
   createChart,
   remove,
+  removeSeries,
   fitContent,
   addSeries,
   chartApplyOptions,
   candlestick,
   line,
   volume,
+  overlaySeries,
   subscribeVisibleLogicalRangeChange,
   unsubscribeVisibleLogicalRangeChange,
   subscribeCrosshairMove,
@@ -47,6 +51,12 @@ const {
   };
   const line = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
   const volume = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
+  const overlaySeries: Array<{
+    setData: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    applyOptions: ReturnType<typeof vi.fn>;
+  }> = [];
+  let closeLineAssigned = false;
   const fitContent = vi.fn();
   const getVisibleLogicalRange = vi.fn(() => ({ from: 2, to: 8 }));
   const setVisibleLogicalRange = vi.fn();
@@ -69,9 +79,16 @@ const {
     },
   );
   const chartApplyOptions = vi.fn();
-  const addSeries = vi.fn((definition: { type: string }) => {
+  const addSeries = vi.fn((definition: { type: string }, _options?: unknown, _paneIndex?: number) => {
     if (definition.type === "Line") {
-      return line;
+      if (!closeLineAssigned) {
+        closeLineAssigned = true;
+        return line;
+      }
+
+      const series = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
+      overlaySeries.push(series);
+      return series;
     }
 
     if (definition.type === "Histogram") {
@@ -80,31 +97,44 @@ const {
 
     return candlestick;
   });
-  const createChart = vi.fn(() => ({
-    addSeries,
-    applyOptions: chartApplyOptions,
-    timeScale: () => ({
-      fitContent,
-      subscribeVisibleLogicalRangeChange,
-      unsubscribeVisibleLogicalRangeChange,
-      getVisibleLogicalRange,
-      setVisibleLogicalRange,
-    }),
-    priceScale: () => ({ applyOptions: vi.fn() }),
-    subscribeCrosshairMove,
-    unsubscribeCrosshairMove,
-    remove,
-  }));
+  const removeSeries = vi.fn((series: (typeof overlaySeries)[number]) => {
+    const index = overlaySeries.indexOf(series);
+    if (index >= 0) {
+      overlaySeries.splice(index, 1);
+    }
+  });
+  const createChart = vi.fn(() => {
+    closeLineAssigned = false;
+    overlaySeries.length = 0;
+    return {
+      addSeries,
+      removeSeries,
+      applyOptions: chartApplyOptions,
+      timeScale: () => ({
+        fitContent,
+        subscribeVisibleLogicalRangeChange,
+        unsubscribeVisibleLogicalRangeChange,
+        getVisibleLogicalRange,
+        setVisibleLogicalRange,
+      }),
+      priceScale: () => ({ applyOptions: vi.fn() }),
+      subscribeCrosshairMove,
+      unsubscribeCrosshairMove,
+      remove,
+    };
+  });
   const remove = vi.fn();
   return {
     createChart,
     remove,
+    removeSeries,
     fitContent,
     addSeries,
     chartApplyOptions,
     candlestick,
     line,
     volume,
+    overlaySeries,
     subscribeVisibleLogicalRangeChange,
     unsubscribeVisibleLogicalRangeChange,
     subscribeCrosshairMove,
@@ -154,6 +184,7 @@ vi.mock("lightweight-charts", () => ({
   LineSeries: { type: "Line" },
   HistogramSeries: { type: "Histogram" },
   ColorType: { Solid: "solid" },
+  LineStyle: { Solid: 0, Dotted: 1, Dashed: 2 },
 }));
 
 vi.mock("../../lib/api/candles.ts", async (importOriginal) => {
@@ -319,6 +350,8 @@ describe("MarketChart", () => {
     fitContent.mockClear();
     fitContent.mockImplementation(() => undefined);
     addSeries.mockClear();
+    removeSeries.mockClear();
+    overlaySeries.length = 0;
     chartApplyOptions.mockClear();
     subscribeVisibleLogicalRangeChange.mockClear();
     unsubscribeVisibleLogicalRangeChange.mockClear();
@@ -2137,5 +2170,195 @@ describe("MarketChart", () => {
     expect(legend?.className).toContain("min-w-0");
     expect(legend?.className).not.toMatch(/min-w-(?!0\b)\S+/);
     expect(legend?.parentElement?.className).toContain("relative");
+  });
+
+  it("keeps exactly three core series when all indicators are off", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(addSeries).toHaveBeenCalledTimes(3);
+    expect(overlaySeries).toHaveLength(0);
+    expect(screen.getByRole("button", { name: "Indicators" })).toHaveAttribute("aria-expanded", "false");
+  });
+
+  it("adds one pane-0 SMA overlay and removes it without recreating the chart", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const fitBefore = fitContent.mock.calls.length;
+    const crosshairBefore = subscribeCrosshairMove.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    expect(addSeries.mock.calls.at(-1)?.[2]).toBe(0);
+    expect(overlaySeries[0]?.setData).toHaveBeenCalledWith(
+      toChartIndicatorLine(computeSma([btcCandle], 1) ?? []),
+    );
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+    expect(subscribeCrosshairMove).toHaveBeenCalledTimes(crosshairBefore);
+
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(0));
+    expect(removeSeries).toHaveBeenCalled();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+  });
+
+  it("keeps enabled overlay series identity when toggling an unrelated overlay", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const fitBefore = fitContent.mock.calls.length;
+    const addBefore = addSeries.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("EMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const ema = overlaySeries[0];
+    expect(ema).toBeDefined();
+
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(2));
+    expect(overlaySeries[0]).toBe(ema);
+    expect(removeSeries.mock.calls.some((call) => call[0] === ema)).toBe(false);
+    expect(addSeries.mock.calls.length).toBe(addBefore + 2);
+    expect(addSeries.mock.calls.at(-1)?.[2]).toBe(0);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+    const sma = overlaySeries[1];
+    expect(sma).toBeDefined();
+    expect(sma).not.toBe(ema);
+
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    expect(overlaySeries[0]).toBe(ema);
+    expect(removeSeries).toHaveBeenCalledWith(sma);
+    expect(removeSeries.mock.calls.some((call) => call[0] === ema)).toBe(false);
+    expect(addSeries.mock.calls.length).toBe(addBefore + 2);
+
+    const addAfterSmaOff = addSeries.mock.calls.length;
+    await user.click(screen.getByLabelText("Bollinger Bands"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(4));
+    expect(overlaySeries[0]).toBe(ema);
+    expect(addSeries.mock.calls.length).toBe(addAfterSmaOff + 3);
+    expect(addSeries.mock.calls.slice(-3).every((call) => call[2] === 0)).toBe(true);
+    expect(removeSeries.mock.calls.some((call) => call[0] === ema)).toBe(false);
+    const bands = overlaySeries.slice(1, 4);
+    expect(bands).toHaveLength(3);
+
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(5));
+    expect(overlaySeries[0]).toBe(ema);
+    expect(overlaySeries.slice(1, 4)).toEqual(bands);
+    expect(bands.every((series) => !removeSeries.mock.calls.some((call) => call[0] === series))).toBe(
+      true,
+    );
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+    expect(volume.setData).toHaveBeenCalled();
+  });
+
+  it("keeps overlay series identity under Strict Mode when toggling an unrelated overlay", async () => {
+    const user = userEvent.setup();
+    renderChart("BTCUSDT", true);
+    await waitFor(() => expect(createChart).toHaveBeenCalled());
+    const chartsBefore = createChart.mock.calls.length;
+    const fitBefore = fitContent.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("EMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const ema = overlaySeries[0];
+    expect(ema).toBeDefined();
+
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(2));
+    expect(overlaySeries[0]).toBe(ema);
+    expect(removeSeries.mock.calls.some((call) => call[0] === ema)).toBe(false);
+    expect(createChart).toHaveBeenCalledTimes(chartsBefore);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+  });
+
+  it("updates overlay data on backfill without fitContent", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockImplementation(async (params) => {
+      if (params.before) {
+        return { ...btcCandles, candles: [olderCandle()] };
+      }
+
+      return btcCandles;
+    });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const fitBefore = fitContent.mock.calls.length;
+    candlestick.barsInLogicalRange.mockReturnValue({ barsBefore: 5, barsAfter: 90 });
+    emitVisibleRange();
+    await waitFor(() =>
+      expect(overlaySeries[0]?.setData.mock.calls.some((call) => call[0].length === 2)).toBe(true),
+    );
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+    expect(setVisibleLogicalRange).toHaveBeenCalled();
+  });
+
+  it("applies overlay theme options without recreating the chart", async () => {
+    const user = userEvent.setup();
+    renderChart("BTCUSDT", false, { themeToggle: true });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const appliesBefore = overlaySeries[0]?.applyOptions.mock.calls.length ?? 0;
+    await user.click(screen.getByRole("button", { name: "Toggle theme" }));
+    await waitFor(() =>
+      expect(overlaySeries[0]?.applyOptions.mock.calls.length).toBeGreaterThan(appliesBefore),
+    );
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
+  });
+
+  it("does not resurrect BTC overlay values after switching to ETH", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT" ? ethCandles : btcCandles,
+    );
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(overlaySeries[0]?.setData).toHaveBeenLastCalledWith(
+        toChartIndicatorLine(computeSma(ethCandles.candles, 1) ?? []),
+      ),
+    );
   });
 });
