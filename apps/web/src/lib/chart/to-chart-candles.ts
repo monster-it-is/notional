@@ -32,7 +32,7 @@ export function toChartCandles(candles: readonly Candle[]): CandlestickData[] {
 }
 
 export function toChartCandle(candle: Candle): CandlestickData | null {
-  const time = toUtcTimestamp(candle.openTime);
+  const time = toChartUtcTimestamp(candle.openTime);
   const open = Number(candle.open);
   const high = Number(candle.high);
   const low = Number(candle.low);
@@ -157,7 +157,7 @@ export function toAlignedChartPoints(candles: readonly Candle[]): AlignedChartPo
   return aligned;
 }
 
-function toUtcTimestamp(openTimeMs: number): UTCTimestamp | null {
+export function toChartUtcTimestamp(openTimeMs: number): UTCTimestamp | null {
   if (!Number.isFinite(openTimeMs) || openTimeMs < 0) {
     return null;
   }

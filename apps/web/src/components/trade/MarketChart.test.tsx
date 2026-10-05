@@ -30,11 +30,15 @@ const {
   volume,
   subscribeVisibleLogicalRangeChange,
   unsubscribeVisibleLogicalRangeChange,
+  subscribeCrosshairMove,
+  unsubscribeCrosshairMove,
   getVisibleLogicalRange,
   setVisibleLogicalRange,
   rangeListeners,
+  crosshairListeners,
 } = vi.hoisted(() => {
   const rangeListeners = new Set<(range: { from: number; to: number } | null) => void>();
+  const crosshairListeners = new Set<(param: { time?: unknown; seriesData?: unknown }) => void>();
   const candlestick = {
     setData: vi.fn(),
     update: vi.fn(),
@@ -54,6 +58,14 @@ const {
   const unsubscribeVisibleLogicalRangeChange = vi.fn(
     (handler: (range: { from: number; to: number } | null) => void) => {
       rangeListeners.delete(handler);
+    },
+  );
+  const subscribeCrosshairMove = vi.fn((handler: (param: { time?: unknown; seriesData?: unknown }) => void) => {
+    crosshairListeners.add(handler);
+  });
+  const unsubscribeCrosshairMove = vi.fn(
+    (handler: (param: { time?: unknown; seriesData?: unknown }) => void) => {
+      crosshairListeners.delete(handler);
     },
   );
   const chartApplyOptions = vi.fn();
@@ -79,6 +91,8 @@ const {
       setVisibleLogicalRange,
     }),
     priceScale: () => ({ applyOptions: vi.fn() }),
+    subscribeCrosshairMove,
+    unsubscribeCrosshairMove,
     remove,
   }));
   const remove = vi.fn();
@@ -93,9 +107,12 @@ const {
     volume,
     subscribeVisibleLogicalRangeChange,
     unsubscribeVisibleLogicalRangeChange,
+    subscribeCrosshairMove,
+    unsubscribeCrosshairMove,
     getVisibleLogicalRange,
     setVisibleLogicalRange,
     rangeListeners,
+    crosshairListeners,
   };
 });
 
@@ -163,10 +180,26 @@ const btcCandle: Candle = {
   volume: "12.5",
 };
 
+const earlierBtcCandle: Candle = {
+  openTime: 1_499_039_100_000,
+  closeTime: 1_499_039_999_999,
+  open: "90.00",
+  high: "95.00",
+  low: "85.00",
+  close: "88.00",
+  volume: "8.25",
+};
+
 const btcCandles: CandleListResponse = {
   symbol: "BTCUSDT",
   interval: "15m",
   candles: [btcCandle],
+};
+
+const btcHistory: CandleListResponse = {
+  symbol: "BTCUSDT",
+  interval: "15m",
+  candles: [earlierBtcCandle, btcCandle],
 };
 
 const ethCandles: CandleListResponse = {
@@ -253,6 +286,12 @@ function emitVisibleRange(range: { from: number; to: number } | null = { from: 0
   }
 }
 
+function emitCrosshair(param: { time?: unknown; seriesData?: unknown } = {}) {
+  for (const handler of crosshairListeners) {
+    handler(param);
+  }
+}
+
 function olderCandle(openTime = btcCandle.openTime - 900_000): Candle {
   return {
     ...btcCandle,
@@ -283,12 +322,15 @@ describe("MarketChart", () => {
     chartApplyOptions.mockClear();
     subscribeVisibleLogicalRangeChange.mockClear();
     unsubscribeVisibleLogicalRangeChange.mockClear();
+    subscribeCrosshairMove.mockClear();
+    unsubscribeCrosshairMove.mockClear();
     getVisibleLogicalRange.mockClear();
     setVisibleLogicalRange.mockClear();
     candlestick.barsInLogicalRange.mockClear();
     candlestick.barsInLogicalRange.mockReturnValue({ barsBefore: 0, barsAfter: 0 });
     getVisibleLogicalRange.mockReturnValue({ from: 2, to: 8 });
     rangeListeners.clear();
+    crosshairListeners.clear();
     marketSocket.setDesiredCandle.mockClear();
     marketSocket.subscribeMarketCandles.mockClear();
     marketSocket.subscribeReconnectReady.mockClear();
@@ -956,19 +998,23 @@ describe("MarketChart", () => {
     expect(marketSocket.candleListeners.size).toBe(1);
     expect(marketSocket.reconnectListeners.size).toBe(1);
     expect(rangeListeners.size).toBe(1);
+    expect(crosshairListeners.size).toBe(1);
     expect(marketSocket.setDesiredCandle).toHaveBeenLastCalledWith({
       symbol: "BTCUSDT",
       interval: "15m",
     });
     const lastSubscribe = subscribeVisibleLogicalRangeChange.mock.calls.at(-1)?.[0];
+    const lastCrosshair = subscribeCrosshairMove.mock.calls.at(-1)?.[0];
     const removesBeforeUnmount = remove.mock.calls.length;
     view.unmount();
     expect(remove.mock.calls.length).toBeGreaterThan(removesBeforeUnmount);
     expect(unsubscribeVisibleLogicalRangeChange).toHaveBeenCalledWith(lastSubscribe);
+    expect(unsubscribeCrosshairMove).toHaveBeenCalledWith(lastCrosshair);
     expect(marketSocket.setDesiredCandle).toHaveBeenLastCalledWith(null);
     expect(marketSocket.candleListeners.size).toBe(0);
     expect(marketSocket.reconnectListeners.size).toBe(0);
     expect(rangeListeners.size).toBe(0);
+    expect(crosshairListeners.size).toBe(0);
   });
 
   it("does not request older history for the initial latest load or fitContent overview", async () => {
@@ -1642,5 +1688,454 @@ describe("MarketChart", () => {
     expect(
       mockedGetCandles.mock.calls.filter((call) => call[0].before !== undefined),
     ).toHaveLength(1);
+  });
+
+  it("shows the latest canonical candle in the legend by default", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("BTCUSDT · 15m · 2017-07-03 00:00:00 UTC")).toBeInTheDocument();
+    expect(screen.getByText("O")).toBeInTheDocument();
+    expect(screen.getByText("100.00")).toBeInTheDocument();
+    expect(screen.getByText("105.00")).toBeInTheDocument();
+    expect(screen.getByText("+5.00")).toBeInTheDocument();
+    expect(screen.getByText("+5.00%")).toBeInTheDocument();
+    expect(screen.getByText("12.50")).toBeInTheDocument();
+    expect(subscribeCrosshairMove).toHaveBeenCalledTimes(1);
+    expect(crosshairListeners.size).toBe(1);
+    expect(document.querySelector("dl")).not.toHaveAttribute("aria-live");
+  });
+
+  it("does not render fake OHLC values while loading, on error, or when empty", async () => {
+    mockedGetCandles.mockReturnValue(new Promise(() => undefined));
+    const loading = renderChart();
+    expect(screen.queryByText("O")).not.toBeInTheDocument();
+    loading.unmount();
+
+    mockedGetCandles.mockRejectedValue(
+      new ApiError({ status: 503, code: "MARKET_DATA_UNAVAILABLE" }),
+    );
+    const errorView = renderChart();
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    expect(screen.queryByText("O")).not.toBeInTheDocument();
+    errorView.unmount();
+
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: [] });
+    renderChart();
+    expect(await screen.findByText("No candle data available")).toBeInTheDocument();
+    expect(screen.queryByText("O")).not.toBeInTheDocument();
+    expect(createChart).not.toHaveBeenCalled();
+  });
+
+  it("shows exact canonical OHLCV for a historical crosshair candle and ignores seriesData", async () => {
+    mockedGetCandles.mockResolvedValue(btcHistory);
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("105.00")).toBeInTheDocument();
+
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    emitCrosshair({
+      time: 1_499_039_100,
+      seriesData: new Map([
+        [{}, { open: 999, high: 999, low: 999, close: 999, value: 9_999 }],
+      ]),
+    });
+
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    expect(screen.getByText("90.00")).toBeInTheDocument();
+    expect(screen.getByText("-2.00")).toBeInTheDocument();
+    expect(screen.getByText("-2.22%")).toBeInTheDocument();
+    expect(screen.getByText("8.25")).toBeInTheDocument();
+    expect(screen.queryByText("999")).not.toBeInTheDocument();
+    expect(screen.queryByText("999.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("9,999.00")).not.toBeInTheDocument();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+
+    emitCrosshair({ time: 1_499_039_100 });
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(candlestick.update).not.toHaveBeenCalled();
+    expect(screen.getByText("88.00")).toBeInTheDocument();
+  });
+
+  it("updates the legend when the crosshair moves to another candle and returns to latest on exit", async () => {
+    mockedGetCandles.mockResolvedValue(btcHistory);
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+
+    emitCrosshair({ time: 1_499_040_000 });
+    expect(await screen.findByText("105.00")).toBeInTheDocument();
+    expect(screen.queryByText("88.00")).not.toBeInTheDocument();
+
+    emitCrosshair({ time: undefined });
+    expect(screen.getByText("105.00")).toBeInTheDocument();
+    emitCrosshair({});
+    expect(screen.getByText("105.00")).toBeInTheDocument();
+  });
+
+  it("still shows full OHLCV in Line mode", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    expect(screen.getByText("O")).toBeInTheDocument();
+    expect(screen.getByText("H")).toBeInTheDocument();
+    expect(screen.getByText("L")).toBeInTheDocument();
+    expect(screen.getByText("C")).toBeInTheDocument();
+    expect(screen.getByText("V")).toBeInTheDocument();
+    expect(screen.getByText("105.00")).toBeInTheDocument();
+    expect(screen.getByText("+5.00")).toBeInTheDocument();
+  });
+
+  it("updates the default latest legend from live candle frames", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    expect(await screen.findByText("106.00")).toBeInTheDocument();
+    expect(screen.getByText("+6.00")).toBeInTheDocument();
+  });
+
+  it("keeps a historical selection while an unrelated live update arrives", async () => {
+    mockedGetCandles.mockResolvedValue(btcHistory);
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalled());
+    expect(screen.getByText("88.00")).toBeInTheDocument();
+    expect(screen.queryByText("106.00")).not.toBeInTheDocument();
+  });
+
+  it("tracks live updates when the current candle is explicitly selected", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_040_000 });
+    marketSocket.emitCandle(liveFrame({ close: "107.00", high: "111.00" }));
+    expect(await screen.findByText("107.00")).toBeInTheDocument();
+    expect(screen.getByText("111.00")).toBeInTheDocument();
+    expect(screen.getByText("+7.00")).toBeInTheDocument();
+  });
+
+  it("moves the default panel to a new live candle on rollover", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: 1_499_040_900_000,
+        closeTime: 1_499_041_799_999,
+        open: "105.00",
+        high: "109.00",
+        low: "104.00",
+        close: "108.00",
+      }),
+    );
+    expect(await screen.findByText("108.00")).toBeInTheDocument();
+    expect(screen.getByText("+3.00")).toBeInTheDocument();
+  });
+
+  it("keeps an explicit current-candle selection after a live rollover", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_040_000 });
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: 1_499_040_900_000,
+        closeTime: 1_499_041_799_999,
+        open: "105.00",
+        high: "109.00",
+        low: "104.00",
+        close: "108.00",
+      }),
+    );
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalled());
+    expect(screen.getByText("105.00")).toBeInTheDocument();
+    expect(screen.getByText("+5.00")).toBeInTheDocument();
+    expect(screen.queryByText("108.00")).not.toBeInTheDocument();
+  });
+
+  it("preserves the selected candle after older history is prepended", async () => {
+    mockedGetCandles.mockResolvedValue(btcHistory);
+    const { client } = renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    const older = olderCandle(earlierBtcCandle.openTime - 900_000);
+    client.setQueryData(queryKeys.candles.list({ symbol: "BTCUSDT", interval: "15m", limit: TRADE_CHART_LIMIT }), {
+      ...btcHistory,
+      candles: [older, ...btcHistory.candles],
+    });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    expect(screen.queryByText("99.00")).not.toBeInTheDocument();
+  });
+
+  it("falls back to the latest candle when the selected bar is dropped by the cap", async () => {
+    mockedGetCandles.mockResolvedValue(btcHistory);
+    const { client } = renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    client.setQueryData(queryKeys.candles.list({ symbol: "BTCUSDT", interval: "15m", limit: TRADE_CHART_LIMIT }), {
+      ...btcHistory,
+      candles: [btcCandle],
+    });
+    expect(await screen.findByText("105.00")).toBeInTheDocument();
+    expect(screen.queryByText("88.00")).not.toBeInTheDocument();
+  });
+
+  it("cannot display a prior symbol candle after a symbol switch", async () => {
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT" ? ethCandles : btcHistory,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    view.rerender(tree("ETHUSDT"));
+    expect(await screen.findByText("210.00")).toBeInTheDocument();
+    expect(screen.queryByText("BTCUSDT · 15m · 2017-07-03 00:00:00 UTC")).not.toBeInTheDocument();
+    expect(screen.getByText("ETHUSDT · 15m · 2017-07-03 00:00:00 UTC")).toBeInTheDocument();
+    expect(screen.queryByText("88.00")).not.toBeInTheDocument();
+  });
+
+  it("cannot display a prior interval candle after an interval switch", async () => {
+    const hourCandles: CandleListResponse = {
+      symbol: "BTCUSDT",
+      interval: "1h",
+      candles: [
+        {
+          ...btcCandle,
+          open: "300.00",
+          high: "310.00",
+          low: "290.00",
+          close: "305.00",
+        },
+      ],
+    };
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h" ? hourCandles : btcHistory,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(
+      queryKeys.candles.list({ symbol: "BTCUSDT", interval: "1h", limit: TRADE_CHART_LIMIT }),
+      hourCandles,
+    );
+    const tree = (interval: CandleInterval) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol="BTCUSDT" interval={interval} onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("15m"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    view.rerender(tree("1h"));
+    expect(await screen.findByText("305.00")).toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT · 1h · 2017-07-03 00:00:00 UTC")).toBeInTheDocument();
+    expect(screen.queryByText("88.00")).not.toBeInTheDocument();
+  });
+
+  it("does not resurrect a historical hover after a symbol round trip", async () => {
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT" ? ethCandles : btcHistory,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(
+      queryKeys.candles.list({ symbol: "ETHUSDT", interval: "15m", limit: TRADE_CHART_LIMIT }),
+      ethCandles,
+    );
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+
+    view.rerender(tree("ETHUSDT"));
+    expect(await screen.findByText("210.00")).toBeInTheDocument();
+    view.rerender(tree("BTCUSDT"));
+
+    expect(await screen.findByText("105.00")).toBeInTheDocument();
+    expect(screen.queryByText("88.00")).not.toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT · 15m · 2017-07-03 00:00:00 UTC")).toBeInTheDocument();
+    expect(crosshairListeners.size).toBe(1);
+    expect(createChart).toHaveBeenCalledTimes(3);
+    expect(fitContent).toHaveBeenCalledTimes(3);
+
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+  });
+
+  it("does not resurrect a historical hover after an interval round trip", async () => {
+    const hourCandles: CandleListResponse = {
+      symbol: "BTCUSDT",
+      interval: "1h",
+      candles: [
+        {
+          ...btcCandle,
+          open: "300.00",
+          high: "310.00",
+          low: "290.00",
+          close: "305.00",
+        },
+      ],
+    };
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h" ? hourCandles : btcHistory,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(
+      queryKeys.candles.list({ symbol: "BTCUSDT", interval: "1h", limit: TRADE_CHART_LIMIT }),
+      hourCandles,
+    );
+    const tree = (interval: CandleInterval) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol="BTCUSDT" interval={interval} onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("15m"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    const subscribeCalls = subscribeCrosshairMove.mock.calls.length;
+
+    view.rerender(tree("1h"));
+    expect(await screen.findByText("305.00")).toBeInTheDocument();
+    view.rerender(tree("15m"));
+
+    expect(await screen.findByText("105.00")).toBeInTheDocument();
+    expect(screen.queryByText("88.00")).not.toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT · 15m · 2017-07-03 00:00:00 UTC")).toBeInTheDocument();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(subscribeCrosshairMove.mock.calls.length).toBe(subscribeCalls);
+    expect(crosshairListeners.size).toBe(1);
+    expect(fitContent).toHaveBeenCalledTimes(3);
+
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+  });
+
+  it("keeps the final identity in the legend after rapid symbol and interval changes", async () => {
+    const resolvers = new Map<string, (value: CandleListResponse) => void>();
+    mockedGetCandles.mockImplementation(
+      ({ symbol, interval }) =>
+        new Promise((resolve) => {
+          resolvers.set(`${symbol}:${interval}`, resolve);
+        }),
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (symbol: string, interval: CandleInterval) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval={interval} onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT", "15m"));
+    view.rerender(tree("ETHUSDT", "1h"));
+    view.rerender(tree("BTCUSDT", "1d"));
+    resolvers.get("BTCUSDT:15m")?.({ ...btcHistory, interval: "15m" });
+    resolvers.get("ETHUSDT:1h")?.({
+      symbol: "ETHUSDT",
+      interval: "1h",
+      candles: [{ ...btcCandle, open: "200.00", high: "220.00", low: "180.00", close: "210.00" }],
+    });
+    expect(screen.queryByText("210.00")).not.toBeInTheDocument();
+    resolvers.get("BTCUSDT:1d")?.({ ...btcCandles, interval: "1d", candles: [{ ...btcCandle, close: "120.00" }] });
+    expect(await screen.findByText("120.00")).toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT · 1d · 2017-07-03 00:00:00 UTC")).toBeInTheDocument();
+    expect(screen.queryByText("210.00")).not.toBeInTheDocument();
+    expect(screen.queryByText("88.00")).not.toBeInTheDocument();
+  });
+
+  it("uses the committed new identity when setData synchronously emits a crosshair event", async () => {
+    const hourCandles: CandleListResponse = {
+      symbol: "BTCUSDT",
+      interval: "1h",
+      candles: [
+        {
+          ...earlierBtcCandle,
+          open: "400.00",
+          high: "410.00",
+          low: "390.00",
+          close: "405.00",
+        },
+      ],
+    };
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h" ? hourCandles : btcHistory,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    client.setQueryData(
+      queryKeys.candles.list({ symbol: "BTCUSDT", interval: "1h", limit: TRADE_CHART_LIMIT }),
+      hourCandles,
+    );
+    const tree = (interval: CandleInterval) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol="BTCUSDT" interval={interval} onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("15m"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    emitCrosshair({ time: 1_499_039_100 });
+    expect(await screen.findByText("88.00")).toBeInTheDocument();
+    candlestick.setData.mockImplementation(() => {
+      emitCrosshair({ time: 1_499_039_100 });
+    });
+    fitContent.mockImplementation(() => {
+      emitCrosshair({ time: 1_499_039_100 });
+    });
+    view.rerender(tree("1h"));
+    expect(await screen.findByText("405.00")).toBeInTheDocument();
+    expect(screen.getByText("BTCUSDT · 1h · 2017-07-02 23:45:00 UTC")).toBeInTheDocument();
+    expect(screen.queryByText("88.00")).not.toBeInTheDocument();
+  });
+
+  it("keeps a compact wrapping legend overlay that does not intercept pointer events", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const legend = document.querySelector("dl");
+    expect(legend?.className).toContain("pointer-events-none");
+    expect(legend?.className).toContain("flex-wrap");
+    expect(legend?.className).toContain("max-w-full");
+    expect(legend?.className).toContain("min-w-0");
+    expect(legend?.className).not.toMatch(/min-w-(?!0\b)\S+/);
+    expect(legend?.parentElement?.className).toContain("relative");
   });
 });

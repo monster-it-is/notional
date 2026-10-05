@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { CandleInterval, CandleListResponse } from "@notional/contracts";
+import type { Candle, CandleInterval, CandleListResponse } from "@notional/contracts";
 import { CANDLE_INTERVALS } from "@notional/contracts";
 import {
   CandlestickSeries,
@@ -12,9 +12,11 @@ import {
   type IChartApi,
   type ISeriesApi,
   type LogicalRange,
+  type MouseEventParams,
 } from "lightweight-charts";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
+import { CandleLegend } from "./CandleLegend.tsx";
 import { Button } from "../ui/Button.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { ErrorBanner } from "../ui/ErrorBanner.tsx";
@@ -28,9 +30,15 @@ import {
   classifyChartSeriesMutation,
   countLeftPrependedBars,
 } from "../../lib/chart/classify-series-mutation.ts";
+import { findCandleByChartTime } from "../../lib/chart/find-candle-by-chart-time.ts";
 import { mergeLatestSnapshot } from "../../lib/chart/merge-latest-snapshot.ts";
 import { mergeLiveCandle } from "../../lib/chart/merge-live-candle.ts";
 import { prependOlderCandles } from "../../lib/chart/prepend-older-candles.ts";
+import {
+  candleSelectionKey,
+  resolveLegendCandle,
+  type ChartCandleSelection,
+} from "../../lib/chart/resolve-legend-candle.ts";
 import { shouldRequestOlderCandles } from "../../lib/chart/should-request-older-candles.ts";
 import {
   colorChartVolumePoints,
@@ -50,6 +58,7 @@ const EMPTY_POINTS: AlignedChartPoints = {
   line: [],
   volume: [],
 };
+const EMPTY_CANDLES: Candle[] = [];
 
 type ChartDisplayMode = "candles" | "line";
 
@@ -67,6 +76,8 @@ export function MarketChart({
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ChartDisplayMode>("candles");
   const [loadingOlder, setLoadingOlder] = useState(false);
+  const [selection, setSelection] = useState<ChartCandleSelection>(null);
+  const [identitySession, setIdentitySession] = useState(0);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -83,6 +94,14 @@ export function MarketChart({
   const backfillGenerationRef = useRef(0);
   const handleVisibleLogicalRangeRef = useRef<(range: LogicalRange | null) => void>(() => undefined);
   const requestOlderHistoryRef = useRef<() => Promise<void>>(async () => undefined);
+  const candlesRef = useRef<readonly Candle[]>(EMPTY_CANDLES);
+  const identityRef = useRef<{ symbol: string | null; interval: CandleInterval }>({
+    symbol,
+    interval,
+  });
+  const identitySessionRef = useRef(0);
+  const emittedSelectionKeyRef = useRef(candleSelectionKey(null));
+  const handleCrosshairMoveRef = useRef<(param: MouseEventParams) => void>(() => undefined);
 
   const candlesQuery = useQuery({
     queryKey: symbol
@@ -118,6 +137,9 @@ export function MarketChart({
     blockedBeforeRef.current = null;
     backfillInFlightRef.current = false;
     backfillGenerationRef.current += 1;
+    identitySessionRef.current += 1;
+    emittedSelectionKeyRef.current = candleSelectionKey(null);
+    setIdentitySession(identitySessionRef.current);
     setLoadingOlder(false);
 
     return () => {
@@ -127,6 +149,11 @@ export function MarketChart({
       }
     };
   }, [symbol, interval]);
+
+  useLayoutEffect(() => {
+    candlesRef.current = candlesQuery.data?.candles ?? EMPTY_CANDLES;
+    identityRef.current = { symbol, interval };
+  }, [candlesQuery.data, symbol, interval]);
 
   useLayoutEffect(() => {
     requestOlderHistoryRef.current = async () => {
@@ -223,6 +250,29 @@ export function MarketChart({
       }
 
       void requestOlderHistoryRef.current();
+    };
+
+    handleCrosshairMoveRef.current = (param: MouseEventParams) => {
+      const identity = identityRef.current;
+      const candles = candlesRef.current;
+      const candle = findCandleByChartTime(candles, param.time);
+      const next: ChartCandleSelection =
+        candle && identity.symbol
+          ? {
+              symbol: identity.symbol,
+              interval: identity.interval,
+              openTime: candle.openTime,
+              session: identitySessionRef.current,
+            }
+          : null;
+      const key = candleSelectionKey(next);
+
+      if (emittedSelectionKeyRef.current === key) {
+        return;
+      }
+
+      emittedSelectionKeyRef.current = key;
+      setSelection(next);
     };
   }, [symbol, interval, queryClient]);
 
@@ -322,9 +372,14 @@ export function MarketChart({
     const onVisibleLogicalRangeChange = (range: LogicalRange | null) => {
       handleVisibleLogicalRangeRef.current(range);
     };
+    const onCrosshairMove = (param: MouseEventParams) => {
+      handleCrosshairMoveRef.current(param);
+    };
     timeScale.subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
+    chart.subscribeCrosshairMove(onCrosshairMove);
 
     return () => {
+      chart.unsubscribeCrosshairMove(onCrosshairMove);
       timeScale.unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
       chart.remove();
       chartRef.current = null;
@@ -483,16 +538,28 @@ export function MarketChart({
   }
 
   const chartKind = mode === "line" ? "line" : "candlestick";
+  const legendCandle = resolveLegendCandle({
+    candles: candlesQuery.data?.candles ?? EMPTY_CANDLES,
+    selection,
+    symbol,
+    interval,
+    session: identitySession,
+  });
 
   return (
     <div className="min-w-0">
       {heading}
-      <div
-        ref={hostRef}
-        className={HOST_CLASS}
-        role="img"
-        aria-label={`${symbol} ${interval} historical ${chartKind} chart`}
-      />
+      <div className="relative min-w-0">
+        {legendCandle ? (
+          <CandleLegend symbol={symbol} interval={interval} candle={legendCandle} />
+        ) : null}
+        <div
+          ref={hostRef}
+          className={HOST_CLASS}
+          role="img"
+          aria-label={`${symbol} ${interval} historical ${chartKind} chart`}
+        />
+      </div>
     </div>
   );
 }

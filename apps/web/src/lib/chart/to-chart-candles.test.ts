@@ -8,6 +8,7 @@ import {
   toChartCandles,
   toChartLinePoint,
   toChartLinePoints,
+  toChartUtcTimestamp,
   toChartVolumePoint,
   toChartVolumePoints,
 } from "./to-chart-candles.ts";
@@ -43,6 +44,8 @@ describe("toChartCandles", () => {
 
   it("converts epoch-ms openTime to Lightweight Charts UTC seconds", () => {
     expect(toChartCandles([sample])[0]?.time).toBe(1_499_040_000);
+    expect(toChartUtcTimestamp(sample.openTime)).toBe(1_499_040_000);
+    expect(toChartUtcTimestamp(Number.NaN)).toBeNull();
   });
 
   it("preserves chronological order", () => {

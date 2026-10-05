@@ -61,3 +61,41 @@ describe("financial number safeguards", () => {
     }
   });
 });
+
+describe("D11B legend financial safeguards", () => {
+  it("does not convert OHLCV with Number/parseFloat/parseInt in CandleLegend", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/components/trade/CandleLegend.tsx"), "utf8");
+    expect(source).not.toMatch(/\bNumber\s*\(/);
+    expect(source).not.toMatch(/\bparseFloat\s*\(/);
+    expect(source).not.toMatch(/\bparseInt\s*\(/);
+  });
+
+  it("does not convert financial fields in legend resolve", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/chart/resolve-legend-candle.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/\bNumber\s*\(/);
+    expect(source).not.toMatch(/\bparseFloat\s*\(/);
+    expect(source).not.toMatch(/\bparseInt\s*\(/);
+    expect(source).not.toMatch(/\.toFixed\s*\(/);
+  });
+
+  it("allows timestamp Number APIs in lookup but not OHLCV conversion", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/chart/find-candle-by-chart-time.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/\bparseFloat\s*\(/);
+    expect(source).not.toMatch(/\bparseInt\s*\(/);
+    expect(source).not.toMatch(/\bNumber\s*\(\s*candle\.(open|high|low|close|volume)/);
+  });
+
+  it("allows Decimal.toFixed in candle-change but not Number/parseFloat/parseInt", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/chart/candle-change.ts"), "utf8");
+    expect(source).not.toMatch(/\bNumber\s*\(/);
+    expect(source).not.toMatch(/\bparseFloat\s*\(/);
+    expect(source).not.toMatch(/\bparseInt\s*\(/);
+    expect(source).toMatch(/\.toFixed\s*\(/);
+  });
+});
