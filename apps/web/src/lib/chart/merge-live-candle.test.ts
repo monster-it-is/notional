@@ -79,7 +79,7 @@ describe("mergeLiveCandle", () => {
     ).toBeUndefined();
   });
 
-  it("keeps at most the historical window", () => {
+  it("keeps at most the requested window", () => {
     const filled: CandleListResponse = {
       ...history,
       candles: Array.from({ length: 500 }, (_, index) => ({
@@ -106,6 +106,58 @@ describe("mergeLiveCandle", () => {
     expect(typeof next?.candles.at(-1)?.close).toBe("string");
     expect(filled.candles).toHaveLength(500);
     expect(filled.candles[0]?.openTime).toBe(0);
+  });
+
+  it("does not trim a 501st live candle when the max window is 10_000", () => {
+    const filled: CandleListResponse = {
+      ...history,
+      candles: Array.from({ length: 500 }, (_, index) => ({
+        ...base,
+        openTime: index * 1_000,
+        closeTime: index * 1_000 + 899,
+      })),
+    };
+    const next = mergeLiveCandle(
+      filled,
+      {
+        ...base,
+        symbol: "BTCUSDT",
+        interval: "15m",
+        openTime: 500_000,
+        closeTime: 500_899,
+        close: "9.00",
+      },
+      10_000,
+    );
+    expect(next?.candles).toHaveLength(501);
+    expect(next?.candles[0]?.openTime).toBe(0);
+    expect(next?.candles.at(-1)?.close).toBe("9.00");
+  });
+
+  it("trims oldest candles when a live append exceeds 10_000", () => {
+    const filled: CandleListResponse = {
+      ...history,
+      candles: Array.from({ length: 10_000 }, (_, index) => ({
+        ...base,
+        openTime: index * 1_000,
+        closeTime: index * 1_000 + 899,
+      })),
+    };
+    const next = mergeLiveCandle(
+      filled,
+      {
+        ...base,
+        symbol: "BTCUSDT",
+        interval: "15m",
+        openTime: 10_000_000,
+        closeTime: 10_000_899,
+        close: "9.00",
+      },
+      10_000,
+    );
+    expect(next?.candles).toHaveLength(10_000);
+    expect(next?.candles[0]?.openTime).toBe(1_000);
+    expect(next?.candles.at(-1)?.close).toBe("9.00");
   });
 
   it("appends into an empty cached series", () => {

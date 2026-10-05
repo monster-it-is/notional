@@ -11,15 +11,27 @@ import {
   type HistogramData,
   type IChartApi,
   type ISeriesApi,
+  type LogicalRange,
 } from "lightweight-charts";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { Button } from "../ui/Button.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
 import { ErrorBanner } from "../ui/ErrorBanner.tsx";
-import { getCandles, TRADE_CHART_LIMIT } from "../../lib/api/candles.ts";
-import { classifyChartSeriesMutation } from "../../lib/chart/classify-series-mutation.ts";
+import {
+  getCandles,
+  historicalBackfillLimit,
+  TRADE_CHART_LIMIT,
+  TRADE_CHART_MAX_CANDLES,
+} from "../../lib/api/candles.ts";
+import {
+  classifyChartSeriesMutation,
+  countLeftPrependedBars,
+} from "../../lib/chart/classify-series-mutation.ts";
+import { mergeLatestSnapshot } from "../../lib/chart/merge-latest-snapshot.ts";
 import { mergeLiveCandle } from "../../lib/chart/merge-live-candle.ts";
+import { prependOlderCandles } from "../../lib/chart/prepend-older-candles.ts";
+import { shouldRequestOlderCandles } from "../../lib/chart/should-request-older-candles.ts";
 import {
   colorChartVolumePoints,
   toAlignedChartPoints,
@@ -54,6 +66,7 @@ export function MarketChart({
   const previousThemeRef = useRef(theme);
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ChartDisplayMode>("candles");
+  const [loadingOlder, setLoadingOlder] = useState(false);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -63,6 +76,13 @@ export function MarketChart({
   const previousPointsRef = useRef<CandlestickData[]>([]);
   const pointsRef = useRef(EMPTY_POINTS);
   const modeRef = useRef<ChartDisplayMode>("candles");
+  const abortRef = useRef<AbortController | null>(null);
+  const exhaustedRef = useRef(false);
+  const blockedBeforeRef = useRef<number | null>(null);
+  const backfillInFlightRef = useRef(false);
+  const backfillGenerationRef = useRef(0);
+  const handleVisibleLogicalRangeRef = useRef<(range: LogicalRange | null) => void>(() => undefined);
+  const requestOlderHistoryRef = useRef<() => Promise<void>>(async () => undefined);
 
   const candlesQuery = useQuery({
     queryKey: symbol
@@ -82,7 +102,7 @@ export function MarketChart({
     staleTime: Infinity,
     refetchInterval: false,
     refetchOnWindowFocus: false,
-    refetchOnReconnect: true,
+    refetchOnReconnect: false,
   });
 
   const points = useMemo(
@@ -90,6 +110,121 @@ export function MarketChart({
     [candlesQuery.data],
   );
   const hasRenderableData = points.candles.length > 0;
+
+  useLayoutEffect(() => {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    exhaustedRef.current = false;
+    blockedBeforeRef.current = null;
+    backfillInFlightRef.current = false;
+    backfillGenerationRef.current += 1;
+    setLoadingOlder(false);
+
+    return () => {
+      controller.abort();
+      if (abortRef.current === controller) {
+        abortRef.current = null;
+      }
+    };
+  }, [symbol, interval]);
+
+  useLayoutEffect(() => {
+    requestOlderHistoryRef.current = async () => {
+      if (!symbol || backfillInFlightRef.current || exhaustedRef.current) {
+        return;
+      }
+
+      const candleQueryKey = queryKeys.candles.list({
+        symbol,
+        interval,
+        limit: TRADE_CHART_LIMIT,
+      });
+      const current = queryClient.getQueryData<CandleListResponse>(candleQueryKey);
+      const oldestOpenTime = current?.candles[0]?.openTime;
+
+      if (!current || oldestOpenTime === undefined) {
+        return;
+      }
+
+      if (blockedBeforeRef.current === oldestOpenTime) {
+        return;
+      }
+
+      const backfillLimit = historicalBackfillLimit(current.candles.length);
+
+      if (backfillLimit <= 0) {
+        return;
+      }
+
+      const signal = abortRef.current?.signal;
+
+      if (signal?.aborted) {
+        return;
+      }
+
+      const generation = backfillGenerationRef.current;
+      backfillInFlightRef.current = true;
+      setLoadingOlder(true);
+
+      try {
+        const page = await getCandles(
+          {
+            symbol,
+            interval,
+            limit: backfillLimit,
+            before: oldestOpenTime,
+          },
+          signal ? { signal } : undefined,
+        );
+
+        if (signal?.aborted || generation !== backfillGenerationRef.current) {
+          return;
+        }
+
+        if (page.candles.length < backfillLimit) {
+          exhaustedRef.current = true;
+        }
+
+        queryClient.setQueryData<CandleListResponse>(candleQueryKey, (cached) => {
+          return prependOlderCandles(cached, page, TRADE_CHART_MAX_CANDLES) ?? cached;
+        });
+      } catch {
+        if (signal?.aborted || generation !== backfillGenerationRef.current) {
+          return;
+        }
+
+        blockedBeforeRef.current = oldestOpenTime;
+      } finally {
+        if (generation === backfillGenerationRef.current) {
+          backfillInFlightRef.current = false;
+
+          if (!signal?.aborted) {
+            setLoadingOlder(false);
+          }
+        }
+      }
+    };
+
+    handleVisibleLogicalRangeRef.current = (range: LogicalRange | null) => {
+      const series = candleSeriesRef.current;
+
+      if (!series || !range || !symbol) {
+        return;
+      }
+
+      const info = series.barsInLogicalRange(range);
+      const nearLeftEdge = shouldRequestOlderCandles(
+        info ? { barsBefore: info.barsBefore, barsAfter: info.barsAfter } : null,
+      );
+
+      if (!nearLeftEdge) {
+        blockedBeforeRef.current = null;
+        return;
+      }
+
+      void requestOlderHistoryRef.current();
+    };
+  }, [symbol, interval, queryClient]);
 
   useEffect(() => {
     const socket = getMarketSocket();
@@ -107,7 +242,7 @@ export function MarketChart({
       }
 
       queryClient.setQueryData<CandleListResponse>(candleQueryKey, (current) => {
-        return mergeLiveCandle(current, message, TRADE_CHART_LIMIT) ?? current;
+        return mergeLiveCandle(current, message, TRADE_CHART_MAX_CANDLES) ?? current;
       });
     });
     const unsubscribeReconnect = socket.subscribeReconnectReady(() => {
@@ -115,7 +250,27 @@ export function MarketChart({
         return;
       }
 
-      void queryClient.refetchQueries({ queryKey: candleQueryKey });
+      const signal = abortRef.current?.signal;
+      void (async () => {
+        try {
+          const latest = await getCandles(
+            { symbol, interval, limit: TRADE_CHART_LIMIT },
+            signal ? { signal } : undefined,
+          );
+
+          if (signal?.aborted) {
+            return;
+          }
+
+          queryClient.setQueryData<CandleListResponse>(candleQueryKey, (current) => {
+            return mergeLatestSnapshot(current, latest, TRADE_CHART_MAX_CANDLES) ?? current;
+          });
+        } catch {
+          if (signal?.aborted) {
+            return;
+          }
+        }
+      })();
     });
 
     return () => {
@@ -163,7 +318,14 @@ export function MarketChart({
     volumeSeriesRef.current = volumeSeries;
     previousPointsRef.current = [];
 
+    const timeScale = chart.timeScale();
+    const onVisibleLogicalRangeChange = (range: LogicalRange | null) => {
+      handleVisibleLogicalRangeRef.current(range);
+    };
+    timeScale.subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
+
     return () => {
+      timeScale.unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -196,6 +358,11 @@ export function MarketChart({
     const mutation = identityChanged
       ? "setData"
       : classifyChartSeriesMutation(previousPointsRef.current, points.candles);
+    const prepended = identityChanged
+      ? 0
+      : countLeftPrependedBars(previousPointsRef.current, points.candles);
+    const visibleLogicalRange =
+      prepended > 0 ? chart.timeScale().getVisibleLogicalRange() : null;
 
     if (mutation === "update" && lastCandle && lastLine && lastVolume) {
       candleSeries.update(lastCandle);
@@ -205,6 +372,13 @@ export function MarketChart({
       candleSeries.setData(points.candles);
       lineSeries.setData(points.line);
       volumeSeries.setData(volume);
+
+      if (visibleLogicalRange) {
+        chart.timeScale().setVisibleLogicalRange({
+          from: visibleLogicalRange.from + prepended,
+          to: visibleLogicalRange.to + prepended,
+        });
+      }
     }
 
     if (identityChanged) {
@@ -256,6 +430,7 @@ export function MarketChart({
       symbol={symbol}
       interval={interval}
       mode={mode}
+      loadingOlder={loadingOlder}
       onIntervalChange={onIntervalChange}
       onModeChange={setMode}
     />
@@ -326,12 +501,14 @@ function ChartToolbar({
   symbol,
   interval,
   mode,
+  loadingOlder,
   onIntervalChange,
   onModeChange,
 }: {
   symbol: string | null;
   interval: CandleInterval;
   mode: ChartDisplayMode;
+  loadingOlder: boolean;
   onIntervalChange: (interval: CandleInterval) => void;
   onModeChange: (mode: ChartDisplayMode) => void;
 }) {
@@ -381,6 +558,11 @@ function ChartToolbar({
           Line
         </Button>
       </div>
+      {loadingOlder ? (
+        <p className="text-xs text-secondary" aria-live="polite">
+          Loading older data…
+        </p>
+      ) : null}
     </div>
   );
 }

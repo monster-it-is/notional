@@ -82,8 +82,12 @@ export function createBinanceRestClient(options: {
       endTime?: number;
       limit?: number;
     }) => getJson(withQuery("/fapi/v1/markPriceKlines", query)),
-    getKlines: (query: { symbol: string; interval: CandleInterval; limit: number }) =>
-      getJson(withQuery("/fapi/v1/klines", query)),
+    getKlines: (query: {
+      symbol: string;
+      interval: CandleInterval;
+      limit: number;
+      endTime?: number;
+    }) => getJson(withQuery("/fapi/v1/klines", query)),
   };
 }
 

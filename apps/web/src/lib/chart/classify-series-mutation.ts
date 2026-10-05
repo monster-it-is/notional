@@ -52,6 +52,30 @@ export function classifyChartSeriesMutation(
   return "setData";
 }
 
+export function countLeftPrependedBars(
+  previous: readonly CandlestickData[],
+  next: readonly CandlestickData[],
+): number {
+  const previousFirst = previous[0]?.time;
+
+  if (typeof previousFirst !== "number" || previous.length === 0 || next.length === 0) {
+    return 0;
+  }
+
+  let count = 0;
+
+  for (const point of next) {
+    if (typeof point.time === "number" && point.time < previousFirst) {
+      count += 1;
+      continue;
+    }
+
+    break;
+  }
+
+  return count;
+}
+
 function samePoint(left: CandlestickData, right: CandlestickData): boolean {
   return (
     left.time === right.time &&

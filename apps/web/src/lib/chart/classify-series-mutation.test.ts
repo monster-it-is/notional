@@ -1,7 +1,10 @@
 import type { CandlestickData } from "lightweight-charts";
 import { describe, expect, it } from "vitest";
 
-import { classifyChartSeriesMutation } from "./classify-series-mutation.ts";
+import {
+  classifyChartSeriesMutation,
+  countLeftPrependedBars,
+} from "./classify-series-mutation.ts";
 
 function point(time: number, close = 1): CandlestickData {
   return { time: time as CandlestickData["time"], open: 1, high: 1, low: 1, close };
@@ -30,5 +33,24 @@ describe("classifyChartSeriesMutation", () => {
     const previous = [point(1, 1), point(2, 2)];
     const next = [point(1, 9), point(2, 2)];
     expect(classifyChartSeriesMutation(previous, next)).toBe("setData");
+  });
+
+  it("uses setData when older bars are prepended", () => {
+    const previous = [point(10), point(11)];
+    const next = [point(8), point(9), point(10), point(11)];
+    expect(classifyChartSeriesMutation(previous, next)).toBe("setData");
+    expect(countLeftPrependedBars(previous, next)).toBe(2);
+  });
+
+  it("counts no prepended bars for an identity or right-side update", () => {
+    expect(countLeftPrependedBars([point(1)], [point(1, 2)])).toBe(0);
+    expect(countLeftPrependedBars([point(1)], [point(1), point(2)])).toBe(0);
+  });
+
+  it("counts only older bars that remain after a newest-preserving cap", () => {
+    const previous = [point(2), point(3), point(4), point(5)];
+    const capped = [point(1), point(2), point(3), point(4)];
+    expect(countLeftPrependedBars(previous, capped)).toBe(1);
+    expect(countLeftPrependedBars(previous, previous)).toBe(0);
   });
 });

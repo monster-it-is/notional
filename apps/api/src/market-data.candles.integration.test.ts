@@ -28,7 +28,7 @@ const klineRow = [
 
 describe("market-data candles api", () => {
   let app: FastifyInstance;
-  let klineCalls: Array<{ symbol: string; interval: string; limit: number }>;
+  let klineCalls: Array<{ symbol: string; interval: string; limit: number; endTime?: number }>;
   let klinePayload: unknown;
   let klineError: Error | null;
 
@@ -231,6 +231,95 @@ describe("market-data candles api", () => {
     } satisfies MarketDataUnavailableError);
     expect(JSON.stringify(response.json())).not.toContain("binance");
     expect(JSON.stringify(response.json())).not.toContain("fapi");
+  });
+
+  it("forwards before as Binance endTime minus one millisecond", async () => {
+    const signup = await signUp(app);
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT"));
+    const older = [
+      1_499_039_100_000,
+      "0.01600000",
+      "0.01700000",
+      "0.01500000",
+      "0.01650000",
+      "10.00000000",
+      1_499_039_999_999,
+    ];
+    klinePayload = [older];
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/market-data/BTCUSDT/candles?interval=15m&limit=500&before=1499040000000",
+      headers: authHeaders(signup),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(klineCalls).toEqual([
+      { symbol: "BTCUSDT", interval: "15m", limit: 500, endTime: 1_499_039_999_999 },
+    ]);
+    expect(klineCalls[0]).not.toHaveProperty("startTime");
+    const body = response.json() as CandleListResponse;
+    expect(body.candles.every((candle) => candle.openTime < 1_499_040_000_000)).toBe(true);
+    expect(body.candles).toEqual([
+      {
+        openTime: 1_499_039_100_000,
+        closeTime: 1_499_039_999_999,
+        open: "0.01600000",
+        high: "0.01700000",
+        low: "0.01500000",
+        close: "0.01650000",
+        volume: "10.00000000",
+      },
+    ]);
+    expect(typeof body.candles[0]?.open).toBe("string");
+  });
+
+  it("returns an empty historical page as 200", async () => {
+    const signup = await signUp(app);
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT"));
+    klinePayload = [];
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/market-data/BTCUSDT/candles?before=1499040000000",
+      headers: authHeaders(signup),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(klineCalls).toEqual([
+      { symbol: "BTCUSDT", interval: "15m", limit: 500, endTime: 1_499_039_999_999 },
+    ]);
+    expect((response.json() as CandleListResponse).candles).toEqual([]);
+  });
+
+  it("returns 503 when a historical page includes openTime at the before boundary", async () => {
+    const signup = await signUp(app);
+    await upsertInstrumentBySymbol(db, sample("BTCUSDT"));
+
+    const response = await app.inject({
+      method: "GET",
+      url: "/api/market-data/BTCUSDT/candles?before=1499040000000",
+      headers: authHeaders(signup),
+    });
+
+    expect(response.statusCode).toBe(503);
+    expect(response.json()).toEqual({
+      error: "MARKET_DATA_UNAVAILABLE",
+    } satisfies MarketDataUnavailableError);
+    expect(klineCalls).toEqual([
+      { symbol: "BTCUSDT", interval: "15m", limit: 500, endTime: 1_499_039_999_999 },
+    ]);
+  });
+
+  it("returns 400 INVALID_QUERY for invalid before cursors", async () => {
+    await expectInvalidQuery("/api/market-data/BTCUSDT/candles?before=");
+    await expectInvalidQuery("/api/market-data/BTCUSDT/candles?before=0");
+    await expectInvalidQuery("/api/market-data/BTCUSDT/candles?before=-1");
+    await expectInvalidQuery("/api/market-data/BTCUSDT/candles?before=1.5");
+    await expectInvalidQuery("/api/market-data/BTCUSDT/candles?before=NaN");
+    await expectInvalidQuery("/api/market-data/BTCUSDT/candles?before=abc");
+    await expectInvalidQuery(`/api/market-data/BTCUSDT/candles?before=${Number.MAX_SAFE_INTEGER + 1}`);
+    await expectInvalidQuery("/api/market-data/BTCUSDT/candles?before=1&before=2");
   });
 
   it("returns 503 when the upstream payload is malformed", async () => {

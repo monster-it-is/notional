@@ -23,6 +23,7 @@ export type GetKlines = (query: {
   symbol: string;
   interval: CandleInterval;
   limit: number;
+  endTime?: number;
 }) => Promise<unknown>;
 
 export async function getMarketDataBySymbol(
@@ -97,25 +98,45 @@ export async function getMarketDataCandles(
   }
 
   try {
-    const payload = await getKlines({
-      symbol: instrument.symbol,
-      interval: query.interval,
-      limit: query.limit,
-    });
+    const payload = await getKlines(
+      query.before === undefined
+        ? {
+            symbol: instrument.symbol,
+            interval: query.interval,
+            limit: query.limit,
+          }
+        : {
+            symbol: instrument.symbol,
+            interval: query.interval,
+            limit: query.limit,
+            endTime: query.before - 1,
+          },
+    );
+
+    const candles = parseKlines(payload);
+    const before = query.before;
+
+    if (before !== undefined && candles.some((candle) => candle.openTime >= before)) {
+      return reply.status(503).send({ error: "MARKET_DATA_UNAVAILABLE" });
+    }
 
     return {
       symbol: instrument.symbol,
       interval: query.interval,
-      candles: parseKlines(payload),
+      candles,
     };
   } catch {
     return reply.status(503).send({ error: "MARKET_DATA_UNAVAILABLE" });
   }
 }
 
-function parseCandleQuery(
-  query: unknown,
-): { interval: CandleInterval; limit: number } | "invalid_query" {
+type CandleQuery = {
+  interval: CandleInterval;
+  limit: number;
+  before?: number;
+};
+
+function parseCandleQuery(query: unknown): CandleQuery | "invalid_query" {
   if (query === undefined || query === null || typeof query !== "object") {
     return { interval: DEFAULT_CANDLE_INTERVAL, limit: DEFAULT_CANDLE_LIMIT };
   }
@@ -123,12 +144,13 @@ function parseCandleQuery(
   const record = query as Record<string, unknown>;
   const interval = parseCandleInterval(record.interval);
   const limit = parseCandleLimit(record.limit);
+  const before = parseCandleBefore(record.before);
 
-  if (interval === null || limit === null) {
+  if (interval === null || limit === null || before === null) {
     return "invalid_query";
   }
 
-  return { interval, limit };
+  return before === undefined ? { interval, limit } : { interval, limit, before };
 }
 
 function parseCandleInterval(value: unknown): CandleInterval | null {
@@ -161,6 +183,30 @@ function parseCandleLimit(value: unknown): number | null {
   const parsed = Number.parseInt(text, 10);
 
   if (!Number.isSafeInteger(parsed) || parsed < MIN_CANDLE_LIMIT || parsed > MAX_CANDLE_LIMIT) {
+    return null;
+  }
+
+  return parsed;
+}
+
+function parseCandleBefore(value: unknown): number | null | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (typeof value !== "string" && typeof value !== "number") {
+    return null;
+  }
+
+  const text = String(value);
+
+  if (!/^\d+$/.test(text)) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(text, 10);
+
+  if (!Number.isSafeInteger(parsed) || parsed < 1) {
     return null;
   }
 
