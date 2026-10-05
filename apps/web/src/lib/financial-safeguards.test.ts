@@ -158,3 +158,42 @@ describe("D11C indicator financial safeguards", () => {
     }
   });
 });
+
+const drawingFiles = [
+  "src/lib/chart/drawings/types.ts",
+  "src/lib/chart/drawings/geometry.ts",
+  "src/lib/chart/drawings/point.ts",
+  "src/lib/chart/drawings/DrawingPrimitive.ts",
+  "src/components/trade/DrawingsMenu.tsx",
+];
+
+describe("D11D1 drawing financial safeguards", () => {
+  it("keeps drawing modules isolated from trading, REST, and indicator math", () => {
+    for (const file of drawingFiles) {
+      const source = readFileSync(resolve(process.cwd(), file), "utf8");
+      expect(source).not.toMatch(/@notional\/trading/);
+      expect(source).not.toMatch(/lib\/api\//);
+      expect(source).not.toMatch(/to-chart-candles/);
+      expect(source).not.toMatch(/to-chart-indicators/);
+      expect(source).not.toMatch(
+        /indicators\/(sma|ema|rsi|macd|bollinger|decimal|compute-enabled|live-session)/,
+      );
+      expect(source).not.toMatch(/use-place-order/);
+      expect(source).not.toMatch(/OrderForm/);
+    }
+  });
+
+  it("documents drawing coordinates as visual UI geometry that must never enter trading", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/chart/drawings/types.ts"), "utf8");
+    expect(source).toMatch(/Visual UI geometry/);
+    expect(source).toMatch(/must never enter/);
+  });
+
+  it("does not read canonical OHLCV fields in the drawing primitive", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/chart/drawings/DrawingPrimitive.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/candle\.(open|high|low|close|volume)/);
+  });
+});

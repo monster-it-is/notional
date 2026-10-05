@@ -7,6 +7,7 @@ import { StrictMode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarketChart } from "./MarketChart.tsx";
+import { DrawingPrimitive } from "../../lib/chart/drawings/DrawingPrimitive.ts";
 import { getCandles, TRADE_CHART_LIMIT, TRADE_CHART_MAX_CANDLES } from "../../lib/api/candles.ts";
 import {
   colorChartVolumePoints,
@@ -49,13 +50,58 @@ const {
   unsubscribeVisibleLogicalRangeChange,
   subscribeCrosshairMove,
   unsubscribeCrosshairMove,
+  subscribeClick,
+  unsubscribeClick,
   getVisibleLogicalRange,
   setVisibleLogicalRange,
   rangeListeners,
   crosshairListeners,
+  clickListeners,
+  attachedPrimitives,
+  coordinateToTime,
+  timeToCoordinate,
+  coordinateToPrice,
+  priceToCoordinate,
 } = vi.hoisted(() => {
   const rangeListeners = new Set<(range: { from: number; to: number } | null) => void>();
-  const crosshairListeners = new Set<(param: { time?: unknown; seriesData?: unknown }) => void>();
+  const crosshairListeners = new Set<(param: Record<string, unknown>) => void>();
+  const clickListeners = new Set<(param: Record<string, unknown>) => void>();
+  const attachedPrimitives: Array<{
+    attached?: (param: unknown) => void;
+    detached?: () => void;
+    setState?: (state: unknown) => void;
+    getState?: () => { drawings: unknown[]; draft: unknown; selectedId: string | null };
+    hitTest?: (x: number, y: number) => { externalId: string } | null;
+  }> = [];
+  const TIME_ORIGIN = 1_499_040_000;
+  const coordinateToTime = vi.fn((x: number) => {
+    if (!Number.isFinite(x) || x < 0) {
+      return null;
+    }
+
+    return TIME_ORIGIN + x;
+  });
+  const timeToCoordinate = vi.fn((time: unknown) => {
+    if (typeof time !== "number" || !Number.isFinite(time) || time < TIME_ORIGIN) {
+      return null;
+    }
+
+    return time - TIME_ORIGIN;
+  });
+  const coordinateToPrice = vi.fn((y: number) => {
+    if (!Number.isFinite(y) || y < 0) {
+      return null;
+    }
+
+    return 400 - y;
+  });
+  const priceToCoordinate = vi.fn((price: number) => {
+    if (!Number.isFinite(price) || price < 0 || price > 10_000) {
+      return null;
+    }
+
+    return 400 - price;
+  });
   type MockPriceLine = {
     applyOptions: ReturnType<typeof vi.fn>;
     options: ReturnType<typeof vi.fn>;
@@ -78,6 +124,10 @@ const {
     priceLines: MockPriceLine[];
     pane: MockPane | null;
     barsInLogicalRange: ReturnType<typeof vi.fn>;
+    attachPrimitive: ReturnType<typeof vi.fn>;
+    detachPrimitive: ReturnType<typeof vi.fn>;
+    coordinateToPrice: ReturnType<typeof vi.fn>;
+    priceToCoordinate: ReturnType<typeof vi.fn>;
   };
   const panes: MockPane[] = [];
   const extraSeries: MockSeries[] = [];
@@ -130,6 +180,10 @@ const {
         return priceLine;
       }),
       barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+      attachPrimitive: vi.fn(),
+      detachPrimitive: vi.fn(),
+      coordinateToPrice,
+      priceToCoordinate,
       getPane: () => {
         if (!series.pane) {
           throw new Error("series pane was removed");
@@ -166,6 +220,10 @@ const {
       return candlestick.pane;
     },
     barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+    attachPrimitive: vi.fn(),
+    detachPrimitive: vi.fn(),
+    coordinateToPrice,
+    priceToCoordinate,
   };
   const line: MockSeries = {
     type: "Line",
@@ -183,6 +241,10 @@ const {
       return line.pane;
     },
     barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+    attachPrimitive: vi.fn(),
+    detachPrimitive: vi.fn(),
+    coordinateToPrice,
+    priceToCoordinate,
   };
   const volume: MockSeries = {
     type: "Histogram",
@@ -200,6 +262,10 @@ const {
       return volume.pane;
     },
     barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+    attachPrimitive: vi.fn(),
+    detachPrimitive: vi.fn(),
+    coordinateToPrice,
+    priceToCoordinate,
   };
   const fitContent = vi.fn();
   const getVisibleLogicalRange = vi.fn(() => ({ from: 2, to: 8 }));
@@ -222,6 +288,39 @@ const {
       crosshairListeners.delete(handler);
     },
   );
+  const subscribeClick = vi.fn((handler: (param: Record<string, unknown>) => void) => {
+    clickListeners.add(handler);
+  });
+  const unsubscribeClick = vi.fn((handler: (param: Record<string, unknown>) => void) => {
+    clickListeners.delete(handler);
+  });
+  candlestick.attachPrimitive.mockImplementation(
+    (primitive: {
+      attached?: (param: unknown) => void;
+      updateAllViews?: () => void;
+    }) => {
+      attachedPrimitives.push(primitive);
+      primitive.attached?.({
+        chart: currentChart,
+        series: candlestick,
+        requestUpdate: vi.fn(() => {
+          primitive.updateAllViews?.();
+        }),
+        horzScaleBehavior: {},
+      });
+    },
+  );
+  candlestick.detachPrimitive.mockImplementation(
+    (primitive: { detached?: () => void }) => {
+      const index = attachedPrimitives.indexOf(primitive);
+      if (index >= 0) {
+        attachedPrimitives.splice(index, 1);
+      }
+
+      primitive.detached?.();
+    },
+  );
+  let currentChart: { timeScale: () => unknown } | null = null;
   const chartApplyOptions = vi.fn();
   const addSeries = vi.fn((definition: { type: string }, _options?: unknown, paneIndex?: number) => {
     const index = paneIndex ?? 0;
@@ -290,7 +389,7 @@ const {
     candlestick.pane = null;
     line.pane = null;
     volume.pane = null;
-    return {
+    const chart = {
       addSeries,
       removeSeries,
       panes: () => panes,
@@ -301,12 +400,18 @@ const {
         unsubscribeVisibleLogicalRangeChange,
         getVisibleLogicalRange,
         setVisibleLogicalRange,
+        coordinateToTime,
+        timeToCoordinate,
       }),
       priceScale: () => ({ applyOptions: vi.fn() }),
       subscribeCrosshairMove,
       unsubscribeCrosshairMove,
+      subscribeClick,
+      unsubscribeClick,
       remove,
     };
+    currentChart = chart;
+    return chart;
   });
   const remove = vi.fn();
   return {
@@ -321,6 +426,14 @@ const {
     volume,
     overlaySeries,
     extraSeries,
+    attachedPrimitives,
+    clickListeners,
+    subscribeClick,
+    unsubscribeClick,
+    coordinateToTime,
+    timeToCoordinate,
+    coordinateToPrice,
+    priceToCoordinate,
     getChartPanes: () => panes,
     subscribeVisibleLogicalRangeChange,
     unsubscribeVisibleLogicalRangeChange,
@@ -504,8 +617,14 @@ function emitVisibleRange(range: { from: number; to: number } | null = { from: 0
   }
 }
 
-function emitCrosshair(param: { time?: unknown; seriesData?: unknown } = {}) {
+function emitCrosshair(param: Record<string, unknown> = {}) {
   for (const handler of crosshairListeners) {
+    handler(param);
+  }
+}
+
+function emitClick(param: Record<string, unknown> = {}) {
+  for (const handler of clickListeners) {
     handler(param);
   }
 }
@@ -585,6 +704,42 @@ describe("MarketChart", () => {
     unsubscribeVisibleLogicalRangeChange.mockClear();
     subscribeCrosshairMove.mockClear();
     unsubscribeCrosshairMove.mockClear();
+    subscribeClick.mockClear();
+    unsubscribeClick.mockClear();
+    candlestick.attachPrimitive.mockClear();
+    candlestick.detachPrimitive.mockClear();
+    coordinateToTime.mockClear();
+    timeToCoordinate.mockClear();
+    coordinateToPrice.mockClear();
+    priceToCoordinate.mockClear();
+    coordinateToTime.mockImplementation((x: number) => {
+      if (!Number.isFinite(x) || x < 0) {
+        return null;
+      }
+
+      return 1_499_040_000 + x;
+    });
+    timeToCoordinate.mockImplementation((time: unknown) => {
+      if (typeof time !== "number" || !Number.isFinite(time) || time < 1_499_040_000) {
+        return null;
+      }
+
+      return time - 1_499_040_000;
+    });
+    coordinateToPrice.mockImplementation((y: number) => {
+      if (!Number.isFinite(y) || y < 0) {
+        return null;
+      }
+
+      return 400 - y;
+    });
+    priceToCoordinate.mockImplementation((price: number) => {
+      if (!Number.isFinite(price) || price < 0 || price > 10_000) {
+        return null;
+      }
+
+      return 400 - price;
+    });
     getVisibleLogicalRange.mockClear();
     setVisibleLogicalRange.mockClear();
     candlestick.barsInLogicalRange.mockClear();
@@ -592,6 +747,8 @@ describe("MarketChart", () => {
     getVisibleLogicalRange.mockReturnValue({ from: 2, to: 8 });
     rangeListeners.clear();
     crosshairListeners.clear();
+    clickListeners.clear();
+    attachedPrimitives.length = 0;
     marketSocket.setDesiredCandle.mockClear();
     marketSocket.subscribeMarketCandles.mockClear();
     marketSocket.subscribeReconnectReady.mockClear();
@@ -3731,5 +3888,302 @@ describe("MarketChart", () => {
     await waitFor(() => expect(sma.update).toHaveBeenCalledTimes(1));
     expect(sma.setData).not.toHaveBeenCalled();
     expect(overlaySeries).toHaveLength(1);
+  });
+
+  async function activateDrawingTool(
+    user: ReturnType<typeof userEvent.setup>,
+    name: "Trend Line" | "Horizontal Line" | "Select",
+  ) {
+    await user.click(screen.getByRole("button", { name: /Drawings/ }));
+    await user.click(screen.getByRole("button", { name }));
+  }
+
+  function clickPane(paneIndex: number, x: number, y: number, hoveredObjectId?: string) {
+    emitClick({
+      paneIndex,
+      point: { x, y },
+      hoveredInfo: hoveredObjectId
+        ? {
+            objectId: hoveredObjectId,
+            sourceKind: "series-primitive",
+            type: "primitive",
+            objectKind: "primitive",
+          }
+        : undefined,
+    });
+  }
+
+  function drawingPrimitive(): DrawingPrimitive {
+    const current = attachedPrimitives.at(-1);
+    expect(current).toBeInstanceOf(DrawingPrimitive);
+    return current as unknown as DrawingPrimitive;
+  }
+
+  it("attaches one drawing primitive to the candle series without recreating the chart", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(candlestick.attachPrimitive).toHaveBeenCalledTimes(1);
+    expect(attachedPrimitives).toHaveLength(1);
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    expect(addSeries).toHaveBeenCalledTimes(3);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("creates a trend line draft then commits on the second pane-0 click and returns to Select", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    const fitCalls = fitContent.mock.calls.length;
+    const fetchCalls = mockedGetCandles.mock.calls.length;
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    expect(drawingPrimitive().getState().draft).toEqual({
+      type: "trend-line",
+      a: { time: 1_499_040_010, price: 360 },
+      b: null,
+    });
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    emitCrosshair({ paneIndex: 0, point: { x: 30, y: 60 } });
+    expect(drawingPrimitive().getState().draft).toEqual({
+      type: "trend-line",
+      a: { time: 1_499_040_010, price: 360 },
+      b: { time: 1_499_040_030, price: 340 },
+    });
+    clickPane(0, 50, 80);
+    expect(drawingPrimitive().getState().draft).toBeNull();
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({
+        type: "trend-line",
+        symbol: "BTCUSDT",
+        a: { time: 1_499_040_010, price: 360 },
+        b: { time: 1_499_040_050, price: 320 },
+      }),
+    ]);
+    expect(screen.getByRole("button", { name: /^Drawings/ })).toBeInTheDocument();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(fitContent.mock.calls.length).toBe(fitCalls);
+    expect(mockedGetCandles.mock.calls.length).toBe(fetchCalls);
+  });
+
+  it("cancels a trend draft on Escape without committing", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    expect(drawingPrimitive().getState().draft).not.toBeNull();
+    await user.keyboard("{Escape}");
+    expect(drawingPrimitive().getState().draft).toBeNull();
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+  });
+
+  it("commits a horizontal line on one pane-0 click and returns to Select", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({
+        type: "horizontal-line",
+        symbol: "BTCUSDT",
+        price: 360,
+      }),
+    ]);
+    expect(drawingPrimitive().getState().draft).toBeNull();
+    expect(screen.getByRole("button", { name: /^Drawings/ })).toBeInTheDocument();
+  });
+
+  it("does not create a drawing from indicator pane clicks", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(1, 10, 40);
+    clickPane(2, 10, 40);
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(1, 10, 40);
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    expect(drawingPrimitive().getState().draft).toBeNull();
+  });
+
+  it("selects a drawing from hoveredInfo and deselects on an empty pane-0 click", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const id = drawingPrimitive().getState().drawings[0]?.id as string;
+    expect(drawingPrimitive().hitTest(20, 40)?.externalId).toBe(id);
+    clickPane(0, 20, 40, id);
+    expect(drawingPrimitive().getState().selectedId).toBe(id);
+    clickPane(0, 20, 40);
+    expect(drawingPrimitive().getState().selectedId).toBeNull();
+  });
+
+  it("deletes the selected drawing with Delete and Backspace unless an input is focused", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const firstId = drawingPrimitive().getState().drawings[0]?.id as string;
+    clickPane(0, 20, 40, firstId);
+    await user.keyboard("{Delete}");
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 16, 50);
+    const secondId = drawingPrimitive().getState().drawings[0]?.id as string;
+    clickPane(0, 20, 50, secondId);
+    await user.keyboard("{Backspace}");
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 18, 60);
+    const thirdId = drawingPrimitive().getState().drawings[0]?.id as string;
+    clickPane(0, 20, 60, thirdId);
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    screen.getByLabelText("SMA period").focus();
+    await user.keyboard("{Delete}{Backspace}");
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({ id: thirdId }),
+    ]);
+  });
+
+  it("isolates completed drawings by symbol", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT" ? ethCandles : btcCandles,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const btcDrawing = drawingPrimitive().getState().drawings[0];
+    expect(btcDrawing?.symbol).toBe("BTCUSDT");
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    view.rerender(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(3));
+    expect(drawingPrimitive().getState().drawings).toEqual([btcDrawing]);
+  });
+
+  it("keeps drawings across a prefetched interval change and cancels an in-progress draft", async () => {
+    const user = userEvent.setup();
+    const hourCandles: CandleListResponse = { ...btcCandles, interval: "1h" };
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h" ? hourCandles : btcCandles,
+    );
+    const onIntervalChange = vi.fn();
+    const view = renderChart("BTCUSDT", false, { onIntervalChange });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const drawing = drawingPrimitive().getState().drawings[0];
+    const attached = drawingPrimitive();
+    await view.client.prefetchQuery({
+      queryKey: queryKeys.candles.list({
+        symbol: "BTCUSDT",
+        interval: "1h",
+        limit: TRADE_CHART_LIMIT,
+      }),
+      queryFn: () => getCandles({ symbol: "BTCUSDT", interval: "1h", limit: TRADE_CHART_LIMIT }),
+    });
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    expect(drawingPrimitive().getState().draft).not.toBeNull();
+    view.rerender(
+      <ThemeProvider>
+        <QueryClientProvider client={view.client}>
+          <MarketChart symbol="BTCUSDT" interval="1h" onIntervalChange={onIntervalChange} />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("img")).toHaveAttribute("aria-label", "BTCUSDT 1h historical candlestick chart"),
+    );
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(drawingPrimitive()).toBe(attached);
+    expect(drawingPrimitive().getState().drawings).toEqual([drawing]);
+    expect(drawingPrimitive().getState().draft).toBeNull();
+  });
+
+  it("updates drawing colors on theme change without recreating the chart or primitive", async () => {
+    const user = userEvent.setup();
+    renderChart("BTCUSDT", false, { themeToggle: true });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const attached = drawingPrimitive();
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Toggle theme" }));
+    await waitFor(() => expect(chartApplyOptions).toHaveBeenCalled());
+    expect(drawingPrimitive()).toBe(attached);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(attached.getState().colors.line.length).toBeGreaterThan(0);
+  });
+
+  it("does not mutate drawing state on live replace, live append, or backfill", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockImplementation(async (params) => {
+      if (params.before) {
+        return { ...btcCandles, candles: [olderCandle()] };
+      }
+
+      return btcCandles;
+    });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const before = drawingPrimitive().getState().drawings;
+    const fitBefore = fitContent.mock.calls.length;
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalled());
+    expect(drawingPrimitive().getState().drawings).toEqual(before);
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: btcCandle.openTime + 900_000,
+        closeTime: btcCandle.closeTime + 900_000,
+        isClosed: false,
+        close: "107.00",
+      }),
+    );
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalledTimes(2));
+    expect(drawingPrimitive().getState().drawings).toEqual(before);
+    candlestick.barsInLogicalRange.mockReturnValue({ barsBefore: 5, barsAfter: 90 });
+    emitVisibleRange();
+    await waitFor(() => expect(candlestick.setData.mock.calls.length).toBeGreaterThan(1));
+    expect(drawingPrimitive().getState().drawings).toEqual(before);
+    expect(fitContent.mock.calls.length).toBe(fitBefore);
+  });
+
+  it("keeps a single primitive and unduplicated listeners under Strict Mode", async () => {
+    const user = userEvent.setup();
+    const view = renderChart("BTCUSDT", true);
+    await waitFor(() => expect(createChart).toHaveBeenCalled());
+    expect(clickListeners.size).toBe(1);
+    expect(crosshairListeners.size).toBe(1);
+    expect(attachedPrimitives).toHaveLength(1);
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    expect(drawingPrimitive().getState().draft).not.toBeNull();
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    view.unmount();
+    expect(candlestick.detachPrimitive).toHaveBeenCalled();
+    expect(unsubscribeClick).toHaveBeenCalled();
   });
 });

@@ -43,6 +43,9 @@
   --chart-macd: #e8a87c;
   --chart-signal: #9bb7d4;
   --chart-guide: #6b7a8f;
+  --chart-drawing: #c4a35a;
+  --chart-drawing-selected: #e8c36a;
+  --chart-drawing-handle: #f0d78c;
 }
 
 html.dark {
@@ -90,6 +93,9 @@ html.light {
   --chart-macd: #b56a38;
   --chart-signal: #3d6a94;
   --chart-guide: #5e6e80;
+  --chart-drawing: #8a6a28;
+  --chart-drawing-selected: #b8860b;
+  --chart-drawing-handle: #c9a227;
 }
 
 @theme inline {

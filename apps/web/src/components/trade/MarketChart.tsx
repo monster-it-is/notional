@@ -19,6 +19,7 @@ import {
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { CandleLegend } from "./CandleLegend.tsx";
+import { DrawingsMenu } from "./DrawingsMenu.tsx";
 import { IndicatorsMenu } from "./IndicatorsMenu.tsx";
 import { Button } from "../ui/Button.tsx";
 import { EmptyState } from "../ui/EmptyState.tsx";
@@ -78,6 +79,18 @@ import {
   toAlignedChartPoints,
   type AlignedChartPoints,
 } from "../../lib/chart/to-chart-candles.ts";
+import { DrawingPrimitive } from "../../lib/chart/drawings/DrawingPrimitive.ts";
+import {
+  isEditableKeyboardTarget,
+  readHoveredDrawingId,
+  resolveDrawingPoint,
+} from "../../lib/chart/drawings/point.ts";
+import {
+  createDrawingId,
+  type ChartDrawing,
+  type DrawingDraft,
+  type DrawingTool,
+} from "../../lib/chart/drawings/types.ts";
 import { queryKeys } from "../../lib/query-keys.ts";
 import { getMarketSocket } from "../../realtime/runtime.ts";
 import { useTheme } from "../../theme/ThemeProvider.tsx";
@@ -179,6 +192,18 @@ export function MarketChart({
   const identitySessionRef = useRef(0);
   const emittedSelectionKeyRef = useRef(candleSelectionKey(null));
   const handleCrosshairMoveRef = useRef<(param: MouseEventParams) => void>(() => undefined);
+  const handleChartClickRef = useRef<(param: MouseEventParams) => void>(() => undefined);
+  const handleDrawingKeyDownRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  const drawingPrimitiveRef = useRef<DrawingPrimitive | null>(null);
+  const drawingToolRef = useRef<DrawingTool>("select");
+  const drawingDraftRef = useRef<DrawingDraft | null>(null);
+  const drawingsBySymbolRef = useRef<Record<string, ChartDrawing[]>>({});
+  const selectedDrawingIdRef = useRef<string | null>(null);
+  const hoveredDrawingIdRef = useRef<string | null>(null);
+  const drawingsSymbolRef = useRef(symbol);
+  const [drawingTool, setDrawingTool] = useState<DrawingTool>("select");
+  const [drawingsBySymbol, setDrawingsBySymbol] = useState<Record<string, ChartDrawing[]>>({});
+  const [selectedDrawingId, setSelectedDrawingId] = useState<string | null>(null);
 
   const candlesQuery = useQuery({
     queryKey: symbol
@@ -212,6 +237,18 @@ export function MarketChart({
   }, [indicatorSettings]);
 
   useLayoutEffect(() => {
+    drawingToolRef.current = drawingTool;
+  }, [drawingTool]);
+
+  useLayoutEffect(() => {
+    drawingsBySymbolRef.current = drawingsBySymbol;
+  }, [drawingsBySymbol]);
+
+  useLayoutEffect(() => {
+    selectedDrawingIdRef.current = selectedDrawingId;
+  }, [selectedDrawingId]);
+
+  useLayoutEffect(() => {
     const controller = new AbortController();
     abortRef.current = controller;
     exhaustedRef.current = false;
@@ -221,6 +258,15 @@ export function MarketChart({
     identitySessionRef.current += 1;
     emittedSelectionKeyRef.current = candleSelectionKey(null);
     indicatorReconnectRepairRef.current = null;
+    drawingDraftRef.current = null;
+    hoveredDrawingIdRef.current = null;
+    drawingPrimitiveRef.current?.setState({ draft: null, hoveredId: null });
+
+    if (drawingsSymbolRef.current !== symbol) {
+      drawingsSymbolRef.current = symbol;
+      setSelectedDrawingId(null);
+    }
+
     setIdentitySession(identitySessionRef.current);
     setLoadingOlder(false);
 
@@ -349,12 +395,162 @@ export function MarketChart({
           : null;
       const key = candleSelectionKey(next);
 
-      if (emittedSelectionKeyRef.current === key) {
+      if (emittedSelectionKeyRef.current !== key) {
+        emittedSelectionKeyRef.current = key;
+        setSelection(next);
+      }
+
+      const primitive = drawingPrimitiveRef.current;
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current;
+      const tool = drawingToolRef.current;
+      let nextDraft = drawingDraftRef.current;
+
+      if (tool === "trend-line" && nextDraft?.type === "trend-line" && param.paneIndex === 0 && param.point && chart && series) {
+        const point = resolveDrawingPoint(chart, series, param.point);
+
+        if (point) {
+          nextDraft = { type: "trend-line", a: nextDraft.a, b: point };
+          drawingDraftRef.current = nextDraft;
+        }
+      }
+
+      const hoveredId = tool === "select" ? readHoveredDrawingId(param) : null;
+      hoveredDrawingIdRef.current = hoveredId;
+      primitive?.setState({ draft: nextDraft, hoveredId });
+    };
+
+    handleChartClickRef.current = (param: MouseEventParams) => {
+      if (param.paneIndex !== 0) {
         return;
       }
 
-      emittedSelectionKeyRef.current = key;
-      setSelection(next);
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current;
+      const identity = identityRef.current.symbol;
+      const tool = drawingToolRef.current;
+
+      if (!chart || !series || !identity || !param.point) {
+        return;
+      }
+
+      if (tool === "trend-line") {
+        const point = resolveDrawingPoint(chart, series, param.point);
+
+        if (!point) {
+          return;
+        }
+
+        const draft = drawingDraftRef.current;
+
+        if (!draft || draft.type !== "trend-line") {
+          drawingDraftRef.current = { type: "trend-line", a: point, b: null };
+          drawingPrimitiveRef.current?.setState({ draft: drawingDraftRef.current });
+          return;
+        }
+
+        const committed: ChartDrawing = {
+          id: createDrawingId(),
+          type: "trend-line",
+          symbol: identity,
+          a: draft.a,
+          b: point,
+        };
+        drawingDraftRef.current = null;
+        const nextDrawings = [...(drawingsBySymbolRef.current[identity] ?? []), committed];
+        drawingsBySymbolRef.current = { ...drawingsBySymbolRef.current, [identity]: nextDrawings };
+        drawingToolRef.current = "select";
+        drawingPrimitiveRef.current?.setState({ drawings: nextDrawings, draft: null });
+        setDrawingsBySymbol((current) => ({
+          ...current,
+          [identity]: [...(current[identity] ?? []), committed],
+        }));
+        setDrawingTool("select");
+        return;
+      }
+
+      if (tool === "horizontal-line") {
+        const point = resolveDrawingPoint(chart, series, param.point);
+
+        if (!point) {
+          return;
+        }
+
+        const committed: ChartDrawing = {
+          id: createDrawingId(),
+          type: "horizontal-line",
+          symbol: identity,
+          price: point.price,
+        };
+        drawingDraftRef.current = null;
+        const nextDrawings = [...(drawingsBySymbolRef.current[identity] ?? []), committed];
+        drawingsBySymbolRef.current = { ...drawingsBySymbolRef.current, [identity]: nextDrawings };
+        drawingToolRef.current = "select";
+        drawingPrimitiveRef.current?.setState({ drawings: nextDrawings, draft: null });
+        setDrawingsBySymbol((current) => ({
+          ...current,
+          [identity]: [...(current[identity] ?? []), committed],
+        }));
+        setDrawingTool("select");
+        return;
+      }
+
+      const hovered = readHoveredDrawingId(param);
+      const drawings = drawingsBySymbolRef.current[identity] ?? [];
+      const nextSelected = hovered && drawings.some((drawing) => drawing.id === hovered) ? hovered : null;
+      selectedDrawingIdRef.current = nextSelected;
+      drawingPrimitiveRef.current?.setState({ selectedId: nextSelected });
+      setSelectedDrawingId(nextSelected);
+    };
+
+    handleDrawingKeyDownRef.current = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        if (drawingDraftRef.current) {
+          drawingDraftRef.current = null;
+          drawingPrimitiveRef.current?.setState({ draft: null });
+          return;
+        }
+
+        if (selectedDrawingIdRef.current) {
+          setSelectedDrawingId(null);
+          return;
+        }
+
+        if (drawingToolRef.current !== "select") {
+          drawingToolRef.current = "select";
+          setDrawingTool("select");
+        }
+
+        return;
+      }
+
+      if (event.key !== "Delete" && event.key !== "Backspace") {
+        return;
+      }
+
+      if (isEditableKeyboardTarget(event.target)) {
+        return;
+      }
+
+      const selectedId = selectedDrawingIdRef.current;
+      const currentSymbol = identityRef.current.symbol;
+
+      if (!selectedId || !currentSymbol) {
+        return;
+      }
+
+      event.preventDefault();
+      const remaining = (drawingsBySymbolRef.current[currentSymbol] ?? []).filter(
+        (drawing) => drawing.id !== selectedId,
+      );
+      drawingsBySymbolRef.current = { ...drawingsBySymbolRef.current, [currentSymbol]: remaining };
+      selectedDrawingIdRef.current = null;
+      drawingPrimitiveRef.current?.setState({ drawings: remaining, selectedId: null });
+      setDrawingsBySymbol((current) => ({
+        ...current,
+        [currentSymbol]: remaining,
+      }));
+      setSelectedDrawingId(null);
     };
   }, [symbol, interval, queryClient]);
 
@@ -458,12 +654,33 @@ export function MarketChart({
     const onCrosshairMove = (param: MouseEventParams) => {
       handleCrosshairMoveRef.current(param);
     };
+    const onChartClick = (param: MouseEventParams) => {
+      handleChartClickRef.current(param);
+    };
     timeScale.subscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
     chart.subscribeCrosshairMove(onCrosshairMove);
+    chart.subscribeClick(onChartClick);
+
+    const drawingPrimitive = new DrawingPrimitive();
+    candleSeries.attachPrimitive(drawingPrimitive);
+    drawingPrimitiveRef.current = drawingPrimitive;
+    drawingPrimitive.setState({
+      drawings: drawingsBySymbolRef.current[symbol] ?? [],
+      draft: drawingDraftRef.current,
+      selectedId: selectedDrawingIdRef.current,
+      hoveredId: hoveredDrawingIdRef.current,
+      colors: drawingColorsFrom(colors),
+    });
 
     return () => {
+      chart.unsubscribeClick(onChartClick);
       chart.unsubscribeCrosshairMove(onCrosshairMove);
       timeScale.unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
+      const attachedPrimitive = drawingPrimitiveRef.current;
+      if (attachedPrimitive) {
+        candleSeries.detachPrimitive(attachedPrimitive);
+        drawingPrimitiveRef.current = null;
+      }
       chart.remove();
       chartRef.current = null;
       candleSeriesRef.current = null;
@@ -727,6 +944,46 @@ export function MarketChart({
     lineSeries.applyOptions({ visible: mode === "line" });
   }, [mode]);
 
+  useEffect(() => {
+    const primitive = drawingPrimitiveRef.current;
+
+    if (!primitive) {
+      return;
+    }
+
+    const symbolDrawings = symbol ? (drawingsBySymbol[symbol] ?? []) : [];
+    const selected =
+      selectedDrawingId && symbolDrawings.some((drawing) => drawing.id === selectedDrawingId)
+        ? selectedDrawingId
+        : null;
+    primitive.setState({
+      drawings: symbolDrawings,
+      draft: drawingDraftRef.current,
+      selectedId: selected,
+      hoveredId: hoveredDrawingIdRef.current,
+      colors: drawingColorsFrom(readChartColors()),
+    });
+  }, [symbol, drawingsBySymbol, selectedDrawingId, theme, hasRenderableData]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      handleDrawingKeyDownRef.current(event);
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
+  function changeDrawingTool(next: DrawingTool): void {
+    drawingDraftRef.current = null;
+    hoveredDrawingIdRef.current = null;
+    drawingToolRef.current = next;
+    drawingPrimitiveRef.current?.setState({ draft: null, hoveredId: null });
+    setDrawingTool(next);
+  }
+
   const oscillatorCount = oscillatorEnabledCount(indicatorSettings);
   const hostClass = chartHostClass(oscillatorCount);
   const slotClass = chartSlotClass(oscillatorCount);
@@ -740,6 +997,8 @@ export function MarketChart({
       onIntervalChange={onIntervalChange}
       onModeChange={setMode}
       onIndicatorSettingsChange={setIndicatorSettings}
+      drawingTool={drawingTool}
+      onDrawingToolChange={changeDrawingTool}
     />
   );
 
@@ -822,18 +1081,22 @@ function ChartToolbar({
   mode,
   loadingOlder,
   indicatorSettings,
+  drawingTool,
   onIntervalChange,
   onModeChange,
   onIndicatorSettingsChange,
+  onDrawingToolChange,
 }: {
   symbol: string | null;
   interval: CandleInterval;
   mode: ChartDisplayMode;
   loadingOlder: boolean;
   indicatorSettings: IndicatorSettings;
+  drawingTool: DrawingTool;
   onIntervalChange: (interval: CandleInterval) => void;
   onModeChange: (mode: ChartDisplayMode) => void;
   onIndicatorSettingsChange: (settings: IndicatorSettings) => void;
+  onDrawingToolChange: (tool: DrawingTool) => void;
 }) {
   return (
     <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
@@ -882,6 +1145,7 @@ function ChartToolbar({
         </Button>
       </div>
       <IndicatorsMenu settings={indicatorSettings} onSettingsChange={onIndicatorSettingsChange} />
+      <DrawingsMenu tool={drawingTool} onToolChange={onDrawingToolChange} />
       {loadingOlder ? (
         <p className="text-xs text-secondary" aria-live="polite">
           Loading older data…
@@ -907,6 +1171,9 @@ type ChartColors = {
   macd: string;
   signal: string;
   guide: string;
+  drawing: string;
+  drawingSelected: string;
+  drawingHandle: string;
 };
 
 function colorVolume(points: AlignedChartPoints, colors: ChartColors): HistogramData[] {
@@ -1586,6 +1853,17 @@ function readChartColors(): ChartColors {
     macd: readToken(styles, "--chart-macd", "#e8a87c"),
     signal: readToken(styles, "--chart-signal", "#9bb7d4"),
     guide: readToken(styles, "--chart-guide", "#6b7a8f"),
+    drawing: readToken(styles, "--chart-drawing", "#c4a35a"),
+    drawingSelected: readToken(styles, "--chart-drawing-selected", "#e8c36a"),
+    drawingHandle: readToken(styles, "--chart-drawing-handle", "#f0d78c"),
+  };
+}
+
+function drawingColorsFrom(colors: ChartColors) {
+  return {
+    line: colors.drawing,
+    selected: colors.drawingSelected,
+    handle: colors.drawingHandle,
   };
 }
 
