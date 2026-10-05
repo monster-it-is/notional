@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_INDICATOR_SETTINGS, parseBollingerMultiplierInput, parseMacdFast, parseSmaPeriod, parseRsiPeriod } from "./settings.ts";
-import { isValidMacdTriple } from "./settings.ts";
+import { DEFAULT_INDICATOR_SETTINGS, indicatorEnabledCount, parseBollingerMultiplierInput, parseMacdFast, parseMacdTripleInput, parseSmaPeriod, parseRsiPeriod, isValidMacdTriple } from "./settings.ts";
 
 describe("indicator settings", () => {
   it("defaults every indicator off with documented parameters", () => {
@@ -31,6 +30,9 @@ describe("indicator settings", () => {
     expect(parseRsiPeriod("1")).toBeNull();
     expect(parseMacdFast("0")).toBeNull();
     expect(isValidMacdTriple(26, 12, 9)).toBe(false);
+    expect(parseMacdTripleInput("30", "26", "9")).toBeNull();
+    expect(parseMacdTripleInput("12", "26", "9")).toEqual({ fast: 12, slow: 26, signal: 9 });
+    expect(indicatorEnabledCount(DEFAULT_INDICATOR_SETTINGS)).toBe(0);
     expect(parseBollingerMultiplierInput("0")).toBeNull();
     expect(parseBollingerMultiplierInput("21")).toBeNull();
     expect(parseBollingerMultiplierInput("1e2")).toBeNull();

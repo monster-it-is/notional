@@ -37,6 +37,21 @@ describe("computeEnabledIndicators", () => {
     expect(computed.bollinger).toBeUndefined();
   });
 
+  it("computes RSI and MACD only when those oscillators are enabled", () => {
+    const candles = indicatorCandles(["1", "2", "3", "4", "5"]);
+    const computed = computeEnabledIndicators(candles, {
+      ...DEFAULT_INDICATOR_SETTINGS,
+      rsi: { enabled: true, period: 2 },
+      macd: { enabled: true, fast: 1, slow: 2, signal: 1 },
+    });
+
+    expect(computed.rsi?.length).toBeGreaterThan(0);
+    expect(computed.macd?.length).toBeGreaterThan(0);
+    expect(computed.sma).toBeUndefined();
+    expect(computed.ema).toBeUndefined();
+    expect(computed.bollinger).toBeUndefined();
+  });
+
   it("computes 10,000 candles for enabled overlays only", () => {
     const candles = manyIndicatorCandles(10_000);
     const computed = computeEnabledIndicators(candles, {

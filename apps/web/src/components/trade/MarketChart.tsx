@@ -11,6 +11,7 @@ import {
   type CandlestickData,
   type HistogramData,
   type IChartApi,
+  type IPriceLine,
   type ISeriesApi,
   type LogicalRange,
   type MouseEventParams,
@@ -45,11 +46,14 @@ import { shouldRequestOlderCandles } from "../../lib/chart/should-request-older-
 import { computeEnabledIndicators } from "../../lib/chart/indicators/compute-enabled.ts";
 import {
   DEFAULT_INDICATOR_SETTINGS,
+  oscillatorEnabledCount,
   type IndicatorSettings,
 } from "../../lib/chart/indicators/settings.ts";
 import {
   toChartBollingerLines,
   toChartIndicatorLine,
+  toChartMacdHistogram,
+  toChartMacdLines,
 } from "../../lib/chart/to-chart-indicators.ts";
 import {
   colorChartVolumePoints,
@@ -60,9 +64,31 @@ import { queryKeys } from "../../lib/query-keys.ts";
 import { getMarketSocket } from "../../realtime/runtime.ts";
 import { useTheme } from "../../theme/ThemeProvider.tsx";
 
-const HOST_HEIGHT_CLASS = "h-72 w-full min-w-0 md:h-[22rem] lg:h-[26rem] xl:h-[28rem]";
-const HOST_CLASS = `${HOST_HEIGHT_CLASS} overflow-hidden`;
-const CHART_SLOT_CLASS = `${HOST_HEIGHT_CLASS} flex items-center justify-center`;
+const HOST_HEIGHT_CLASSES = {
+  0: "h-72 w-full min-w-0 md:h-[22rem] lg:h-[26rem] xl:h-[28rem]",
+  1: "h-[28rem] w-full min-w-0 md:h-[30rem] lg:h-[34rem] xl:h-[36rem]",
+  2: "h-[34rem] w-full min-w-0 md:h-[36rem] lg:h-[40rem] xl:h-[42rem]",
+} as const;
+
+function chartHostHeightClass(oscillatorCount: number): string {
+  if (oscillatorCount >= 2) {
+    return HOST_HEIGHT_CLASSES[2];
+  }
+
+  if (oscillatorCount === 1) {
+    return HOST_HEIGHT_CLASSES[1];
+  }
+
+  return HOST_HEIGHT_CLASSES[0];
+}
+
+function chartHostClass(oscillatorCount: number): string {
+  return `${chartHostHeightClass(oscillatorCount)} overflow-hidden`;
+}
+
+function chartSlotClass(oscillatorCount: number): string {
+  return `${chartHostHeightClass(oscillatorCount)} flex items-center justify-center`;
+}
 
 const EMPTY_POINTS: AlignedChartPoints = {
   candles: [],
@@ -102,6 +128,14 @@ export function MarketChart({
   const bbUpperSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const bbMiddleSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
   const bbLowerSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const rsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdLineSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdSignalSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+  const macdHistogramSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  const rsiOverboughtLineRef = useRef<IPriceLine | null>(null);
+  const rsiMidLineRef = useRef<IPriceLine | null>(null);
+  const rsiOversoldLineRef = useRef<IPriceLine | null>(null);
+  const macdZeroLineRef = useRef<IPriceLine | null>(null);
   const overlayValuesRef = useRef(computeEnabledIndicators([], DEFAULT_INDICATOR_SETTINGS));
   const fittedKeyRef = useRef<string | null>(null);
   const previousPointsRef = useRef<CandlestickData[]>([]);
@@ -420,6 +454,14 @@ export function MarketChart({
       bbUpperSeriesRef.current = null;
       bbMiddleSeriesRef.current = null;
       bbLowerSeriesRef.current = null;
+      rsiSeriesRef.current = null;
+      macdLineSeriesRef.current = null;
+      macdSignalSeriesRef.current = null;
+      macdHistogramSeriesRef.current = null;
+      rsiOverboughtLineRef.current = null;
+      rsiMidLineRef.current = null;
+      rsiOversoldLineRef.current = null;
+      macdZeroLineRef.current = null;
       fittedKeyRef.current = null;
       previousPointsRef.current = [];
     };
@@ -461,6 +503,45 @@ export function MarketChart({
   }, [symbol, hasRenderableData, indicatorSettings.sma.enabled, indicatorSettings.ema.enabled, indicatorSettings.bollinger.enabled]);
 
   useEffect(() => {
+    const chart = chartRef.current;
+
+    if (!chart || !hasRenderableData) {
+      return;
+    }
+
+    const colors = readChartColors();
+    reconcileOscillatorSeries(
+      chart,
+      {
+        rsi: rsiSeriesRef,
+        macdLine: macdLineSeriesRef,
+        macdSignal: macdSignalSeriesRef,
+        macdHistogram: macdHistogramSeriesRef,
+        rsiOverbought: rsiOverboughtLineRef,
+        rsiMid: rsiMidLineRef,
+        rsiOversold: rsiOversoldLineRef,
+        macdZero: macdZeroLineRef,
+      },
+      {
+        rsiEnabled: indicatorSettings.rsi.enabled,
+        macdEnabled: indicatorSettings.macd.enabled,
+      },
+      colors,
+    );
+    applyOscillatorSeriesData(
+      {
+        rsi: rsiSeriesRef.current,
+        macdLine: macdLineSeriesRef.current,
+        macdSignal: macdSignalSeriesRef.current,
+        macdHistogram: macdHistogramSeriesRef.current,
+      },
+      overlayValuesRef.current,
+      colors,
+    );
+  }, [symbol, hasRenderableData, indicatorSettings.rsi.enabled, indicatorSettings.macd.enabled]);
+
+  useEffect(() => {
+    const colors = readChartColors();
     applyOverlaySeriesData(
       {
         sma: smaSeriesRef.current,
@@ -470,6 +551,16 @@ export function MarketChart({
         bbLower: bbLowerSeriesRef.current,
       },
       overlayValues,
+    );
+    applyOscillatorSeriesData(
+      {
+        rsi: rsiSeriesRef.current,
+        macdLine: macdLineSeriesRef.current,
+        macdSignal: macdSignalSeriesRef.current,
+        macdHistogram: macdHistogramSeriesRef.current,
+      },
+      overlayValues,
+      colors,
     );
   }, [overlayValues]);
 
@@ -547,9 +638,27 @@ export function MarketChart({
     bbUpperSeriesRef.current?.applyOptions(bollingerBandAppearanceOptions(colors.bbUpper, true));
     bbMiddleSeriesRef.current?.applyOptions(bollingerBandAppearanceOptions(colors.bbMiddle, false));
     bbLowerSeriesRef.current?.applyOptions(bollingerBandAppearanceOptions(colors.bbLower, true));
+    rsiSeriesRef.current?.applyOptions(rsiAppearanceOptions(colors));
+    macdLineSeriesRef.current?.applyOptions(macdLineAppearanceOptions(colors));
+    macdSignalSeriesRef.current?.applyOptions(macdSignalAppearanceOptions(colors));
+    macdHistogramSeriesRef.current?.applyOptions(macdHistogramAppearanceOptions());
+    rsiOverboughtLineRef.current?.applyOptions(rsiGuideLineOptions(70, colors, LineStyle.Dashed));
+    rsiMidLineRef.current?.applyOptions(rsiGuideLineOptions(50, colors, LineStyle.Dotted));
+    rsiOversoldLineRef.current?.applyOptions(rsiGuideLineOptions(30, colors, LineStyle.Dashed));
+    macdZeroLineRef.current?.applyOptions(macdZeroLineOptions(colors));
 
     if (previousThemeRef.current !== theme && latest.candles.length > 0) {
       volumeSeries.setData(colorVolume(latest, colors));
+      applyOscillatorSeriesData(
+        {
+          rsi: rsiSeriesRef.current,
+          macdLine: macdLineSeriesRef.current,
+          macdSignal: macdSignalSeriesRef.current,
+          macdHistogram: macdHistogramSeriesRef.current,
+        },
+        overlayValuesRef.current,
+        colors,
+      );
     }
     previousThemeRef.current = theme;
   }, [theme]);
@@ -567,6 +676,9 @@ export function MarketChart({
     lineSeries.applyOptions({ visible: mode === "line" });
   }, [mode]);
 
+  const oscillatorCount = oscillatorEnabledCount(indicatorSettings);
+  const hostClass = chartHostClass(oscillatorCount);
+  const slotClass = chartSlotClass(oscillatorCount);
   const heading = (
     <ChartToolbar
       symbol={symbol}
@@ -584,7 +696,7 @@ export function MarketChart({
     return (
       <div className="min-w-0">
         {heading}
-        <div className={CHART_SLOT_CLASS}>
+        <div className={slotClass}>
           <EmptyState>Select an instrument to load historical candles.</EmptyState>
         </div>
       </div>
@@ -596,7 +708,7 @@ export function MarketChart({
       <div className="min-w-0" aria-busy="true">
         {heading}
         <div
-          className={`${HOST_CLASS} animate-pulse rounded-md bg-surface-subtle`}
+          className={`${hostClass} animate-pulse rounded-md bg-surface-subtle`}
           aria-hidden="true"
         />
         <p className="sr-only">Loading historical candles</p>
@@ -608,7 +720,7 @@ export function MarketChart({
     return (
       <div className="min-w-0">
         {heading}
-        <div className={CHART_SLOT_CLASS}>
+        <div className={slotClass}>
           <ErrorBanner error={candlesQuery.error} />
         </div>
       </div>
@@ -619,7 +731,7 @@ export function MarketChart({
     return (
       <div className="min-w-0">
         {heading}
-        <div className={CHART_SLOT_CLASS}>
+        <div className={slotClass}>
           <EmptyState>No candle data available</EmptyState>
         </div>
       </div>
@@ -644,7 +756,7 @@ export function MarketChart({
         ) : null}
         <div
           ref={hostRef}
-          className={HOST_CLASS}
+          className={hostClass}
           role="img"
           aria-label={`${symbol} ${interval} historical ${chartKind} chart`}
         />
@@ -740,6 +852,10 @@ type ChartColors = {
   bbUpper: string;
   bbMiddle: string;
   bbLower: string;
+  rsi: string;
+  macd: string;
+  signal: string;
+  guide: string;
 };
 
 function colorVolume(points: AlignedChartPoints, colors: ChartColors): HistogramData[] {
@@ -815,6 +931,49 @@ function emaAppearanceOptions(colors: ChartColors) {
 
 function bollingerBandAppearanceOptions(color: string, dashed: boolean) {
   return overlayLineAppearance(color, dashed);
+}
+
+function rsiAppearanceOptions(colors: ChartColors) {
+  return {
+    ...overlayLineAppearance(colors.rsi, false),
+    autoscaleInfoProvider: () => ({
+      priceRange: {
+        minValue: 0,
+        maxValue: 100,
+      },
+    }),
+  };
+}
+
+function macdLineAppearanceOptions(colors: ChartColors) {
+  return overlayLineAppearance(colors.macd, false);
+}
+
+function macdSignalAppearanceOptions(colors: ChartColors) {
+  return overlayLineAppearance(colors.signal, false);
+}
+
+function macdHistogramAppearanceOptions() {
+  return {
+    base: 0,
+    lastValueVisible: false,
+    priceLineVisible: false,
+  };
+}
+
+function rsiGuideLineOptions(price: number, colors: ChartColors, lineStyle: LineStyle) {
+  return {
+    price,
+    color: colors.guide,
+    lineWidth: 1 as const,
+    lineStyle,
+    axisLabelVisible: false,
+    title: "",
+  };
+}
+
+function macdZeroLineOptions(colors: ChartColors) {
+  return rsiGuideLineOptions(0, colors, LineStyle.Dashed);
 }
 
 type OverlaySeriesRefs = {
@@ -918,6 +1077,187 @@ function applyOverlaySeriesData(
   }
 }
 
+type OscillatorSeriesRefs = {
+  rsi: { current: ISeriesApi<"Line"> | null };
+  macdLine: { current: ISeriesApi<"Line"> | null };
+  macdSignal: { current: ISeriesApi<"Line"> | null };
+  macdHistogram: { current: ISeriesApi<"Histogram"> | null };
+  rsiOverbought: { current: IPriceLine | null };
+  rsiMid: { current: IPriceLine | null };
+  rsiOversold: { current: IPriceLine | null };
+  macdZero: { current: IPriceLine | null };
+};
+
+function reconcileOscillatorSeries(
+  chart: IChartApi,
+  refs: OscillatorSeriesRefs,
+  enabled: { rsiEnabled: boolean; macdEnabled: boolean },
+  colors: ChartColors,
+): void {
+  refs.rsi.current = ensureRsiSeries(chart, refs, enabled.rsiEnabled, colors);
+  ensureMacdSeries(chart, refs, enabled.macdEnabled, colors);
+  normalizeOscillatorPaneOrder(refs.rsi.current, refs.macdLine.current);
+  normalizeOscillatorStretch(chart, refs.rsi.current, refs.macdLine.current);
+}
+
+function ensureRsiSeries(
+  chart: IChartApi,
+  refs: OscillatorSeriesRefs,
+  enabled: boolean,
+  colors: ChartColors,
+): ISeriesApi<"Line"> | null {
+  const options = rsiAppearanceOptions(colors);
+
+  if (enabled) {
+    if (refs.rsi.current) {
+      refs.rsi.current.applyOptions(options);
+      return refs.rsi.current;
+    }
+
+    const series = chart.addSeries(LineSeries, options, chart.panes().length);
+    refs.rsiOverbought.current = series.createPriceLine(
+      rsiGuideLineOptions(70, colors, LineStyle.Dashed),
+    );
+    refs.rsiMid.current = series.createPriceLine(rsiGuideLineOptions(50, colors, LineStyle.Dotted));
+    refs.rsiOversold.current = series.createPriceLine(
+      rsiGuideLineOptions(30, colors, LineStyle.Dashed),
+    );
+    return series;
+  }
+
+  if (refs.rsi.current) {
+    chart.removeSeries(refs.rsi.current);
+  }
+
+  refs.rsiOverbought.current = null;
+  refs.rsiMid.current = null;
+  refs.rsiOversold.current = null;
+  return null;
+}
+
+function ensureMacdSeries(
+  chart: IChartApi,
+  refs: OscillatorSeriesRefs,
+  enabled: boolean,
+  colors: ChartColors,
+): void {
+  if (enabled) {
+    if (refs.macdLine.current && refs.macdSignal.current && refs.macdHistogram.current) {
+      refs.macdLine.current.applyOptions(macdLineAppearanceOptions(colors));
+      refs.macdSignal.current.applyOptions(macdSignalAppearanceOptions(colors));
+      refs.macdHistogram.current.applyOptions(macdHistogramAppearanceOptions());
+      return;
+    }
+
+    removeMacdSeries(chart, refs);
+    const line = chart.addSeries(
+      LineSeries,
+      macdLineAppearanceOptions(colors),
+      chart.panes().length,
+    );
+    const paneIndex = line.getPane().paneIndex();
+    refs.macdLine.current = line;
+    refs.macdSignal.current = chart.addSeries(
+      LineSeries,
+      macdSignalAppearanceOptions(colors),
+      paneIndex,
+    );
+    refs.macdHistogram.current = chart.addSeries(
+      HistogramSeries,
+      macdHistogramAppearanceOptions(),
+      paneIndex,
+    );
+    refs.macdZero.current = line.createPriceLine(macdZeroLineOptions(colors));
+    return;
+  }
+
+  removeMacdSeries(chart, refs);
+}
+
+function removeMacdSeries(chart: IChartApi, refs: OscillatorSeriesRefs): void {
+  if (refs.macdHistogram.current) {
+    chart.removeSeries(refs.macdHistogram.current);
+    refs.macdHistogram.current = null;
+  }
+
+  if (refs.macdSignal.current) {
+    chart.removeSeries(refs.macdSignal.current);
+    refs.macdSignal.current = null;
+  }
+
+  if (refs.macdLine.current) {
+    chart.removeSeries(refs.macdLine.current);
+    refs.macdLine.current = null;
+  }
+
+  refs.macdZero.current = null;
+}
+
+function normalizeOscillatorPaneOrder(
+  rsi: ISeriesApi<"Line"> | null,
+  macdLine: ISeriesApi<"Line"> | null,
+): void {
+  if (rsi) {
+    const rsiPane = rsi.getPane();
+
+    if (rsiPane.paneIndex() !== 1) {
+      rsiPane.moveTo(1);
+    }
+  }
+
+  if (macdLine) {
+    const macdPane = macdLine.getPane();
+    const desired = rsi ? 2 : 1;
+
+    if (macdPane.paneIndex() !== desired) {
+      macdPane.moveTo(desired);
+    }
+  }
+}
+
+function normalizeOscillatorStretch(
+  chart: IChartApi,
+  rsi: ISeriesApi<"Line"> | null,
+  macdLine: ISeriesApi<"Line"> | null,
+): void {
+  chart.panes()[0]?.setStretchFactor(3);
+  rsi?.getPane().setStretchFactor(1);
+  macdLine?.getPane().setStretchFactor(1);
+}
+
+function applyOscillatorSeriesData(
+  series: {
+    rsi: ISeriesApi<"Line"> | null;
+    macdLine: ISeriesApi<"Line"> | null;
+    macdSignal: ISeriesApi<"Line"> | null;
+    macdHistogram: ISeriesApi<"Histogram"> | null;
+  },
+  values: ReturnType<typeof computeEnabledIndicators>,
+  colors: ChartColors,
+): void {
+  if (series.rsi) {
+    series.rsi.setData(toChartIndicatorLine(values.rsi ?? []));
+  }
+
+  const macd = toChartMacdLines(values.macd ?? []);
+  const histogram = toChartMacdHistogram(values.macd ?? [], {
+    positive: colors.positive,
+    negative: colors.negative,
+  });
+
+  if (series.macdLine) {
+    series.macdLine.setData(macd.macd);
+  }
+
+  if (series.macdSignal) {
+    series.macdSignal.setData(macd.signal);
+  }
+
+  if (series.macdHistogram) {
+    series.macdHistogram.setData(histogram);
+  }
+}
+
 function readChartColors(): ChartColors {
   const styles = getComputedStyle(document.documentElement);
 
@@ -933,6 +1273,10 @@ function readChartColors(): ChartColors {
     bbUpper: readToken(styles, "--chart-bb-upper", "#5f9ec9"),
     bbMiddle: readToken(styles, "--chart-bb-middle", "#8b9bb0"),
     bbLower: readToken(styles, "--chart-bb-lower", "#5f9ec9"),
+    rsi: readToken(styles, "--chart-rsi", "#4ecdc4"),
+    macd: readToken(styles, "--chart-macd", "#e8a87c"),
+    signal: readToken(styles, "--chart-signal", "#9bb7d4"),
+    guide: readToken(styles, "--chart-guide", "#6b7a8f"),
   };
 }
 

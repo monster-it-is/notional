@@ -60,6 +60,14 @@ export function overlayEnabledCount(settings: IndicatorSettings): number {
   );
 }
 
+export function oscillatorEnabledCount(settings: IndicatorSettings): number {
+  return (settings.rsi.enabled ? 1 : 0) + (settings.macd.enabled ? 1 : 0);
+}
+
+export function indicatorEnabledCount(settings: IndicatorSettings): number {
+  return overlayEnabledCount(settings) + oscillatorEnabledCount(settings);
+}
+
 export function parsePeriodInput(raw: string): number | null {
   const trimmed = raw.trim();
 
@@ -112,6 +120,22 @@ export function parseBollingerMultiplierInput(raw: string): string | null {
 
 export function isValidMacdTriple(fast: number, slow: number, signal: number): boolean {
   return isValidMacdParams({ fast, slow, signal });
+}
+
+export function parseMacdTripleInput(
+  fastRaw: string,
+  slowRaw: string,
+  signalRaw: string,
+): { fast: number; slow: number; signal: number } | null {
+  const fast = parseMacdFast(fastRaw);
+  const slow = parseMacdSlow(slowRaw);
+  const signal = parseMacdSignal(signalRaw);
+
+  if (fast === null || slow === null || signal === null || !isValidMacdTriple(fast, slow, signal)) {
+    return null;
+  }
+
+  return { fast, slow, signal };
 }
 
 function parseBoundedPeriod(raw: string, min: number, max: number): number | null {

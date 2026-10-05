@@ -5,13 +5,17 @@ import { FormField } from "../ui/FormField.tsx";
 import { Input } from "../ui/Input.tsx";
 import { cn } from "../../lib/cn.ts";
 import {
-  overlayEnabledCount,
+  indicatorEnabledCount,
   parseBollingerMultiplierInput,
   parseBollingerPeriod,
   parseEmaPeriod,
+  parseMacdTripleInput,
+  parseRsiPeriod,
   parseSmaPeriod,
   type IndicatorSettings,
 } from "../../lib/chart/indicators/settings.ts";
+
+const MACD_TRIPLE_ERROR = "Enter a valid MACD triple: fast 1–500, slow 2–500, signal 1–500, and fast less than slow.";
 
 export function IndicatorsMenu({
   settings,
@@ -23,24 +27,36 @@ export function IndicatorsMenu({
   const [open, setOpen] = useState(false);
   const [smaDraft, setSmaDraft] = useState(String(settings.sma.period));
   const [emaDraft, setEmaDraft] = useState(String(settings.ema.period));
+  const [rsiDraft, setRsiDraft] = useState(String(settings.rsi.period));
+  const [macdFastDraft, setMacdFastDraft] = useState(String(settings.macd.fast));
+  const [macdSlowDraft, setMacdSlowDraft] = useState(String(settings.macd.slow));
+  const [macdSignalDraft, setMacdSignalDraft] = useState(String(settings.macd.signal));
   const [bbPeriodDraft, setBbPeriodDraft] = useState(String(settings.bollinger.period));
   const [bbMultiplierDraft, setBbMultiplierDraft] = useState(settings.bollinger.multiplier);
   const [smaError, setSmaError] = useState<string | null>(null);
   const [emaError, setEmaError] = useState<string | null>(null);
+  const [rsiError, setRsiError] = useState<string | null>(null);
+  const [macdError, setMacdError] = useState<string | null>(null);
   const [bbPeriodError, setBbPeriodError] = useState<string | null>(null);
   const [bbMultiplierError, setBbMultiplierError] = useState<string | null>(null);
   const popoverId = useId();
   const smaPeriodId = useId();
   const emaPeriodId = useId();
+  const rsiPeriodId = useId();
+  const macdFastId = useId();
+  const macdSlowId = useId();
+  const macdSignalId = useId();
   const bbPeriodId = useId();
   const bbMultiplierId = useId();
   const smaErrorId = useId();
   const emaErrorId = useId();
+  const rsiErrorId = useId();
+  const macdErrorId = useId();
   const bbPeriodErrorId = useId();
   const bbMultiplierErrorId = useId();
   const triggerId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
-  const enabledCount = overlayEnabledCount(settings);
+  const enabledCount = indicatorEnabledCount(settings);
   const triggerLabel = enabledCount > 0 ? `Indicators, ${enabledCount} enabled` : "Indicators";
 
   useEffect(() => {
@@ -93,6 +109,33 @@ export function IndicatorsMenu({
 
     setEmaError(null);
     onSettingsChange({ ...settings, ema: { ...settings.ema, period: parsed } });
+  }
+
+  function commitRsiPeriod(): void {
+    const parsed = parseRsiPeriod(rsiDraft);
+
+    if (parsed === null) {
+      setRsiError("Enter an integer from 2 to 500.");
+      return;
+    }
+
+    setRsiError(null);
+    onSettingsChange({ ...settings, rsi: { ...settings.rsi, period: parsed } });
+  }
+
+  function commitMacdParams(): void {
+    const parsed = parseMacdTripleInput(macdFastDraft, macdSlowDraft, macdSignalDraft);
+
+    if (parsed === null) {
+      setMacdError(MACD_TRIPLE_ERROR);
+      return;
+    }
+
+    setMacdError(null);
+    onSettingsChange({
+      ...settings,
+      macd: { ...settings.macd, fast: parsed.fast, slow: parsed.slow, signal: parsed.signal },
+    });
   }
 
   function commitBbPeriod(): void {
@@ -262,6 +305,104 @@ export function IndicatorsMenu({
                 </p>
               ) : null}
             </FormField>
+          </IndicatorRow>
+          <IndicatorRow
+            enabled={settings.rsi.enabled}
+            label="RSI"
+            onEnabledChange={(enabled) =>
+              onSettingsChange({ ...settings, rsi: { ...settings.rsi, enabled } })
+            }
+          >
+            <FormField label="RSI period" htmlFor={rsiPeriodId}>
+              <Input
+                id={rsiPeriodId}
+                numeric
+                inputMode="numeric"
+                value={rsiDraft}
+                invalid={Boolean(rsiError)}
+                aria-describedby={rsiError ? rsiErrorId : undefined}
+                onChange={(event) => setRsiDraft(event.target.value)}
+                onBlur={commitRsiPeriod}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitRsiPeriod();
+                  }
+                }}
+              />
+              {rsiError ? (
+                <p className="mt-1 text-xs text-warning" id={rsiErrorId}>
+                  {rsiError}
+                </p>
+              ) : null}
+            </FormField>
+          </IndicatorRow>
+          <IndicatorRow
+            enabled={settings.macd.enabled}
+            label="MACD"
+            onEnabledChange={(enabled) =>
+              onSettingsChange({ ...settings, macd: { ...settings.macd, enabled } })
+            }
+          >
+            <FormField label="MACD fast" htmlFor={macdFastId}>
+              <Input
+                id={macdFastId}
+                numeric
+                inputMode="numeric"
+                value={macdFastDraft}
+                invalid={Boolean(macdError)}
+                aria-describedby={macdError ? macdErrorId : undefined}
+                onChange={(event) => setMacdFastDraft(event.target.value)}
+                onBlur={commitMacdParams}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitMacdParams();
+                  }
+                }}
+              />
+            </FormField>
+            <FormField label="MACD slow" htmlFor={macdSlowId}>
+              <Input
+                id={macdSlowId}
+                numeric
+                inputMode="numeric"
+                value={macdSlowDraft}
+                invalid={Boolean(macdError)}
+                aria-describedby={macdError ? macdErrorId : undefined}
+                onChange={(event) => setMacdSlowDraft(event.target.value)}
+                onBlur={commitMacdParams}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitMacdParams();
+                  }
+                }}
+              />
+            </FormField>
+            <FormField label="MACD signal" htmlFor={macdSignalId}>
+              <Input
+                id={macdSignalId}
+                numeric
+                inputMode="numeric"
+                value={macdSignalDraft}
+                invalid={Boolean(macdError)}
+                aria-describedby={macdError ? macdErrorId : undefined}
+                onChange={(event) => setMacdSignalDraft(event.target.value)}
+                onBlur={commitMacdParams}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    commitMacdParams();
+                  }
+                }}
+              />
+            </FormField>
+            {macdError ? (
+              <p className="text-xs text-warning" id={macdErrorId}>
+                {macdError}
+              </p>
+            ) : null}
           </IndicatorRow>
         </div>
       ) : null}

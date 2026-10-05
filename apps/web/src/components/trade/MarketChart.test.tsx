@@ -13,8 +13,14 @@ import {
   toAlignedChartPoints,
   toChartLinePoints,
 } from "../../lib/chart/to-chart-candles.ts";
+import { computeMacd } from "../../lib/chart/indicators/macd.ts";
+import { computeRsi } from "../../lib/chart/indicators/rsi.ts";
 import { computeSma } from "../../lib/chart/indicators/sma.ts";
-import { toChartIndicatorLine } from "../../lib/chart/to-chart-indicators.ts";
+import {
+  toChartIndicatorLine,
+  toChartMacdHistogram,
+  toChartMacdLines,
+} from "../../lib/chart/to-chart-indicators.ts";
 import { queryKeys } from "../../lib/query-keys.ts";
 import { ThemeProvider, useTheme } from "../../theme/ThemeProvider.tsx";
 import { ApiError } from "../../lib/api/errors.ts";
@@ -32,6 +38,8 @@ const {
   line,
   volume,
   overlaySeries,
+  extraSeries,
+  getChartPanes,
   subscribeVisibleLogicalRangeChange,
   unsubscribeVisibleLogicalRangeChange,
   subscribeCrosshairMove,
@@ -43,20 +51,151 @@ const {
 } = vi.hoisted(() => {
   const rangeListeners = new Set<(range: { from: number; to: number } | null) => void>();
   const crosshairListeners = new Set<(param: { time?: unknown; seriesData?: unknown }) => void>();
-  const candlestick = {
-    setData: vi.fn(),
-    update: vi.fn(),
-    applyOptions: vi.fn(),
-    barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+  type MockPriceLine = {
+    applyOptions: ReturnType<typeof vi.fn>;
+    options: ReturnType<typeof vi.fn>;
   };
-  const line = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
-  const volume = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
-  const overlaySeries: Array<{
+  type MockPane = {
+    series: MockSeries[];
+    stretchFactor: number;
+    paneIndex: () => number;
+    moveTo: ReturnType<typeof vi.fn>;
+    setStretchFactor: ReturnType<typeof vi.fn>;
+    getSeries: () => MockSeries[];
+  };
+  type MockSeries = {
+    type: string;
     setData: ReturnType<typeof vi.fn>;
     update: ReturnType<typeof vi.fn>;
     applyOptions: ReturnType<typeof vi.fn>;
-  }> = [];
+    createPriceLine: ReturnType<typeof vi.fn>;
+    getPane: () => MockPane;
+    priceLines: MockPriceLine[];
+    pane: MockPane | null;
+    barsInLogicalRange: ReturnType<typeof vi.fn>;
+  };
+  const panes: MockPane[] = [];
+  const extraSeries: MockSeries[] = [];
+  const overlaySeries: MockSeries[] = [];
+
+  function createPane(): MockPane {
+    const pane: MockPane = {
+      series: [],
+      stretchFactor: 1,
+      paneIndex() {
+        return panes.indexOf(pane);
+      },
+      moveTo: vi.fn((index: number) => {
+        const from = panes.indexOf(pane);
+        if (from < 0 || from === index) {
+          return;
+        }
+
+        panes.splice(from, 1);
+        panes.splice(index, 0, pane);
+      }),
+      setStretchFactor: vi.fn((value: number) => {
+        pane.stretchFactor = value;
+      }),
+      getSeries() {
+        return pane.series;
+      },
+    };
+    panes.push(pane);
+    return pane;
+  }
+
+  function attachCore(series: MockSeries, pane: MockPane): MockSeries {
+    series.pane = pane;
+    pane.series.push(series);
+    return series;
+  }
+
+  function createExtraSeries(type: string, pane: MockPane): MockSeries {
+    const series: MockSeries = {
+      type,
+      setData: vi.fn(),
+      update: vi.fn(),
+      applyOptions: vi.fn(),
+      priceLines: [],
+      pane,
+      createPriceLine: vi.fn((options: { price: number }) => {
+        const priceLine = { applyOptions: vi.fn(), options: vi.fn(() => options) };
+        series.priceLines.push(priceLine);
+        return priceLine;
+      }),
+      barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+      getPane: () => {
+        if (!series.pane) {
+          throw new Error("series pane was removed");
+        }
+
+        return series.pane;
+      },
+    };
+    pane.series.push(series);
+    extraSeries.push(series);
+    if (pane.paneIndex() === 0) {
+      overlaySeries.push(series);
+    }
+
+    return series;
+  }
+
+  let candlestickAssigned = false;
   let closeLineAssigned = false;
+  let volumeAssigned = false;
+  const candlestick: MockSeries = {
+    type: "Candlestick",
+    setData: vi.fn(),
+    update: vi.fn(),
+    applyOptions: vi.fn(),
+    createPriceLine: vi.fn(),
+    priceLines: [],
+    pane: null,
+    getPane: () => {
+      if (!candlestick.pane) {
+        throw new Error("candlestick pane missing");
+      }
+
+      return candlestick.pane;
+    },
+    barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+  };
+  const line: MockSeries = {
+    type: "Line",
+    setData: vi.fn(),
+    update: vi.fn(),
+    applyOptions: vi.fn(),
+    createPriceLine: vi.fn(),
+    priceLines: [],
+    pane: null,
+    getPane: () => {
+      if (!line.pane) {
+        throw new Error("line pane missing");
+      }
+
+      return line.pane;
+    },
+    barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+  };
+  const volume: MockSeries = {
+    type: "Histogram",
+    setData: vi.fn(),
+    update: vi.fn(),
+    applyOptions: vi.fn(),
+    createPriceLine: vi.fn(),
+    priceLines: [],
+    pane: null,
+    getPane: () => {
+      if (!volume.pane) {
+        throw new Error("volume pane missing");
+      }
+
+      return volume.pane;
+    },
+    barsInLogicalRange: vi.fn(() => ({ barsBefore: 0, barsAfter: 0 })),
+  };
   const fitContent = vi.fn();
   const getVisibleLogicalRange = vi.fn(() => ({ from: 2, to: 8 }));
   const setVisibleLogicalRange = vi.fn();
@@ -79,36 +218,77 @@ const {
     },
   );
   const chartApplyOptions = vi.fn();
-  const addSeries = vi.fn((definition: { type: string }, _options?: unknown, _paneIndex?: number) => {
-    if (definition.type === "Line") {
-      if (!closeLineAssigned) {
-        closeLineAssigned = true;
-        return line;
-      }
-
-      const series = { setData: vi.fn(), update: vi.fn(), applyOptions: vi.fn() };
-      overlaySeries.push(series);
-      return series;
+  const addSeries = vi.fn((definition: { type: string }, _options?: unknown, paneIndex?: number) => {
+    const index = paneIndex ?? 0;
+    while (panes.length <= index) {
+      createPane();
     }
 
-    if (definition.type === "Histogram") {
-      return volume;
+    const pane = panes[index];
+    if (!pane) {
+      throw new Error("pane missing");
     }
 
-    return candlestick;
+    if (definition.type === "Candlestick" && !candlestickAssigned) {
+      candlestickAssigned = true;
+      return attachCore(candlestick, pane);
+    }
+
+    if (definition.type === "Line" && !closeLineAssigned && index === 0) {
+      closeLineAssigned = true;
+      return attachCore(line, pane);
+    }
+
+    if (definition.type === "Histogram" && !volumeAssigned && index === 0) {
+      volumeAssigned = true;
+      return attachCore(volume, pane);
+    }
+
+    return createExtraSeries(definition.type, pane);
   });
-  const removeSeries = vi.fn((series: (typeof overlaySeries)[number]) => {
-    const index = overlaySeries.indexOf(series);
-    if (index >= 0) {
-      overlaySeries.splice(index, 1);
+  const removeSeries = vi.fn((series: MockSeries) => {
+    const overlayIndex = overlaySeries.indexOf(series);
+    if (overlayIndex >= 0) {
+      overlaySeries.splice(overlayIndex, 1);
     }
+
+    const extraIndex = extraSeries.indexOf(series);
+    if (extraIndex >= 0) {
+      extraSeries.splice(extraIndex, 1);
+    }
+
+    const pane = series.pane;
+    if (!pane) {
+      return;
+    }
+
+    const seriesIndex = pane.series.indexOf(series);
+    if (seriesIndex >= 0) {
+      pane.series.splice(seriesIndex, 1);
+    }
+
+    const panePos = panes.indexOf(pane);
+    if (pane.series.length === 0 && panePos > 0) {
+      panes.splice(panePos, 1);
+    }
+
+    series.pane = null;
   });
   const createChart = vi.fn(() => {
+    candlestickAssigned = false;
     closeLineAssigned = false;
+    volumeAssigned = false;
     overlaySeries.length = 0;
+    extraSeries.length = 0;
+    panes.length = 0;
+    createPane();
+    candlestick.pane = null;
+    line.pane = null;
+    volume.pane = null;
     return {
       addSeries,
       removeSeries,
+      panes: () => panes,
       applyOptions: chartApplyOptions,
       timeScale: () => ({
         fitContent,
@@ -135,6 +315,8 @@ const {
     line,
     volume,
     overlaySeries,
+    extraSeries,
+    getChartPanes: () => panes,
     subscribeVisibleLogicalRangeChange,
     unsubscribeVisibleLogicalRangeChange,
     subscribeCrosshairMove,
@@ -332,6 +514,46 @@ function olderCandle(openTime = btcCandle.openTime - 900_000): Candle {
   };
 }
 
+function oscillatorCandles(count: number, close = "105.00"): Candle[] {
+  return Array.from({ length: count }, (_, index) => ({
+    ...btcCandle,
+    openTime: btcCandle.openTime + index * 900_000,
+    closeTime: btcCandle.closeTime + index * 900_000,
+    open: close,
+    high: close,
+    low: close,
+    close,
+  }));
+}
+
+function rampedOscillatorCandles(count: number, start: number, step: number): Candle[] {
+  return Array.from({ length: count }, (_, index) => {
+    const close = String(start + index * step);
+    return {
+      ...btcCandle,
+      openTime: btcCandle.openTime + index * 900_000,
+      closeTime: btcCandle.closeTime + index * 900_000,
+      open: close,
+      high: close,
+      low: close,
+      close,
+    };
+  });
+}
+
+const DEFAULT_MACD_PARAMS = { fast: 12, slow: 26, signal: 9 };
+const MACD_HISTOGRAM_COLORS = { positive: "#2ebd85", negative: "#f0544c" };
+
+function expectedMacdChartData(candles: Candle[]) {
+  const points = computeMacd(candles, DEFAULT_MACD_PARAMS) ?? [];
+  const lines = toChartMacdLines(points);
+  return {
+    macd: lines.macd,
+    signal: lines.signal,
+    histogram: toChartMacdHistogram(points, MACD_HISTOGRAM_COLORS),
+  };
+}
+
 describe("MarketChart", () => {
   beforeEach(() => {
     mockedGetCandles.mockReset();
@@ -352,6 +574,7 @@ describe("MarketChart", () => {
     addSeries.mockClear();
     removeSeries.mockClear();
     overlaySeries.length = 0;
+    extraSeries.length = 0;
     chartApplyOptions.mockClear();
     subscribeVisibleLogicalRangeChange.mockClear();
     unsubscribeVisibleLogicalRangeChange.mockClear();
@@ -2177,6 +2400,8 @@ describe("MarketChart", () => {
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
     expect(addSeries).toHaveBeenCalledTimes(3);
     expect(overlaySeries).toHaveLength(0);
+    expect(extraSeries).toHaveLength(0);
+    expect(getChartPanes()).toHaveLength(1);
     expect(screen.getByRole("button", { name: "Indicators" })).toHaveAttribute("aria-expanded", "false");
   });
 
@@ -2360,5 +2585,566 @@ describe("MarketChart", () => {
         toChartIndicatorLine(computeSma(ethCandles.candles, 1) ?? []),
       ),
     );
+  });
+
+  it("creates an RSI pane with 0–100 scale and 70/30/50 guides", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(5) });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const fitBefore = fitContent.mock.calls.length;
+    const crosshairBefore = subscribeCrosshairMove.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    const period = screen.getByLabelText("RSI period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0];
+    expect(rsi?.type).toBe("Line");
+    expect(rsi?.getPane().paneIndex()).toBe(1);
+    expect(getChartPanes()).toHaveLength(2);
+    expect(rsi?.createPriceLine.mock.calls.map((call) => call[0].price)).toEqual([70, 50, 30]);
+    const rsiOptions = addSeries.mock.calls
+      .map((call) => call[1] as { autoscaleInfoProvider?: () => { priceRange: { minValue: number; maxValue: number } } } | undefined)
+      .find((options) => options?.autoscaleInfoProvider);
+    expect(rsiOptions?.autoscaleInfoProvider?.()).toEqual({
+      priceRange: { minValue: 0, maxValue: 100 },
+    });
+    expect(rsi?.setData).toHaveBeenCalledWith(
+      toChartIndicatorLine(computeRsi(oscillatorCandles(5), 2) ?? []),
+    );
+    expect(screen.getByRole("img").className).toContain("h-[28rem]");
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+    expect(subscribeCrosshairMove).toHaveBeenCalledTimes(crosshairBefore);
+    expect(getChartPanes()[0]?.stretchFactor).toBe(3);
+    expect(rsi?.getPane().stretchFactor).toBe(1);
+
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(extraSeries).toHaveLength(0));
+    expect(getChartPanes()).toHaveLength(1);
+    expect(removeSeries).toHaveBeenCalledWith(rsi);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+    expect(screen.getByRole("img").className).toContain("h-72");
+  });
+
+  it("creates a MACD pane with two lines, histogram, and a zero guide", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(40) });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const fitBefore = fitContent.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const [macdLine, signal, histogram] = extraSeries;
+    expect(macdLine?.type).toBe("Line");
+    expect(signal?.type).toBe("Line");
+    expect(histogram?.type).toBe("Histogram");
+    expect(macdLine?.getPane().paneIndex()).toBe(1);
+    expect(signal?.getPane()).toBe(macdLine?.getPane());
+    expect(histogram?.getPane()).toBe(macdLine?.getPane());
+    expect(getChartPanes()).toHaveLength(2);
+    expect(macdLine?.createPriceLine.mock.calls.map((call) => call[0].price)).toEqual([0]);
+    const macd = computeMacd(oscillatorCandles(40), { fast: 12, slow: 26, signal: 9 }) ?? [];
+    expect(macdLine?.setData).toHaveBeenCalledWith(toChartMacdLines(macd).macd);
+    expect(signal?.setData).toHaveBeenCalledWith(toChartMacdLines(macd).signal);
+    expect(histogram?.setData).toHaveBeenCalledWith(
+      toChartMacdHistogram(macd, { positive: "#2ebd85", negative: "#f0544c" }),
+    );
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(0));
+    expect(getChartPanes()).toHaveLength(1);
+    expect(removeSeries).toHaveBeenCalledWith(histogram);
+    expect(removeSeries).toHaveBeenCalledWith(signal);
+    expect(removeSeries).toHaveBeenCalledWith(macdLine);
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("orders RSI then MACD panes and keeps series identity across toggles", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const fitBefore = fitContent.mock.calls.length;
+
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const macdTrio = [...extraSeries];
+    expect(macdTrio[0]?.getPane().paneIndex()).toBe(1);
+
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(extraSeries).toHaveLength(4));
+    const rsi = extraSeries.find((series) => !macdTrio.includes(series));
+    expect(rsi?.getPane().paneIndex()).toBe(1);
+    expect(macdTrio[0]?.getPane().paneIndex()).toBe(2);
+    expect(extraSeries.slice(0, 3)).toEqual(macdTrio);
+    expect(macdTrio.every((series) => !removeSeries.mock.calls.some((call) => call[0] === series))).toBe(
+      true,
+    );
+    expect(getChartPanes()).toHaveLength(3);
+    expect(screen.getByRole("img").className).toContain("h-[34rem]");
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    expect(extraSeries).toEqual(macdTrio);
+    expect(macdTrio[0]?.getPane().paneIndex()).toBe(1);
+    expect(getChartPanes()).toHaveLength(2);
+    expect(removeSeries.mock.calls.some((call) => call[0] === rsi)).toBe(true);
+    expect(macdTrio.every((series) => !removeSeries.mock.calls.some((call) => call[0] === series))).toBe(
+      true,
+    );
+
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(extraSeries).toHaveLength(4));
+    expect(extraSeries[0]).toBe(macdTrio[0]);
+    expect(extraSeries.find((series) => !macdTrio.includes(series))?.getPane().paneIndex()).toBe(1);
+    expect(macdTrio[0]?.getPane().paneIndex()).toBe(2);
+
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    expect(extraSeries[0]?.type).toBe("Line");
+    expect(extraSeries[0]?.getPane().paneIndex()).toBe(1);
+    expect(getChartPanes()).toHaveLength(2);
+    expect(macdTrio.every((series) => removeSeries.mock.calls.some((call) => call[0] === series))).toBe(
+      true,
+    );
+  });
+
+  it("places MACD in pane 2 when RSI is already enabled", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0];
+    expect(rsi?.getPane().paneIndex()).toBe(1);
+
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(4));
+    expect(rsi?.getPane().paneIndex()).toBe(1);
+    expect(rsi).toBe(extraSeries[0]);
+    const macdPane = extraSeries[1]?.getPane();
+    expect(macdPane?.paneIndex()).toBe(2);
+    expect(extraSeries[2]?.getPane()).toBe(macdPane);
+    expect(extraSeries[3]?.getPane()).toBe(macdPane);
+    expect(getChartPanes()).toHaveLength(3);
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps RSI identity when toggling a price overlay", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0];
+
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    expect(extraSeries[0]).toBe(rsi);
+    expect(removeSeries.mock.calls.some((call) => call[0] === rsi)).toBe(false);
+    expect(rsi?.getPane().paneIndex()).toBe(1);
+
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(0));
+    expect(extraSeries[0]).toBe(rsi);
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the MACD trio when toggling EMA", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const trio = [...extraSeries];
+
+    await user.click(screen.getByLabelText("EMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    expect(extraSeries.slice(0, 3)).toEqual(trio);
+    expect(trio.every((series) => !removeSeries.mock.calls.some((call) => call[0] === series))).toBe(true);
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates RSI data on period change without recreating the series", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(8) });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0];
+    const addsBefore = addSeries.mock.calls.length;
+
+    const period = screen.getByLabelText("RSI period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(rsi?.setData).toHaveBeenCalledWith(
+        toChartIndicatorLine(computeRsi(oscillatorCandles(8), 2) ?? []),
+      ),
+    );
+    expect(extraSeries[0]).toBe(rsi);
+    expect(addSeries.mock.calls.length).toBe(addsBefore);
+  });
+
+  it("commits a valid MACD triple without recreating series and ignores invalid drafts", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(40) });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const [macdLine, signal, histogram] = extraSeries;
+    const defaultMacd = computeMacd(oscillatorCandles(40), { fast: 12, slow: 26, signal: 9 }) ?? [];
+    await waitFor(() =>
+      expect(macdLine?.setData).toHaveBeenCalledWith(toChartMacdLines(defaultMacd).macd),
+    );
+    const addsBefore = addSeries.mock.calls.length;
+
+    const fast = screen.getByLabelText("MACD fast");
+    await user.clear(fast);
+    await user.type(fast, "30");
+    await user.tab();
+    expect(macdLine?.setData).toHaveBeenLastCalledWith(toChartMacdLines(defaultMacd).macd);
+    expect(extraSeries.slice(0, 3)).toEqual([macdLine, signal, histogram]);
+
+    const slow = screen.getByLabelText("MACD slow");
+    await user.clear(slow);
+    await user.type(slow, "40");
+    await user.keyboard("{Enter}");
+    const nextMacd = computeMacd(oscillatorCandles(40), { fast: 30, slow: 40, signal: 9 }) ?? [];
+    await waitFor(() =>
+      expect(macdLine?.setData).toHaveBeenCalledWith(toChartMacdLines(nextMacd).macd),
+    );
+    expect(signal?.setData).toHaveBeenCalledWith(toChartMacdLines(nextMacd).signal);
+    expect(histogram?.setData).toHaveBeenCalledWith(
+      toChartMacdHistogram(nextMacd, { positive: "#2ebd85", negative: "#f0544c" }),
+    );
+    expect(extraSeries.slice(0, 3)).toEqual([macdLine, signal, histogram]);
+    expect(addSeries.mock.calls.length).toBe(addsBefore);
+  });
+
+  it("expands chart height with oscillators without recreating the chart", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("img").className).toContain("h-72");
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(screen.getByRole("img").className).toContain("h-[28rem]"));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(screen.getByRole("img").className).toContain("h-[34rem]"));
+    expect(createChart).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByLabelText("MACD"));
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(screen.getByRole("img").className).toContain("h-72"));
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("applies RSI and MACD theme options without recreating series", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(40) });
+    renderChart("BTCUSDT", false, { themeToggle: true });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(4));
+    const rsi = extraSeries.find((series) => series.createPriceLine.mock.calls.length === 3);
+    const histogram = extraSeries.find((series) => series.type === "Histogram");
+    const rsiApplies = rsi?.applyOptions.mock.calls.length ?? 0;
+    const histApplies = histogram?.applyOptions.mock.calls.length ?? 0;
+    const guideApplies = rsi?.priceLines[0]?.applyOptions.mock.calls.length ?? 0;
+    const histSets = histogram?.setData.mock.calls.length ?? 0;
+
+    await user.click(screen.getByRole("button", { name: "Toggle theme" }));
+    await waitFor(() => expect(rsi?.applyOptions.mock.calls.length).toBeGreaterThan(rsiApplies));
+    expect(histogram?.applyOptions.mock.calls.length).toBeGreaterThan(histApplies);
+    expect(rsi?.priceLines[0]?.applyOptions.mock.calls.length).toBeGreaterThan(guideApplies);
+    expect(histogram?.setData.mock.calls.length).toBeGreaterThan(histSets);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(remove).not.toHaveBeenCalled();
+    expect(extraSeries).toHaveLength(4);
+  });
+
+  it("does not paint stale RSI or MACD after a symbol switch", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const btcOsc = oscillatorCandles(8, "105.00");
+    const ethOsc = oscillatorCandles(8, "210.00");
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT"
+        ? { ...ethCandles, candles: ethOsc }
+        : { ...btcCandles, candles: btcOsc },
+    );
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    const period = screen.getByLabelText("RSI period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    await waitFor(() =>
+      expect(extraSeries[0]?.setData).toHaveBeenLastCalledWith(
+        toChartIndicatorLine(computeRsi(ethOsc, 2) ?? []),
+      ),
+    );
+    expect(screen.getByLabelText("RSI")).toBeChecked();
+  });
+
+  it("does not paint stale MACD after a symbol switch", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const btcOsc = rampedOscillatorCandles(40, 100, 1);
+    const ethOsc = rampedOscillatorCandles(40, 200, 3);
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT"
+        ? { ...ethCandles, candles: ethOsc }
+        : { ...btcCandles, candles: btcOsc },
+    );
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const btcMacd = expectedMacdChartData(btcOsc);
+    await waitFor(() => expect(extraSeries[0]?.setData).toHaveBeenLastCalledWith(btcMacd.macd));
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const [macdLine, signal, histogram] = extraSeries;
+    const ethMacd = expectedMacdChartData(ethOsc);
+    expect(macdLine?.setData).toHaveBeenLastCalledWith(ethMacd.macd);
+    expect(signal?.setData).toHaveBeenLastCalledWith(ethMacd.signal);
+    expect(histogram?.setData).toHaveBeenLastCalledWith(ethMacd.histogram);
+    expect(macdLine?.setData.mock.calls.at(-1)?.[0]).not.toEqual(btcMacd.macd);
+    expect(signal?.setData.mock.calls.at(-1)?.[0]).not.toEqual(btcMacd.signal);
+    expect(screen.getByLabelText("MACD")).toBeChecked();
+  });
+
+  it("does not resurrect the first BTC MACD after BTC → ETH → BTC", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const firstBtc = rampedOscillatorCandles(40, 100, 1);
+    const ethOsc = rampedOscillatorCandles(40, 200, 3);
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT"
+        ? { ...ethCandles, candles: ethOsc }
+        : { ...btcCandles, candles: firstBtc },
+    );
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    view.rerender(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(3));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const currentBtc = expectedMacdChartData(firstBtc);
+    const ethMacd = expectedMacdChartData(ethOsc);
+    const [macdLine, signal, histogram] = extraSeries;
+    expect(macdLine?.setData).toHaveBeenLastCalledWith(currentBtc.macd);
+    expect(signal?.setData).toHaveBeenLastCalledWith(currentBtc.signal);
+    expect(histogram?.setData).toHaveBeenLastCalledWith(currentBtc.histogram);
+    expect(macdLine?.setData.mock.calls.at(-1)?.[0]).not.toEqual(ethMacd.macd);
+    expect(signal?.setData.mock.calls.at(-1)?.[0]).not.toEqual(ethMacd.signal);
+    expect(screen.getByLabelText("MACD")).toBeChecked();
+  });
+
+  it("updates RSI data on interval change without recreating the chart", async () => {
+    const user = userEvent.setup();
+    const hourCandles = oscillatorCandles(8, "150.00");
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h"
+        ? { ...btcCandles, interval: "1h", candles: hourCandles }
+        : { ...btcCandles, candles: oscillatorCandles(8) },
+    );
+    const onIntervalChange = vi.fn();
+    const view = renderChart("BTCUSDT", false, { onIntervalChange });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    const period = screen.getByLabelText("RSI period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0];
+    view.rerender(
+      <ThemeProvider>
+        <QueryClientProvider client={view.client}>
+          <MarketChart symbol="BTCUSDT" interval="1h" onIntervalChange={onIntervalChange} />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    await waitFor(() =>
+      expect(rsi?.setData).toHaveBeenCalledWith(toChartIndicatorLine(computeRsi(hourCandles, 2) ?? [])),
+    );
+    expect(extraSeries[0]).toBe(rsi);
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("updates MACD data on interval change without recreating series", async () => {
+    const user = userEvent.setup();
+    const minuteCandles = rampedOscillatorCandles(40, 100, 1);
+    const hourCandles = rampedOscillatorCandles(40, 150, 2);
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h"
+        ? { ...btcCandles, interval: "1h", candles: hourCandles }
+        : { ...btcCandles, candles: minuteCandles },
+    );
+    const onIntervalChange = vi.fn();
+    const view = renderChart("BTCUSDT", false, { onIntervalChange });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const [macdLine, signal, histogram] = extraSeries;
+    const macdPane = macdLine?.getPane();
+    await view.client.prefetchQuery({
+      queryKey: queryKeys.candles.list({
+        symbol: "BTCUSDT",
+        interval: "1h",
+        limit: TRADE_CHART_LIMIT,
+      }),
+      queryFn: () => getCandles({ symbol: "BTCUSDT", interval: "1h", limit: TRADE_CHART_LIMIT }),
+    });
+    view.rerender(
+      <ThemeProvider>
+        <QueryClientProvider client={view.client}>
+          <MarketChart symbol="BTCUSDT" interval="1h" onIntervalChange={onIntervalChange} />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    const hourMacd = expectedMacdChartData(hourCandles);
+    const minuteMacd = expectedMacdChartData(minuteCandles);
+    await waitFor(() => expect(macdLine?.setData).toHaveBeenLastCalledWith(hourMacd.macd));
+    expect(signal?.setData).toHaveBeenLastCalledWith(hourMacd.signal);
+    expect(histogram?.setData).toHaveBeenLastCalledWith(hourMacd.histogram);
+    expect(extraSeries[0]).toBe(macdLine);
+    expect(extraSeries[1]).toBe(signal);
+    expect(extraSeries[2]).toBe(histogram);
+    expect(macdLine?.getPane()).toBe(macdPane);
+    expect(signal?.getPane()).toBe(macdPane);
+    expect(histogram?.getPane()).toBe(macdPane);
+    expect(macdPane?.paneIndex()).toBe(1);
+    expect(macdLine?.setData.mock.calls.at(-1)?.[0]).not.toEqual(minuteMacd.macd);
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("recomputes RSI and MACD on backfill without fitContent", async () => {
+    const user = userEvent.setup();
+    const latest = oscillatorCandles(40);
+    mockedGetCandles.mockImplementation(async (params) => {
+      if (params.before) {
+        return { ...btcCandles, candles: [olderCandle(latest[0]!.openTime - 900_000)] };
+      }
+
+      return { ...btcCandles, candles: latest };
+    });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    const period = screen.getByLabelText("RSI period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(4));
+    const rsi = extraSeries[0];
+    const macdLine = extraSeries[1];
+    const signal = extraSeries[2];
+    const histogram = extraSeries[3];
+    const fitBefore = fitContent.mock.calls.length;
+    candlestick.barsInLogicalRange.mockReturnValue({ barsBefore: 5, barsAfter: 90 });
+    emitVisibleRange();
+    const prepended = [olderCandle(latest[0]!.openTime - 900_000), ...latest];
+    const prependedMacd = expectedMacdChartData(prepended);
+    await waitFor(() =>
+      expect(rsi?.setData).toHaveBeenCalledWith(
+        toChartIndicatorLine(computeRsi(prepended, 2) ?? []),
+      ),
+    );
+    expect(macdLine?.setData).toHaveBeenCalledWith(prependedMacd.macd);
+    expect(signal?.setData).toHaveBeenCalledWith(prependedMacd.signal);
+    expect(histogram?.setData).toHaveBeenCalledWith(prependedMacd.histogram);
+    expect(extraSeries[0]).toBe(rsi);
+    expect(extraSeries[1]).toBe(macdLine);
+    expect(extraSeries[2]).toBe(signal);
+    expect(extraSeries[3]).toBe(histogram);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+    expect(setVisibleLogicalRange).toHaveBeenCalled();
+  });
+
+  it("keeps oscillator identity under Strict Mode after an unrelated overlay toggle", async () => {
+    const user = userEvent.setup();
+    const view = renderChart("BTCUSDT", true);
+    await waitFor(() => expect(createChart).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0];
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    expect(extraSeries[0]).toBe(rsi);
+    expect(getChartPanes()).toHaveLength(2);
+    const removesBeforeUnmount = remove.mock.calls.length;
+    view.unmount();
+    expect(remove.mock.calls.length).toBeGreaterThan(removesBeforeUnmount);
   });
 });
