@@ -2,6 +2,8 @@ import { act, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarketTicker } from "./MarketTicker.tsx";
+import { formatAdaptiveMarketPriceDisplay } from "../lib/format-adaptive-market-price.ts";
+import { formatCompactEpochMsUtc } from "../lib/format-timestamp.ts";
 import { TRADE_MARK_STALE_MS } from "../lib/trade-feed-state.ts";
 import { useMarketStore } from "../stores/market-store.ts";
 import { useRealtimeStatusStore } from "../stores/realtime-status-store.ts";
@@ -73,17 +75,28 @@ describe("MarketTicker", () => {
     useRealtimeStatusStore.setState({ market: "ready" });
     seedQuote(now);
     render(<MarketTicker symbol="BTCUSDT" instrument={instrument} />);
-    expect(screen.getByText("100000.1")).toBeInTheDocument();
-    expect(screen.getByText("99999.9")).toBeInTheDocument();
-    expect(screen.getByText("99990")).toBeInTheDocument();
+    expect(screen.getByText("100000.10")).toBeInTheDocument();
+    expect(screen.getAllByText("99999.90").length).toBeGreaterThan(0);
+    expect(screen.getByText("99990.00")).toBeInTheDocument();
     expect(screen.getByText("1.2")).toBeInTheDocument();
-    expect(screen.getByText("100010")).toBeInTheDocument();
+    expect(screen.getByText("100010.00")).toBeInTheDocument();
     expect(screen.getByText("0.8")).toBeInTheDocument();
     expect(screen.getByText("0.0001")).toBeInTheDocument();
+    expect(screen.getByText("BTC/USDT")).toBeInTheDocument();
+    expect(screen.getByText("PERPETUAL")).toBeInTheDocument();
+    expect(screen.getByText("Mark Price")).toBeInTheDocument();
+    expect(screen.getAllByText("Index").length).toBeGreaterThan(0);
     expect(screen.getByText("Bid")).toBeInTheDocument();
     expect(screen.getByText("Ask")).toBeInTheDocument();
-    expect(screen.getByText(/BTC\/USDT/)).toBeInTheDocument();
-    expect(screen.getByText(/PERPETUAL/)).toBeInTheDocument();
+    expect(screen.getByText("Funding")).toBeInTheDocument();
+    expect(screen.getByText("Next Funding")).toBeInTheDocument();
+    expect(screen.getByText(/Tick/)).toBeInTheDocument();
+    expect(screen.getByText(/Step/)).toBeInTheDocument();
+    expect(screen.getByText(/Min Qty/)).toBeInTheDocument();
+    expect(screen.getByText(/Min Notional/)).toBeInTheDocument();
+    expect(screen.getAllByText("qty").length).toBe(2);
+    expect(screen.getByText("Bid").parentElement?.parentElement?.className).toContain("min-w-0");
+    expect(screen.getByText("Bid").parentElement?.parentElement?.className).toContain("grid");
     expect(screen.queryByText(/order book/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/24h/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/open interest/i)).not.toBeInTheDocument();
@@ -116,14 +129,14 @@ describe("MarketTicker", () => {
     seedQuote(start);
     render(<MarketTicker symbol="BTCUSDT" />);
     expect(screen.getByText("Live")).toBeInTheDocument();
-    expect(screen.getByText("100000.1")).toBeInTheDocument();
+    expect(screen.getByText("100000.10")).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(TRADE_MARK_STALE_MS);
     });
 
     expect(screen.getByText("Stale")).toBeInTheDocument();
-    expect(screen.getByText("100000.1")).toBeInTheDocument();
+    expect(screen.getByText("100000.10")).toBeInTheDocument();
     expect(screen.queryByText("Live")).not.toBeInTheDocument();
   });
 
@@ -142,7 +155,7 @@ describe("MarketTicker", () => {
     expect(screen.getByText("Disconnected")).toBeInTheDocument();
   });
 
-  it("contains long exact market strings without changing them", () => {
+  it("formats market prices adaptively and keeps quantities, funding, and specs exact", () => {
     const now = Date.now();
     const markPrice = "123456789.123456789012345678";
     const indexPrice = "123456788.123456789012345678";
@@ -172,33 +185,56 @@ describe("MarketTicker", () => {
       bookEventTime: now,
     });
 
-    render(<MarketTicker symbol="BTCUSDT" instrument={instrument} />);
+    const { container } = render(<MarketTicker symbol="BTCUSDT" instrument={instrument} />);
 
-    const mark = screen.getByText(markPrice);
-    expect(mark.textContent).toBe(markPrice);
-    expect(mark.className).toContain("block");
+    const formattedMark = formatAdaptiveMarketPriceDisplay(markPrice);
+    const formattedIndex = formatAdaptiveMarketPriceDisplay(indexPrice);
+    const formattedBid = formatAdaptiveMarketPriceDisplay(bestBidPrice);
+    const formattedAsk = formatAdaptiveMarketPriceDisplay(bestAskPrice);
+
+    const mark = screen.getByText(formattedMark);
+    expect(mark.textContent).toBe(formattedMark);
+    expect(mark.className).toContain("text-2xl");
     expect(mark.className).toContain("min-w-0");
     expect(mark.className).toContain("max-w-full");
-    expect(mark.className).toContain("overflow-x-auto");
-    expect(mark.className).toContain("whitespace-nowrap");
 
-    const index = screen.getByText(indexPrice);
-    expect(index.textContent).toBe(indexPrice);
-    expect(index.className).toContain("block");
-    expect(index.className).toContain("overflow-x-auto");
-    expect(index.className).toContain("whitespace-nowrap");
-
-    expect(screen.getByText(bestBidPrice).textContent).toBe(bestBidPrice);
-    expect(screen.getByText(bestAskPrice).textContent).toBe(bestAskPrice);
+    expect(screen.getAllByText(formattedIndex).length).toBeGreaterThan(0);
+    expect(screen.getByText(formattedBid).textContent).toBe(formattedBid);
+    expect(screen.getByText(formattedAsk).textContent).toBe(formattedAsk);
+    expect(screen.getByText(formattedBid).className).toContain("text-positive");
+    expect(screen.getByText(formattedAsk).className).toContain("text-negative");
     expect(screen.getByText(fundingRate).textContent).toBe(fundingRate);
 
     const bidQty = screen.getByText(bestBidQty);
     expect(bidQty.textContent).toBe(bestBidQty);
-    expect(bidQty.className).toContain("block");
-    expect(bidQty.className).toContain("min-w-0");
-    expect(bidQty.className).toContain("max-w-full");
-    expect(bidQty.className).toContain("overflow-x-auto");
-    expect(bidQty.className).toContain("whitespace-nowrap");
     expect(screen.getByText(bestAskQty).textContent).toBe(bestAskQty);
+    expect(screen.queryByText(markPrice)).not.toBeInTheDocument();
+    expect(screen.getByText("0.1")).toBeInTheDocument();
+    expect(screen.getAllByText("0.001").length).toBe(2);
+    expect(container.firstElementChild?.className).toContain("min-w-0");
+    expect(container.firstElementChild?.className).toContain("flex-col");
+  });
+
+  it("renders compact UTC next funding without local-time conversion", () => {
+    vi.useFakeTimers();
+    const now = Date.UTC(2026, 9, 5, 12, 0, 0);
+    vi.setSystemTime(now);
+    useRealtimeStatusStore.setState({ market: "ready" });
+    useMarketStore.getState().applyMark({
+      type: "market.mark",
+      symbol: "BTCUSDT",
+      markPrice: "2.17821529",
+      indexPrice: "2.17875000",
+      fundingRate: "0.00005000",
+      nextFundingTime: Date.UTC(2026, 9, 5, 20, 0, 0),
+      markEventTime: now,
+    });
+    render(<MarketTicker symbol="BTCUSDT" instrument={instrument} />);
+    expect(screen.getByText("2.17822")).toBeInTheDocument();
+    expect(screen.getAllByText("2.17875").length).toBeGreaterThan(0);
+    expect(screen.getByText("0.00005000")).toBeInTheDocument();
+    expect(screen.getByText("20:00 UTC")).toBeInTheDocument();
+    expect(screen.queryByText("2026-10-05 20:00:00 UTC")).not.toBeInTheDocument();
+    expect(formatCompactEpochMsUtc(Date.UTC(2026, 9, 6, 20, 0, 0), now)).toBe("06 Oct · 20:00 UTC");
   });
 });

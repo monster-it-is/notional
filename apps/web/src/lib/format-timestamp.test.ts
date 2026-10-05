@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { formatEpochMsUtc, formatTimestamp } from "./format-timestamp.ts";
+import { formatCompactEpochMsUtc, formatEpochMsUtc, formatTimestamp } from "./format-timestamp.ts";
 
 describe("formatTimestamp", () => {
   it("formats ISO timestamps without converting financial values", () => {
@@ -22,5 +22,23 @@ describe("formatEpochMsUtc", () => {
     expect(formatEpochMsUtc(Number.POSITIVE_INFINITY)).toBe("—");
     expect(formatEpochMsUtc(Number.NEGATIVE_INFINITY)).toBe("—");
     expect(formatEpochMsUtc(8.64e15 + 1)).toBe("—");
+  });
+});
+
+describe("formatCompactEpochMsUtc", () => {
+  const now = Date.UTC(2026, 9, 5, 12, 0, 0);
+
+  it("shows HH:MM UTC on the same UTC calendar day", () => {
+    expect(formatCompactEpochMsUtc(Date.UTC(2026, 9, 5, 20, 0, 0), now)).toBe("20:00 UTC");
+  });
+
+  it("includes a compact UTC date when the calendar day differs", () => {
+    expect(formatCompactEpochMsUtc(Date.UTC(2026, 9, 6, 20, 0, 0), now)).toBe("06 Oct · 20:00 UTC");
+    expect(formatCompactEpochMsUtc(Date.UTC(2026, 8, 5, 8, 5, 0), now)).toBe("05 Sep · 08:05 UTC");
+  });
+
+  it("returns an unavailable marker for invalid epoch values", () => {
+    expect(formatCompactEpochMsUtc(Number.NaN, now)).toBe("—");
+    expect(formatCompactEpochMsUtc(Number.POSITIVE_INFINITY, now)).toBe("—");
   });
 });

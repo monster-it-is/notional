@@ -501,7 +501,7 @@ describe("TradePage", () => {
     });
     await client.refetchQueries({ queryKey: queryKeys.positions.all });
 
-    expect(await screen.findByText("110")).toBeInTheDocument();
+    expect(await screen.findByText("110.000")).toBeInTheDocument();
     expect(screen.queryByText("positions refresh failed")).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
     expect(screen.getByRole("button", { name: "Confirm close" })).toBeDisabled();

@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { listOrders } from "../lib/api/orders.ts";
+import { formatAdaptiveMarketPriceDisplay } from "../lib/format-adaptive-market-price.ts";
 import { formatTimestamp } from "../lib/format-timestamp.ts";
 import { orderSideClass } from "../lib/order-side-class.ts";
 import { queryKeys } from "../lib/query-keys.ts";
@@ -77,7 +78,9 @@ export function OrdersHistoryTable({
             <Td className={orderSideClass(order.side)}>{order.side}</Td>
             <Td>{order.type}</Td>
             <Td numeric>{order.quantity}</Td>
-            <Td numeric>{order.limitPrice ?? "—"}</Td>
+            <Td numeric title={order.limitPrice ?? undefined}>
+              {order.limitPrice ? formatAdaptiveMarketPriceDisplay(order.limitPrice) : "—"}
+            </Td>
             <Td>{order.reduceOnly ? "yes" : "no"}</Td>
             <Td className={orderStatusClass(order.status)}>{order.status}</Td>
             <Td className={orderOriginClass(order.origin)}>{order.origin}</Td>

@@ -60,7 +60,11 @@ import {
   type IndicatorLiveUpdates,
   type IndicatorSessionIdentity,
 } from "../../lib/chart/indicators/live-session.ts";
-import { oscillatorEnabledCount, type IndicatorSettings } from "../../lib/chart/indicators/settings.ts";
+import {
+  DEFAULT_INDICATOR_SETTINGS,
+  oscillatorEnabledCount,
+  type IndicatorSettings,
+} from "../../lib/chart/indicators/settings.ts";
 import {
   readTradeChartPreferences,
   writeTradeChartPreferences,
@@ -1339,9 +1343,7 @@ export function MarketChart({
   }, []);
 
   useLayoutEffect(() => {
-    resetChartViewRef.current = () => {
-      chartRef.current?.timeScale().fitContent();
-    };
+    resetChartViewRef.current = resetChart;
     toggleChartFullscreenRef.current = async () => {
       const wrapper = wrapperRef.current;
 
@@ -1414,6 +1416,43 @@ export function MarketChart({
     setIndicatorSettings(next);
     writeTradeChartPreferences({ mode: modeRef.current, indicators: next });
   }
+
+  function resetChart(): void {
+    changeIndicatorSettings({
+      sma: { ...DEFAULT_INDICATOR_SETTINGS.sma },
+      ema: { ...DEFAULT_INDICATOR_SETTINGS.ema },
+      rsi: { ...DEFAULT_INDICATOR_SETTINGS.rsi },
+      macd: { ...DEFAULT_INDICATOR_SETTINGS.macd },
+      bollinger: { ...DEFAULT_INDICATOR_SETTINGS.bollinger },
+    });
+
+    const currentSymbol = identityRef.current.symbol;
+    cancelDrawingDragRef.current();
+    skipChartClickRef.current = false;
+    drawingDraftRef.current = null;
+    hoveredDrawingIdRef.current = null;
+    selectedDrawingIdRef.current = null;
+    drawingToolRef.current = "select";
+    setSelectedDrawingId(null);
+    setDrawingTool("select");
+
+    if (currentSymbol) {
+      const nextDrawings = { ...drawingsBySymbolRef.current, [currentSymbol]: [] };
+      drawingsBySymbolRef.current = nextDrawings;
+      setDrawingsBySymbol(nextDrawings);
+    }
+
+    drawingPrimitiveRef.current?.setState({
+      drawings: currentSymbol ? [] : drawingPrimitiveRef.current.getState().drawings,
+      draft: null,
+      selectedId: null,
+      hoveredId: null,
+    });
+
+    chartRef.current?.timeScale().fitContent();
+  }
+
+  resetChartViewRef.current = resetChart;
 
   function resetChartView(): void {
     resetChartViewRef.current();
@@ -1635,12 +1674,12 @@ function ChartToolbar({
           type="button"
           size="sm"
           variant="secondary"
-          aria-label="Reset view"
-          title="Reset view"
+          aria-label="Reset chart"
+          title="Reset indicators, drawings, and chart view"
           disabled={!chartReady}
           onClick={onResetView}
         >
-          Reset
+          Reset chart
         </Button>
         <Button
           type="button"

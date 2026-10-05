@@ -9,6 +9,7 @@ import { PositionsTable } from "./PositionsTable.tsx";
 import { ApiError } from "../lib/api/errors.ts";
 import { listOrders, placeOrder } from "../lib/api/orders.ts";
 import { listPositions } from "../lib/api/positions.ts";
+import { formatAdaptiveMarketPriceDisplay } from "../lib/format-adaptive-market-price.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 
 vi.mock("../lib/api/positions.ts", () => ({
@@ -100,7 +101,7 @@ describe("PositionsTable", () => {
     });
     render(<PositionsTable />, { wrapper });
     expect(await screen.findByText("BTCUSDT")).toBeInTheDocument();
-    expect(screen.getByText("110")).toBeInTheDocument();
+    expect(screen.getByText("110.000")).toBeInTheDocument();
     const unrealized = screen.getByText("10");
     expect(unrealized.className).toContain("text-positive");
     expect(screen.getByText("4")).toBeInTheDocument();
@@ -242,8 +243,9 @@ describe("PositionsTable", () => {
     });
     render(<PositionsTable />, { wrapper });
 
-    const markCell = await screen.findByText(mark);
-    expect(markCell.textContent).toBe(mark);
+    const formattedMark = formatAdaptiveMarketPriceDisplay(mark);
+    const markCell = await screen.findByText(formattedMark);
+    expect(markCell.textContent).toBe(formattedMark);
     expect(markCell).toHaveAttribute("title", mark);
     expect(markCell.className).toContain("whitespace-nowrap");
     expect(markCell.className).toContain("overflow-hidden");
@@ -386,7 +388,7 @@ describe("PositionsTable close", () => {
     });
     await client.refetchQueries({ queryKey: queryKeys.positions.all });
 
-    expect(await screen.findByText("110")).toBeInTheDocument();
+    expect(await screen.findByText("110.000")).toBeInTheDocument();
     expect(screen.queryByText("positions refresh failed")).not.toBeInTheDocument();
     expect(screen.getByRole("dialog", { name: "Close BTCUSDT" })).toBe(dialog);
     expect(mockedPlace).not.toHaveBeenCalled();
@@ -706,7 +708,7 @@ describe("PositionsTable close", () => {
     client.setQueryData(queryKeys.positions.all, {
       positions: [{ ...open, markPrice: "110", unrealizedPnl: "12.5" }],
     });
-    expect(await screen.findByText("110")).toBeInTheDocument();
+    expect(await screen.findByText("110.000")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Confirm close" }));
     await waitFor(() => expect(mockedPlace).toHaveBeenCalledTimes(1));
     expect(

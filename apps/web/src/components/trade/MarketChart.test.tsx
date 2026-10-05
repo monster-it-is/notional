@@ -4640,7 +4640,7 @@ describe("MarketChart", () => {
     removeSpy.mockRestore();
   });
 
-  it("fits content once from Reset view without recreating or refetching", async () => {
+  it("fits content once from Reset chart without recreating or refetching", async () => {
     const user = userEvent.setup();
     renderChart();
     await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
@@ -4648,12 +4648,148 @@ describe("MarketChart", () => {
     const overlaySets = overlaySeries.map((series) => series.setData.mock.calls.length);
     const fetchCalls = mockedGetCandles.mock.calls.length;
     fitContent.mockClear();
-    await user.click(screen.getByRole("button", { name: "Reset view" }));
+    await user.click(screen.getByRole("button", { name: "Reset chart" }));
     expect(fitContent).toHaveBeenCalledTimes(1);
     expect(createChart).toHaveBeenCalledTimes(1);
     expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
     expect(overlaySeries.map((series) => series.setData.mock.calls.length)).toEqual(overlaySets);
     expect(mockedGetCandles.mock.calls.length).toBe(fetchCalls);
+  });
+
+  it("resets indicators and current-symbol drawings from Reset chart without refetching", async () => {
+    const user = userEvent.setup();
+    const { client } = renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    expect(drawingPrimitive().getState().draft).not.toBeNull();
+    clickPane(0, 50, 80);
+    const drawing = drawingPrimitive().getState().drawings[0];
+    clickPane(0, 30, 60, drawing?.id as string);
+    emitCrosshair({
+      paneIndex: 0,
+      point: { x: 30, y: 60 },
+      hoveredInfo: {
+        objectId: drawing?.id as string,
+        sourceKind: "series-primitive",
+        type: "primitive",
+        objectKind: "primitive",
+      },
+    });
+    expect(drawingPrimitive().getState().selectedId).toBe(drawing?.id);
+    expect(drawingPrimitive().getState().hoveredId).toBe(drawing?.id);
+    await activateDrawingTool(user, "Trend Line");
+    expect(screen.getByRole("button", { name: "Drawings, Trend Line" })).toBeInTheDocument();
+    clickPane(0, 10, 40);
+    expect(drawingPrimitive().getState().draft).not.toBeNull();
+
+    const candleKey = queryKeys.candles.list({
+      symbol: "BTCUSDT",
+      interval: "15m",
+      limit: TRADE_CHART_LIMIT,
+    });
+    const cached = client.getQueryData(candleKey);
+    const fetchCalls = mockedGetCandles.mock.calls.length;
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    fitContent.mockClear();
+
+    await user.click(screen.getByRole("button", { name: "Reset chart" }));
+
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(mockedGetCandles.mock.calls.length).toBe(fetchCalls);
+    expect(client.getQueryData(candleKey)).toBe(cached);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "15m" })).toHaveAttribute("aria-pressed", "true");
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    expect(drawingPrimitive().getState().draft).toBeNull();
+    expect(drawingPrimitive().getState().selectedId).toBeNull();
+    expect(drawingPrimitive().getState().hoveredId).toBeNull();
+    expect(screen.getByRole("button", { name: /^Drawings$/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Drawings, Trend Line" })).not.toBeInTheDocument();
+    await waitFor(() => expect(overlaySeries).toHaveLength(0));
+    expect(screen.queryByRole("button", { name: "Indicators, 1 enabled" })).not.toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem(TRADE_CHART_PREFERENCES_KEY) ?? "null")).toEqual({
+      version: 1,
+      mode: "line",
+      indicators: DEFAULT_INDICATOR_SETTINGS,
+    });
+  });
+
+  it("cancels an in-progress draft and drag from Reset chart without committing", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    hostPointer("pointerdown", 30, 60);
+    hostPointer("pointermove", 40, 70);
+    expect(drawingPrimitive().getState().drawings[0]).not.toEqual(original);
+    await user.click(screen.getByRole("button", { name: "Reset chart" }));
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    expect(drawingPrimitive().getState().draft).toBeNull();
+    expect(drawingPrimitive().getState().selectedId).toBeNull();
+    expect(screen.getByRole("button", { name: /^Drawings$/ })).toBeInTheDocument();
+
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    expect(drawingPrimitive().getState().draft).not.toBeNull();
+    await user.click(screen.getByRole("button", { name: "Reset chart" }));
+    expect(drawingPrimitive().getState().draft).toBeNull();
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    expect(screen.getByRole("button", { name: /^Drawings$/ })).toBeInTheDocument();
+  });
+
+  it("clears only the current symbol drawings from Reset chart", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT" ? ethCandles : btcCandles,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const btcDrawing = drawingPrimitive().getState().drawings[0];
+    expect(btcDrawing?.symbol).toBe("BTCUSDT");
+
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const ethDrawing = drawingPrimitive().getState().drawings[0];
+    expect(ethDrawing?.symbol).toBe("ETHUSDT");
+
+    view.rerender(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(3));
+    expect(drawingPrimitive().getState().drawings).toEqual([btcDrawing]);
+    const fetchCalls = mockedGetCandles.mock.calls.length;
+    fitContent.mockClear();
+    await user.click(screen.getByRole("button", { name: "Reset chart" }));
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    expect(mockedGetCandles.mock.calls.length).toBe(fetchCalls);
+
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(4));
+    expect(drawingPrimitive().getState().drawings).toEqual([ethDrawing]);
+
+    view.rerender(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(5));
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
   });
 
   it("fits content from R only when the chart host is focused", async () => {
@@ -4820,7 +4956,7 @@ describe("MarketChart", () => {
     expect(toolbar?.className).toContain("max-w-full");
     expect(screen.getByRole("group", { name: "Chart interval" }).className).toContain("min-w-0");
     expect(screen.getByRole("button", { name: "15m" }).className).toContain("min-w-11");
-    expect(screen.getByRole("button", { name: "Reset view" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Reset chart" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Enter fullscreen" })).toHaveAttribute(
       "aria-pressed",
       "false",

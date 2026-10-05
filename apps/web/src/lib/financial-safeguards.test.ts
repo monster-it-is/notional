@@ -19,6 +19,7 @@ const files = [
   "src/components/FaucetCard.tsx",
   "src/components/WalletFundingTable.tsx",
   "src/lib/format-exact-money.ts",
+  "src/lib/format-adaptive-market-price.ts",
   "src/lib/faucet-eligibility.ts",
   "src/hooks/use-place-order.ts",
   "src/lib/decimal-string.ts",
@@ -223,5 +224,25 @@ describe("D11E chart preference financial safeguards", () => {
     expect(source).not.toMatch(/selectedDrawingId/);
     expect(source).toMatch(/mode: ChartDisplayMode/);
     expect(source).toMatch(/indicators: IndicatorSettings/);
+  });
+});
+
+describe("adaptive market price display financial safeguards", () => {
+  it("is display-only rounding without JS number conversion or trading writes", () => {
+    const source = readFileSync(
+      resolve(process.cwd(), "src/lib/format-adaptive-market-price.ts"),
+      "utf8",
+    );
+    expect(source).not.toMatch(/\bparseFloat\s*\(/);
+    expect(source).not.toMatch(/\bparseInt\s*\(/);
+    expect(source).not.toMatch(/\bNumber\s*\(/);
+    expect(source).not.toMatch(/\.toFixed\s*\(/);
+    expect(source).not.toMatch(/use-place-order/);
+    expect(source).not.toMatch(/OrderForm/);
+    expect(source).not.toMatch(/useMutation/);
+    expect(source).not.toMatch(/lib\/api\//);
+    expect(source).not.toMatch(/@notional\/trading/);
+    expect(source).toMatch(/Render-only/);
+    expect(source).toMatch(/exact string rounding/);
   });
 });

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { listExecutions } from "../lib/api/executions.ts";
+import { formatAdaptiveMarketPriceDisplay } from "../lib/format-adaptive-market-price.ts";
 import { formatTimestamp } from "../lib/format-timestamp.ts";
 import { orderSideClass } from "../lib/order-side-class.ts";
 import { queryKeys } from "../lib/query-keys.ts";
@@ -74,7 +75,9 @@ export function ExecutionsTable({
             <Td className={orderSideClass(execution.side)}>{execution.side}</Td>
             <Td>{execution.orderType}</Td>
             <Td numeric>{execution.quantity}</Td>
-            <Td numeric>{execution.price}</Td>
+            <Td numeric title={execution.price}>
+              {formatAdaptiveMarketPriceDisplay(execution.price)}
+            </Td>
             {showOrderId ? <Td numeric>{execution.orderId}</Td> : null}
           </tr>
         ))}

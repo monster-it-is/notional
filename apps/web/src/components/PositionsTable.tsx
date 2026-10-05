@@ -10,6 +10,7 @@ import {
   type DecimalVisualSign,
   type PositionVisualSide,
 } from "../lib/decimal-string.ts";
+import { formatAdaptiveMarketPriceDisplay } from "../lib/format-adaptive-market-price.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { ClosePositionConfirm } from "./ClosePositionConfirm.tsx";
 import { OrderAcknowledgement } from "./OrderAcknowledgement.tsx";
@@ -150,10 +151,10 @@ export function PositionsTable({
                     {position.quantity}
                   </Td>
                   <Td numeric className={CONTAINED_CELL} title={position.entryPrice}>
-                    {position.entryPrice}
+                    {formatAdaptiveMarketPriceDisplay(position.entryPrice)}
                   </Td>
                   <Td numeric className={CONTAINED_CELL} title={position.markPrice ?? undefined}>
-                    {position.markPrice ?? "—"}
+                    {position.markPrice ? formatAdaptiveMarketPriceDisplay(position.markPrice) : "—"}
                   </Td>
                   <Td
                     numeric

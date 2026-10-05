@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { cancelOrder, listOrders } from "../lib/api/orders.ts";
+import { formatAdaptiveMarketPriceDisplay } from "../lib/format-adaptive-market-price.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { invalidateAfterCancel } from "../realtime/invalidate.ts";
 import { OffsetPagination } from "./OffsetPagination.tsx";
@@ -92,7 +93,9 @@ function OpenOrderRow({
       <Td className={sideClass(order.side)}>{order.side}</Td>
       <Td>{order.type}</Td>
       <Td numeric>{order.quantity}</Td>
-      <Td numeric>{order.limitPrice ?? "—"}</Td>
+      <Td numeric title={order.limitPrice ?? undefined}>
+        {order.limitPrice ? formatAdaptiveMarketPriceDisplay(order.limitPrice) : "—"}
+      </Td>
       <Td>{order.reduceOnly ? "yes" : "no"}</Td>
       <Td>{formatTimestamp(order.createdAt)}</Td>
       <Td>

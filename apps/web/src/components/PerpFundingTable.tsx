@@ -6,6 +6,7 @@ import {
   decimalVisualSign,
   type DecimalVisualSign,
 } from "../lib/decimal-string.ts";
+import { formatAdaptiveMarketPriceDisplay } from "../lib/format-adaptive-market-price.ts";
 import { formatTimestamp } from "../lib/format-timestamp.ts";
 import { queryKeys } from "../lib/query-keys.ts";
 import { EmptyState } from "./ui/EmptyState.tsx";
@@ -80,7 +81,9 @@ export function PerpFundingTable({
               <Td>{row.marginMode}</Td>
               <Td numeric>{row.quantity}</Td>
               <Td numeric>{row.fundingRate}</Td>
-              <Td numeric>{row.markPrice}</Td>
+              <Td numeric title={row.markPrice}>
+                {formatAdaptiveMarketPriceDisplay(row.markPrice)}
+              </Td>
               <Td numeric className={paymentClass(paymentSign)}>
                 {row.fundingPayment}
               </Td>
