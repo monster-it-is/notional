@@ -79,4 +79,20 @@ describe("ema incremental contract", () => {
       computeEma([...older, ...current], 3),
     );
   });
+
+  it("rebuilds 10,000 candles linearly matching computeEma", () => {
+    const candles = manyIndicatorCandles(10_000);
+    const session = rebuildEma(candles, 20);
+    expect(session?.points).toEqual(computeEma(candles, 20));
+    expect(session?.emaThroughTMinus1).toBeTruthy();
+
+    const replaced = replaceEmaLatest(session!, {
+      ...candles[candles.length - 1]!,
+      close: "250",
+    });
+    expect(replaced?.points).toEqual(
+      computeEma([...candles.slice(0, -1), { ...candles[candles.length - 1]!, close: "250" }], 20),
+    );
+    expect(replaced?.emaThroughTMinus1?.eq(session!.emaThroughTMinus1!)).toBe(true);
+  }, 20_000);
 });

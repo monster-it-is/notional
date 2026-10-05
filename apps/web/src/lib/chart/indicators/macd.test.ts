@@ -93,4 +93,23 @@ describe("macd incremental contract", () => {
       computeMacd([...older, ...current], PARAMS),
     );
   });
+
+  it("rebuilds 10,000 candles linearly matching computeMacd", () => {
+    const candles = manyIndicatorCandles(10_000);
+    const params = { fast: 12, slow: 26, signal: 9 };
+    const session = rebuildMacd(candles, params);
+    expect(session?.points).toEqual(computeMacd(candles, params));
+    expect(session?.fast.emaThroughTMinus1).toBeTruthy();
+    expect(session?.slow.emaThroughTMinus1).toBeTruthy();
+
+    const replaced = replaceMacdLatest(session!, {
+      ...candles[candles.length - 1]!,
+      close: "250",
+    });
+    expect(replaced?.points).toEqual(
+      computeMacd([...candles.slice(0, -1), { ...candles[candles.length - 1]!, close: "250" }], params),
+    );
+    expect(replaced?.fast.emaThroughTMinus1?.eq(session!.fast.emaThroughTMinus1!)).toBe(true);
+    expect(replaced?.slow.emaThroughTMinus1?.eq(session!.slow.emaThroughTMinus1!)).toBe(true);
+  }, 20_000);
 });

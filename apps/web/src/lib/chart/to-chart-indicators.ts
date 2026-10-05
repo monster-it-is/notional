@@ -39,6 +39,22 @@ export function toChartIndicatorLinePoint(point: ExactIndicatorPoint): LineData 
   return { time, value };
 }
 
+export function toChartBollingerPoint(point: ExactBollingerPoint): {
+  upper: LineData;
+  middle: LineData;
+  lower: LineData;
+} | null {
+  const upper = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.upper });
+  const middle = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.middle });
+  const lower = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.lower });
+
+  if (!upper || !middle || !lower) {
+    return null;
+  }
+
+  return { upper, middle, lower };
+}
+
 export function toChartBollingerLines(points: readonly ExactBollingerPoint[]): {
   upper: LineData[];
   middle: LineData[];
@@ -49,17 +65,15 @@ export function toChartBollingerLines(points: readonly ExactBollingerPoint[]): {
   const lower: LineData[] = [];
 
   for (const point of points) {
-    const upperPoint = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.upper });
-    const middlePoint = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.middle });
-    const lowerPoint = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.lower });
+    const mapped = toChartBollingerPoint(point);
 
-    if (!upperPoint || !middlePoint || !lowerPoint) {
+    if (!mapped) {
       continue;
     }
 
-    upper.push(upperPoint);
-    middle.push(middlePoint);
-    lower.push(lowerPoint);
+    upper.push(mapped.upper);
+    middle.push(mapped.middle);
+    lower.push(mapped.lower);
   }
 
   return { upper, middle, lower };
@@ -95,6 +109,47 @@ export function toChartMacdLines(points: readonly ExactMacdPoint[]): {
   return { macd, signal };
 }
 
+export function toChartMacdPoint(
+  point: ExactMacdPoint,
+  colors: ChartHistogramSignColors,
+): {
+  macd: LineData;
+  signal: LineData | null;
+  histogram: HistogramData | null;
+} | null {
+  const macd = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.macd });
+
+  if (!macd) {
+    return null;
+  }
+
+  const signal =
+    point.signal === undefined
+      ? null
+      : toChartIndicatorLinePoint({ openTime: point.openTime, value: point.signal });
+
+  if (point.histogram === undefined) {
+    return { macd, signal, histogram: null };
+  }
+
+  const mapped = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.histogram });
+
+  if (!mapped) {
+    return { macd, signal, histogram: null };
+  }
+
+  const sign = decimalVisualSign(point.histogram);
+  const histogram: HistogramData = { time: mapped.time, value: mapped.value };
+
+  if (sign === "positive") {
+    histogram.color = colors.positive;
+  } else if (sign === "negative") {
+    histogram.color = colors.negative;
+  }
+
+  return { macd, signal, histogram };
+}
+
 export function toChartMacdHistogram(
   points: readonly ExactMacdPoint[],
   colors: ChartHistogramSignColors,
@@ -102,26 +157,11 @@ export function toChartMacdHistogram(
   const histogram: HistogramData[] = [];
 
   for (const point of points) {
-    if (point.histogram === undefined) {
-      continue;
+    const mapped = toChartMacdPoint(point, colors)?.histogram;
+
+    if (mapped) {
+      histogram.push(mapped);
     }
-
-    const mapped = toChartIndicatorLinePoint({ openTime: point.openTime, value: point.histogram });
-
-    if (!mapped) {
-      continue;
-    }
-
-    const sign = decimalVisualSign(point.histogram);
-    const bar: HistogramData = { time: mapped.time, value: mapped.value };
-
-    if (sign === "positive") {
-      bar.color = colors.positive;
-    } else if (sign === "negative") {
-      bar.color = colors.negative;
-    }
-
-    histogram.push(bar);
   }
 
   return histogram;

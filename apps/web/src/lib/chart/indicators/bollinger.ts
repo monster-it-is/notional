@@ -117,19 +117,7 @@ export function rebuildBollinger(
     return null;
   }
 
-  const session = emptyBollinger(period, parsedMultiplier);
-
-  for (const sample of samples) {
-    const next = appendBollingerSample(session, sample);
-
-    if (!next) {
-      return null;
-    }
-
-    copyBollinger(session, next);
-  }
-
-  return session;
+  return bootstrapBollingerFromSamples(samples, period, parsedMultiplier);
 }
 
 export function replaceBollingerLatest(
@@ -202,6 +190,119 @@ export function resolvePopulationVariance(
   }
 
   return null;
+}
+
+function bootstrapBollingerFromSamples(
+  samples: readonly IndicatorSample[],
+  period: number,
+  multiplier: IndicatorDecimal,
+): BollingerSession | null {
+  if (samples.length === 0) {
+    return emptyBollinger(period, multiplier);
+  }
+
+  const committedWindow: IndicatorDecimal[] = [];
+  let committedSum = INDICATOR_ZERO;
+  let committedSumSquares = INDICATOR_ZERO;
+  const committedPoints: ExactBollingerPoint[] = [];
+  const periodValue = indicatorInteger(period);
+  const lastIndex = samples.length - 1;
+
+  for (let index = 0; index < lastIndex; index += 1) {
+    const sample = samples[index];
+
+    if (!sample) {
+      return null;
+    }
+
+    committedWindow.push(sample.close);
+    committedSum = committedSum.plus(sample.close);
+    committedSumSquares = committedSumSquares.plus(square(sample.close));
+
+    if (committedWindow.length > period) {
+      const removed = committedWindow.shift();
+
+      if (removed) {
+        committedSum = committedSum.minus(removed);
+        committedSumSquares = committedSumSquares.minus(square(removed));
+      }
+    }
+
+    if (committedWindow.length !== period) {
+      continue;
+    }
+
+    const point = bollingerPointFromWindow(
+      sample.openTime,
+      committedSum,
+      committedSumSquares,
+      periodValue,
+      multiplier,
+    );
+
+    if (!point) {
+      return null;
+    }
+
+    committedPoints.push(point);
+  }
+
+  const last = samples[lastIndex];
+
+  if (!last) {
+    return null;
+  }
+
+  return applyBollingerLatest(
+    {
+      period,
+      multiplier,
+      points: committedPoints,
+      committedCount: lastIndex,
+      committedWindow,
+      committedSum,
+      committedSumSquares,
+      committedPoints,
+      latest: null,
+      latestPoint: null,
+    },
+    last,
+  );
+}
+
+function bollingerPointFromWindow(
+  openTime: number,
+  sum: IndicatorDecimal,
+  sumSquares: IndicatorDecimal,
+  periodValue: IndicatorDecimal,
+  multiplier: IndicatorDecimal,
+): ExactBollingerPoint | null {
+  const mean = sum.div(periodValue);
+  const meanSquare = mean.times(mean);
+  const varianceCandidate = sumSquares.div(periodValue).minus(meanSquare);
+  const scale = maxMagnitude(meanSquare, sumSquares.div(periodValue));
+  const variance = resolvePopulationVariance(varianceCandidate, scale);
+
+  if (variance === null) {
+    return null;
+  }
+
+  const stdDev = variance.sqrt();
+
+  if (!stdDev.isFinite()) {
+    return null;
+  }
+
+  const offset = multiplier.times(stdDev);
+  const middle = serializeIndicatorValue(mean);
+  const upper = serializeIndicatorValue(mean.plus(offset));
+  const lower = serializeIndicatorValue(mean.minus(offset));
+
+  if (middle === null || upper === null || lower === null) {
+    return null;
+  }
+
+  return { openTime, middle, upper, lower };
 }
 
 function emptyBollinger(period: number, multiplier: IndicatorDecimal): BollingerSession {
@@ -290,39 +391,18 @@ function applyBollingerLatest(
   }
 
   const periodValue = indicatorInteger(next.period);
-  const sum = windowSum(next, sample.close);
-  const sumSquares = windowSumSquares(next, sample.close);
-  const mean = sum.div(periodValue);
-  const meanSquare = mean.times(mean);
-  const varianceCandidate = sumSquares.div(periodValue).minus(meanSquare);
-  const scale = maxMagnitude(meanSquare, sumSquares.div(periodValue));
-  const variance = resolvePopulationVariance(varianceCandidate, scale);
+  const latestPoint = bollingerPointFromWindow(
+    sample.openTime,
+    windowSum(next, sample.close),
+    windowSumSquares(next, sample.close),
+    periodValue,
+    next.multiplier,
+  );
 
-  if (variance === null) {
+  if (!latestPoint) {
     return null;
   }
 
-  const stdDev = variance.sqrt();
-
-  if (!stdDev.isFinite()) {
-    return null;
-  }
-
-  const offset = next.multiplier.times(stdDev);
-  const middle = serializeIndicatorValue(mean);
-  const upper = serializeIndicatorValue(mean.plus(offset));
-  const lower = serializeIndicatorValue(mean.minus(offset));
-
-  if (middle === null || upper === null || lower === null) {
-    return null;
-  }
-
-  const latestPoint: ExactBollingerPoint = {
-    openTime: sample.openTime,
-    middle,
-    upper,
-    lower,
-  };
   next.latestPoint = latestPoint;
   next.points = [...next.committedPoints, latestPoint];
   return next;
@@ -362,17 +442,4 @@ function square(value: IndicatorDecimal): IndicatorDecimal {
 
 function maxMagnitude(left: IndicatorDecimal, right: IndicatorDecimal): IndicatorDecimal {
   return left.abs().gte(right.abs()) ? left.abs() : right.abs();
-}
-
-function copyBollinger(target: BollingerSession, source: BollingerSession): void {
-  target.period = source.period;
-  target.multiplier = source.multiplier;
-  target.points = source.points;
-  target.committedCount = source.committedCount;
-  target.committedWindow = source.committedWindow;
-  target.committedSum = source.committedSum;
-  target.committedSumSquares = source.committedSumSquares;
-  target.committedPoints = source.committedPoints;
-  target.latest = source.latest;
-  target.latestPoint = source.latestPoint;
 }

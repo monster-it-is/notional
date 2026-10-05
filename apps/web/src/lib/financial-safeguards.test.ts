@@ -109,6 +109,7 @@ const indicatorCalculators = [
   "src/lib/chart/indicators/macd.ts",
   "src/lib/chart/indicators/bollinger.ts",
   "src/lib/chart/indicators/compute-enabled.ts",
+  "src/lib/chart/indicators/live-session.ts",
 ];
 
 describe("D11C indicator financial safeguards", () => {

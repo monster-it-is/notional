@@ -79,19 +79,7 @@ export function rebuildSma(candles: readonly Candle[], period: number): SmaSessi
     return null;
   }
 
-  const session = emptySma(period);
-
-  for (const sample of samples) {
-    const next = appendSmaSample(session, sample);
-
-    if (!next) {
-      return null;
-    }
-
-    copySma(session, next);
-  }
-
-  return session;
+  return bootstrapSmaFromSamples(samples, period);
 }
 
 export function replaceSmaLatest(session: SmaSession, candle: Candle): SmaSession | null {
@@ -116,6 +104,72 @@ export function appendSma(session: SmaSession, candle: Candle): SmaSession | nul
   }
 
   return appendSmaSample(session, sample);
+}
+
+function bootstrapSmaFromSamples(
+  samples: readonly IndicatorSample[],
+  period: number,
+): SmaSession | null {
+  if (samples.length === 0) {
+    return emptySma(period);
+  }
+
+  const committedWindow: IndicatorDecimal[] = [];
+  let committedSum = INDICATOR_ZERO;
+  const committedPoints: ExactIndicatorPoint[] = [];
+  const periodValue = indicatorInteger(period);
+  const lastIndex = samples.length - 1;
+
+  for (let index = 0; index < lastIndex; index += 1) {
+    const sample = samples[index];
+
+    if (!sample) {
+      return null;
+    }
+
+    committedWindow.push(sample.close);
+    committedSum = committedSum.plus(sample.close);
+
+    if (committedWindow.length > period) {
+      const removed = committedWindow.shift();
+
+      if (removed) {
+        committedSum = committedSum.minus(removed);
+      }
+    }
+
+    if (committedWindow.length !== period) {
+      continue;
+    }
+
+    const serialized = serializeIndicatorValue(committedSum.div(periodValue));
+
+    if (serialized === null) {
+      return null;
+    }
+
+    committedPoints.push({ openTime: sample.openTime, value: serialized });
+  }
+
+  const last = samples[lastIndex];
+
+  if (!last) {
+    return null;
+  }
+
+  return applySmaLatest(
+    {
+      period,
+      points: committedPoints,
+      committedCount: lastIndex,
+      committedWindow,
+      committedSum,
+      committedPoints,
+      latest: null,
+      latestPoint: null,
+    },
+    last,
+  );
 }
 
 function emptySma(period: number): SmaSession {
@@ -234,15 +288,4 @@ function cloneSma(session: SmaSession): SmaSession {
     latest: session.latest,
     latestPoint: session.latestPoint,
   };
-}
-
-function copySma(target: SmaSession, source: SmaSession): void {
-  target.period = source.period;
-  target.points = source.points;
-  target.committedCount = source.committedCount;
-  target.committedWindow = source.committedWindow;
-  target.committedSum = source.committedSum;
-  target.committedPoints = source.committedPoints;
-  target.latest = source.latest;
-  target.latestPoint = source.latestPoint;
 }

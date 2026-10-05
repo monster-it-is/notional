@@ -13,13 +13,18 @@ import {
   toAlignedChartPoints,
   toChartLinePoints,
 } from "../../lib/chart/to-chart-candles.ts";
+import { computeBollinger } from "../../lib/chart/indicators/bollinger.ts";
+import { computeEma } from "../../lib/chart/indicators/ema.ts";
 import { computeMacd } from "../../lib/chart/indicators/macd.ts";
 import { computeRsi } from "../../lib/chart/indicators/rsi.ts";
 import { computeSma } from "../../lib/chart/indicators/sma.ts";
 import {
+  toChartBollingerPoint,
   toChartIndicatorLine,
+  toChartIndicatorLinePoint,
   toChartMacdHistogram,
   toChartMacdLines,
+  toChartMacdPoint,
 } from "../../lib/chart/to-chart-indicators.ts";
 import { queryKeys } from "../../lib/query-keys.ts";
 import { ThemeProvider, useTheme } from "../../theme/ThemeProvider.tsx";
@@ -2587,6 +2592,42 @@ describe("MarketChart", () => {
     );
   });
 
+  it("bootstraps the new symbol overlay once after chart recreation", async () => {
+    const user = userEvent.setup();
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT" ? ethCandles : btcCandles,
+    );
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const sma = overlaySeries[0]!;
+    await waitFor(() =>
+      expect(sma.setData).toHaveBeenLastCalledWith(
+        toChartIndicatorLine(computeSma(ethCandles.candles, 1) ?? []),
+      ),
+    );
+    expect(sma.setData).toHaveBeenCalledTimes(1);
+  });
+
   it("creates an RSI pane with 0–100 scale and 70/30/50 guides", async () => {
     const user = userEvent.setup();
     mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(5) });
@@ -3084,6 +3125,56 @@ describe("MarketChart", () => {
     expect(createChart).toHaveBeenCalledTimes(1);
   });
 
+  it("bootstraps an enabled indicator once on a prefetched interval change", async () => {
+    const user = userEvent.setup();
+    const minuteCandles = oscillatorCandles(8, "105.00");
+    const hourCandles = oscillatorCandles(8, "150.00");
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h"
+        ? { ...btcCandles, interval: "1h", candles: hourCandles }
+        : { ...btcCandles, candles: minuteCandles },
+    );
+    const onIntervalChange = vi.fn();
+    const view = renderChart("BTCUSDT", false, { onIntervalChange });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const sma = overlaySeries[0]!;
+    await view.client.prefetchQuery({
+      queryKey: queryKeys.candles.list({
+        symbol: "BTCUSDT",
+        interval: "1h",
+        limit: TRADE_CHART_LIMIT,
+      }),
+      queryFn: () => getCandles({ symbol: "BTCUSDT", interval: "1h", limit: TRADE_CHART_LIMIT }),
+    });
+    sma.setData.mockClear();
+    sma.update.mockClear();
+    const fitBefore = fitContent.mock.calls.length;
+    const addsBefore = addSeries.mock.calls.length;
+    view.rerender(
+      <ThemeProvider>
+        <QueryClientProvider client={view.client}>
+          <MarketChart symbol="BTCUSDT" interval="1h" onIntervalChange={onIntervalChange} />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    await waitFor(() =>
+      expect(sma.setData).toHaveBeenLastCalledWith(toChartIndicatorLine(computeSma(hourCandles, 1) ?? [])),
+    );
+    expect(sma.setData).toHaveBeenCalledTimes(1);
+    expect(sma.update).not.toHaveBeenCalled();
+    expect(overlaySeries[0]).toBe(sma);
+    expect(addSeries.mock.calls.length).toBe(addsBefore);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore + 1);
+  });
+
   it("recomputes RSI and MACD on backfill without fitContent", async () => {
     const user = userEvent.setup();
     const latest = oscillatorCandles(40);
@@ -3146,5 +3237,499 @@ describe("MarketChart", () => {
     const removesBeforeUnmount = remove.mock.calls.length;
     view.unmount();
     expect(remove.mock.calls.length).toBeGreaterThan(removesBeforeUnmount);
+  });
+
+  it("uses series.update for SMA live replacements and does not setData after bootstrap", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(overlaySeries[0]?.setData).toHaveBeenCalledWith(
+        toChartIndicatorLine(computeSma([btcCandle], 1) ?? []),
+      ),
+    );
+    const sma = overlaySeries[0]!;
+    sma.setData.mockClear();
+    sma.update.mockClear();
+
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    await waitFor(() => expect(sma.update).toHaveBeenCalledTimes(1));
+    expect(sma.update).toHaveBeenLastCalledWith(
+      toChartIndicatorLinePoint(computeSma([{ ...btcCandle, close: "106.00" }], 1)![0]!),
+    );
+    expect(sma.setData).not.toHaveBeenCalled();
+
+    marketSocket.emitCandle(liveFrame({ close: "107.00" }));
+    await waitFor(() => expect(sma.update).toHaveBeenCalledTimes(2));
+    marketSocket.emitCandle(liveFrame({ close: "108.00" }));
+    await waitFor(() => expect(sma.update).toHaveBeenCalledTimes(3));
+    expect(sma.setData).not.toHaveBeenCalled();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(overlaySeries[0]).toBe(sma);
+  });
+
+  it("uses series.update for EMA live replacements without compounding setData", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(5) });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("EMA"));
+    const period = screen.getByLabelText("EMA period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    const history = oscillatorCandles(5);
+    await waitFor(() =>
+      expect(overlaySeries[0]?.setData).toHaveBeenCalledWith(
+        toChartIndicatorLine(computeEma(history, 2) ?? []),
+      ),
+    );
+    const ema = overlaySeries[0]!;
+    ema.setData.mockClear();
+    ema.update.mockClear();
+    const last = history[history.length - 1]!;
+
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "120.00" }));
+    await waitFor(() => expect(ema.update).toHaveBeenCalledTimes(1));
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "130.00" }));
+    await waitFor(() => expect(ema.update).toHaveBeenCalledTimes(2));
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "90.00" }));
+    await waitFor(() => expect(ema.update).toHaveBeenCalledTimes(3));
+    expect(ema.setData).not.toHaveBeenCalled();
+
+    const replaced = [...history.slice(0, -1), { ...last, close: "90.00" }];
+    const appended = {
+      ...last,
+      openTime: last.openTime + 900_000,
+      closeTime: last.closeTime + 900_000,
+      close: "95.00",
+    };
+    const fitBefore = fitContent.mock.calls.length;
+    const addsBefore = addSeries.mock.calls.length;
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: appended.openTime,
+        closeTime: appended.closeTime,
+        close: appended.close,
+      }),
+    );
+    await waitFor(() => expect(ema.update).toHaveBeenCalledTimes(4));
+    expect(ema.update).toHaveBeenLastCalledWith(
+      toChartIndicatorLinePoint(computeEma([...replaced, appended], 2)!.at(-1)!),
+    );
+    expect(ema.setData).not.toHaveBeenCalled();
+    expect(overlaySeries[0]).toBe(ema);
+    expect(addSeries.mock.calls.length).toBe(addsBefore);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+  });
+
+  it("updates three Bollinger series on live replacement without setData", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(5) });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("Bollinger Bands"));
+    const period = screen.getByLabelText("Bollinger period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(3));
+    for (const series of overlaySeries) {
+      series.setData.mockClear();
+      series.update.mockClear();
+    }
+    const last = oscillatorCandles(5).at(-1)!;
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "140.00" }));
+    await waitFor(() => expect(overlaySeries[0]?.update).toHaveBeenCalledTimes(1));
+    expect(overlaySeries[1]?.update).toHaveBeenCalledTimes(1);
+    expect(overlaySeries[2]?.update).toHaveBeenCalledTimes(1);
+    const bands = toChartBollingerPoint(
+      computeBollinger(
+        [...oscillatorCandles(5).slice(0, -1), { ...last, close: "140.00" }],
+        2,
+        "2",
+      )!.at(-1)!,
+    );
+    expect(overlaySeries[0]?.update).toHaveBeenLastCalledWith(bands?.upper);
+    expect(overlaySeries[1]?.update).toHaveBeenLastCalledWith(bands?.middle);
+    expect(overlaySeries[2]?.update).toHaveBeenLastCalledWith(bands?.lower);
+    expect(overlaySeries.every((series) => series.setData.mock.calls.length === 0)).toBe(true);
+
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "80.00" }));
+    await waitFor(() => expect(overlaySeries[0]?.update).toHaveBeenCalledTimes(2));
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "110.00" }));
+    await waitFor(() => expect(overlaySeries[0]?.update).toHaveBeenCalledTimes(3));
+    expect(overlaySeries.every((series) => series.setData.mock.calls.length === 0)).toBe(true);
+
+    const replaced = [...oscillatorCandles(5).slice(0, -1), { ...last, close: "110.00" }];
+    const appended = {
+      ...last,
+      openTime: last.openTime + 900_000,
+      closeTime: last.closeTime + 900_000,
+      close: "125.00",
+    };
+    const fitBefore = fitContent.mock.calls.length;
+    const addsBefore = addSeries.mock.calls.length;
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: appended.openTime,
+        closeTime: appended.closeTime,
+        close: appended.close,
+      }),
+    );
+    await waitFor(() => expect(overlaySeries[0]?.update).toHaveBeenCalledTimes(4));
+    expect(overlaySeries[1]?.update).toHaveBeenCalledTimes(4);
+    expect(overlaySeries[2]?.update).toHaveBeenCalledTimes(4);
+    const appendBands = toChartBollingerPoint(
+      computeBollinger([...replaced, appended], 2, "2")!.at(-1)!,
+    );
+    expect(overlaySeries[0]?.update).toHaveBeenLastCalledWith(appendBands?.upper);
+    expect(overlaySeries[1]?.update).toHaveBeenLastCalledWith(appendBands?.middle);
+    expect(overlaySeries[2]?.update).toHaveBeenLastCalledWith(appendBands?.lower);
+    expect(overlaySeries.every((series) => series.setData.mock.calls.length === 0)).toBe(true);
+    expect(overlaySeries).toHaveLength(3);
+    expect(addSeries.mock.calls.length).toBe(addsBefore);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+  });
+
+  it("updates RSI with series.update on live replacement and append", async () => {
+    const user = userEvent.setup();
+    const history = oscillatorCandles(6, "10");
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: history });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    const period = screen.getByLabelText("RSI period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0]!;
+    rsi.setData.mockClear();
+    rsi.update.mockClear();
+    const last = history[history.length - 1]!;
+
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "20" }));
+    await waitFor(() => expect(rsi.update).toHaveBeenCalledTimes(1));
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "4" }));
+    await waitFor(() => expect(rsi.update).toHaveBeenCalledTimes(2));
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "16" }));
+    await waitFor(() => expect(rsi.update).toHaveBeenCalledTimes(3));
+    expect(rsi.setData).not.toHaveBeenCalled();
+
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: last.openTime + 900_000,
+        closeTime: last.closeTime + 900_000,
+        close: "18",
+      }),
+    );
+    await waitFor(() => expect(rsi.update).toHaveBeenCalledTimes(4));
+    expect(rsi.setData).not.toHaveBeenCalled();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(extraSeries[0]).toBe(rsi);
+  });
+
+  it("updates MACD line, signal, and histogram on live replacement and append", async () => {
+    const user = userEvent.setup();
+    const history = rampedOscillatorCandles(40, 100, 1);
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: history });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const [macdLine, signal, histogram] = extraSeries;
+    macdLine!.setData.mockClear();
+    signal!.setData.mockClear();
+    histogram!.setData.mockClear();
+    macdLine!.update.mockClear();
+    signal!.update.mockClear();
+    histogram!.update.mockClear();
+    const last = history[history.length - 1]!;
+
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "200" }));
+    await waitFor(() => expect(macdLine?.update).toHaveBeenCalledTimes(1));
+    expect(signal?.update).toHaveBeenCalledTimes(1);
+    expect(histogram?.update).toHaveBeenCalledTimes(1);
+    const replaced = computeMacd(
+      [...history.slice(0, -1), { ...last, close: "200" }],
+      DEFAULT_MACD_PARAMS,
+    )!.at(-1)!;
+    const mapped = toChartMacdPoint(replaced, MACD_HISTOGRAM_COLORS);
+    expect(macdLine?.update).toHaveBeenLastCalledWith(mapped?.macd);
+    expect(signal?.update).toHaveBeenLastCalledWith(mapped?.signal);
+    expect(histogram?.update).toHaveBeenLastCalledWith(mapped?.histogram);
+
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "80" }));
+    await waitFor(() => expect(macdLine?.update).toHaveBeenCalledTimes(2));
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "150" }));
+    await waitFor(() => expect(macdLine?.update).toHaveBeenCalledTimes(3));
+    expect(macdLine?.setData).not.toHaveBeenCalled();
+    expect(signal?.setData).not.toHaveBeenCalled();
+    expect(histogram?.setData).not.toHaveBeenCalled();
+
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: last.openTime + 900_000,
+        closeTime: last.closeTime + 900_000,
+        close: "160",
+      }),
+    );
+    await waitFor(() => expect(macdLine?.update).toHaveBeenCalledTimes(4));
+    expect(signal?.update).toHaveBeenCalledTimes(4);
+    expect(histogram?.update).toHaveBeenCalledTimes(4);
+    expect(macdLine?.setData).not.toHaveBeenCalled();
+    expect(signal?.setData).not.toHaveBeenCalled();
+    expect(histogram?.setData).not.toHaveBeenCalled();
+    expect(extraSeries.slice(0, 3)).toEqual([macdLine, signal, histogram]);
+  });
+
+  it("appends an SMA point with update and skips warm-up output", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(2) });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "3");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const sma = overlaySeries[0]!;
+    sma.setData.mockClear();
+    sma.update.mockClear();
+    const last = oscillatorCandles(2).at(-1)!;
+    marketSocket.emitCandle(liveFrame({ openTime: last.openTime, closeTime: last.closeTime, close: "106.00" }));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalled());
+    expect(sma.update).not.toHaveBeenCalled();
+    expect(sma.setData).not.toHaveBeenCalled();
+
+    sma.setData.mockClear();
+    sma.update.mockClear();
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: last.openTime + 900_000,
+        closeTime: last.closeTime + 900_000,
+        close: "107.00",
+      }),
+    );
+    await waitFor(() => expect(sma.update).toHaveBeenCalledTimes(1));
+    expect(sma.setData).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds SMA with setData on cap eviction and does not treat it as a live append", async () => {
+    const user = userEvent.setup();
+    const filled: CandleListResponse = {
+      ...btcCandles,
+      candles: Array.from({ length: TRADE_CHART_MAX_CANDLES }, (_, index) => ({
+        ...btcCandle,
+        openTime: btcCandle.openTime + index * 900_000,
+        closeTime: btcCandle.closeTime + index * 900_000,
+        close: String(100 + (index % 17)),
+      })),
+    };
+    mockedGetCandles.mockResolvedValue(filled);
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const sma = overlaySeries[0]!;
+    sma.setData.mockClear();
+    sma.update.mockClear();
+    const last = filled.candles[filled.candles.length - 1]!;
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: last.openTime + 900_000,
+        closeTime: last.closeTime + 900_000,
+        close: "9.00",
+      }),
+    );
+    await waitFor(() => expect(sma.setData).toHaveBeenCalledTimes(1));
+    expect(sma.update).not.toHaveBeenCalled();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebuilds RSI with setData after reconnect repair", async () => {
+    const user = userEvent.setup();
+    const first = oscillatorCandles(8, "105.00");
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: first });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    const period = screen.getByLabelText("RSI period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0]!;
+    rsi.setData.mockClear();
+    rsi.update.mockClear();
+    const repaired = oscillatorCandles(8, "80.00");
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: repaired });
+    marketSocket.emitReconnect();
+    await waitFor(() =>
+      expect(rsi.setData).toHaveBeenLastCalledWith(toChartIndicatorLine(computeRsi(repaired, 2) ?? [])),
+    );
+    expect(rsi.update).not.toHaveBeenCalled();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(extraSeries[0]).toBe(rsi);
+  });
+
+  it("rebuilds indicators with setData when reconnect only changes the last candle, then returns to update", async () => {
+    const user = userEvent.setup();
+    const first = oscillatorCandles(8, "105.00");
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: first });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("RSI"));
+    const period = screen.getByLabelText("RSI period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(extraSeries).toHaveLength(1));
+    const rsi = extraSeries[0]!;
+    rsi.setData.mockClear();
+    rsi.update.mockClear();
+    candlestick.setData.mockClear();
+    candlestick.update.mockClear();
+    const fitBefore = fitContent.mock.calls.length;
+    const last = first[first.length - 1]!;
+    const repaired = [...first.slice(0, -1), { ...last, close: "140.00" }];
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: repaired });
+    marketSocket.emitReconnect();
+    await waitFor(() => expect(rsi.setData).toHaveBeenCalledTimes(1));
+    expect(rsi.setData).toHaveBeenLastCalledWith(toChartIndicatorLine(computeRsi(repaired, 2) ?? []));
+    expect(rsi.update).not.toHaveBeenCalled();
+    expect(candlestick.update).toHaveBeenCalled();
+    expect(candlestick.setData).not.toHaveBeenCalled();
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(fitContent).toHaveBeenCalledTimes(fitBefore);
+    expect(extraSeries[0]).toBe(rsi);
+
+    rsi.setData.mockClear();
+    rsi.update.mockClear();
+    marketSocket.emitCandle(
+      liveFrame({
+        openTime: last.openTime,
+        closeTime: last.closeTime,
+        close: "141.00",
+      }),
+    );
+    await waitFor(() => expect(rsi.update).toHaveBeenCalledTimes(1));
+    expect(rsi.setData).not.toHaveBeenCalled();
+    expect(extraSeries[0]).toBe(rsi);
+  });
+
+  it("rebuilds only SMA on period change and keeps EMA identity", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: oscillatorCandles(8) });
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("EMA"));
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(2));
+    const ema = overlaySeries[0]!;
+    const sma = overlaySeries[1]!;
+    ema.setData.mockClear();
+    sma.setData.mockClear();
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "2");
+    await user.keyboard("{Enter}");
+    await waitFor(() =>
+      expect(sma.setData).toHaveBeenCalledWith(
+        toChartIndicatorLine(computeSma(oscillatorCandles(8), 2) ?? []),
+      ),
+    );
+    expect(ema.setData).not.toHaveBeenCalled();
+    expect(overlaySeries[0]).toBe(ema);
+    expect(overlaySeries[1]).toBe(sma);
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not resurrect a disabled SMA session after live updates", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(0));
+    marketSocket.emitCandle(liveFrame({ close: "140.00" }));
+    await waitFor(() => expect(candlestick.update).toHaveBeenCalled());
+    await user.click(screen.getByLabelText("SMA"));
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    await waitFor(() =>
+      expect(overlaySeries[0]?.setData).toHaveBeenLastCalledWith(
+        toChartIndicatorLine(computeSma([{ ...btcCandle, close: "140.00" }], 1) ?? []),
+      ),
+    );
+  });
+
+  it("keeps MACD histogram theme setData separate from live mutation", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockResolvedValue({ ...btcCandles, candles: rampedOscillatorCandles(40, 100, 1) });
+    renderChart("BTCUSDT", false, { themeToggle: true });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("MACD"));
+    await waitFor(() => expect(extraSeries).toHaveLength(3));
+    const [macdLine, signal, histogram] = extraSeries;
+    macdLine!.setData.mockClear();
+    signal!.setData.mockClear();
+    histogram!.setData.mockClear();
+    macdLine!.update.mockClear();
+    await user.click(screen.getByRole("button", { name: "Toggle theme" }));
+    await waitFor(() => expect(histogram?.setData.mock.calls.length).toBeGreaterThan(0));
+    expect(macdLine?.setData).not.toHaveBeenCalled();
+    expect(signal?.setData).not.toHaveBeenCalled();
+    expect(macdLine?.update).not.toHaveBeenCalled();
+  });
+
+  it("applies SMA live updates once under Strict Mode", async () => {
+    const user = userEvent.setup();
+    renderChart("BTCUSDT", true);
+    await waitFor(() => expect(createChart).toHaveBeenCalled());
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "1");
+    await user.keyboard("{Enter}");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    const sma = overlaySeries[0]!;
+    sma.setData.mockClear();
+    sma.update.mockClear();
+    marketSocket.emitCandle(liveFrame({ close: "106.00" }));
+    await waitFor(() => expect(sma.update).toHaveBeenCalledTimes(1));
+    expect(sma.setData).not.toHaveBeenCalled();
+    expect(overlaySeries).toHaveLength(1);
   });
 });

@@ -80,4 +80,21 @@ describe("rsi incremental contract", () => {
       computeRsi([...older, ...current], 2),
     );
   });
+
+  it("rebuilds 10,000 candles linearly matching computeRsi", () => {
+    const candles = manyIndicatorCandles(10_000);
+    const session = rebuildRsi(candles, 14);
+    expect(session?.points).toEqual(computeRsi(candles, 14));
+    expect(session?.avgGainThroughTMinus1).toBeTruthy();
+
+    const replaced = replaceRsiLatest(session!, {
+      ...candles[candles.length - 1]!,
+      close: "250",
+    });
+    expect(replaced?.points).toEqual(
+      computeRsi([...candles.slice(0, -1), { ...candles[candles.length - 1]!, close: "250" }], 14),
+    );
+    expect(replaced?.avgGainThroughTMinus1?.eq(session!.avgGainThroughTMinus1!)).toBe(true);
+    expect(replaced?.avgLossThroughTMinus1?.eq(session!.avgLossThroughTMinus1!)).toBe(true);
+  }, 20_000);
 });

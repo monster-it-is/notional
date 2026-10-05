@@ -103,4 +103,19 @@ describe("sma incremental contract", () => {
       computeSma([...older, ...current], 3),
     );
   });
+
+  it("rebuilds 10,000 candles linearly matching computeSma", () => {
+    const candles = manyIndicatorCandles(10_000);
+    const session = rebuildSma(candles, 20);
+    expect(session?.points).toEqual(computeSma(candles, 20));
+    expect(session?.latestPoint?.openTime).toBe(candles[candles.length - 1]?.openTime);
+
+    const replaced = replaceSmaLatest(session!, {
+      ...candles[candles.length - 1]!,
+      close: "250",
+    });
+    expect(replaced?.points).toEqual(
+      computeSma([...candles.slice(0, -1), { ...candles[candles.length - 1]!, close: "250" }], 20),
+    );
+  }, 20_000);
 });

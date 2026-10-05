@@ -102,19 +102,7 @@ export function rebuildRsi(candles: readonly Candle[], period: number): RsiSessi
     return null;
   }
 
-  const session = emptyRsi(period);
-
-  for (const sample of samples) {
-    const next = appendRsiSample(session, sample);
-
-    if (!next) {
-      return null;
-    }
-
-    copyRsi(session, next);
-  }
-
-  return session;
+  return bootstrapRsiFromSamples(samples, period);
 }
 
 export function replaceRsiLatest(session: RsiSession, candle: Candle): RsiSession | null {
@@ -147,6 +135,94 @@ function appendRsiSample(session: RsiSession, sample: IndicatorSample): RsiSessi
   }
 
   return applyRsiLatest(commitRsiLatest(session), sample);
+}
+
+function bootstrapRsiFromSamples(
+  samples: readonly IndicatorSample[],
+  period: number,
+): RsiSession | null {
+  if (samples.length === 0) {
+    return emptyRsi(period);
+  }
+
+  const seedCloses: IndicatorDecimal[] = [];
+  let prevClose: IndicatorDecimal | null = null;
+  let avgGainThroughTMinus1: IndicatorDecimal | null = null;
+  let avgLossThroughTMinus1: IndicatorDecimal | null = null;
+  const committedPoints: ExactIndicatorPoint[] = [];
+  const needed = period + 1;
+  const lastIndex = samples.length - 1;
+
+  for (let index = 0; index < lastIndex; index += 1) {
+    const sample = samples[index];
+
+    if (!sample) {
+      return null;
+    }
+
+    if (avgGainThroughTMinus1 === null || avgLossThroughTMinus1 === null) {
+      seedCloses.push(sample.close);
+
+      if (seedCloses.length === needed) {
+        const initial = initialAverages(seedCloses, period);
+        avgGainThroughTMinus1 = initial.avgGain;
+        avgLossThroughTMinus1 = initial.avgLoss;
+        seedCloses.length = 0;
+        const serialized = serializeIndicatorValue(
+          rsiFromAverages(avgGainThroughTMinus1, avgLossThroughTMinus1),
+        );
+
+        if (serialized === null) {
+          return null;
+        }
+
+        committedPoints.push({ openTime: sample.openTime, value: serialized });
+      }
+    } else if (prevClose) {
+      const wilder = wilderStep(
+        prevClose,
+        sample.close,
+        avgGainThroughTMinus1,
+        avgLossThroughTMinus1,
+        period,
+      );
+      avgGainThroughTMinus1 = wilder.avgGain;
+      avgLossThroughTMinus1 = wilder.avgLoss;
+      const serialized = serializeIndicatorValue(
+        rsiFromAverages(avgGainThroughTMinus1, avgLossThroughTMinus1),
+      );
+
+      if (serialized === null) {
+        return null;
+      }
+
+      committedPoints.push({ openTime: sample.openTime, value: serialized });
+    }
+
+    prevClose = sample.close;
+  }
+
+  const last = samples[lastIndex];
+
+  if (!last) {
+    return null;
+  }
+
+  return applyRsiLatest(
+    {
+      period,
+      points: committedPoints,
+      committedCount: lastIndex,
+      seedCloses: avgGainThroughTMinus1 === null ? seedCloses : [],
+      prevClose,
+      avgGainThroughTMinus1,
+      avgLossThroughTMinus1,
+      committedPoints,
+      latest: null,
+      latestPoint: null,
+    },
+    last,
+  );
 }
 
 function emptyRsi(period: number): RsiSession {
@@ -327,17 +403,4 @@ function rsiFromAverages(avgGain: IndicatorDecimal, avgLoss: IndicatorDecimal): 
 
   const rs = avgGain.div(avgLoss);
   return INDICATOR_HUNDRED.minus(INDICATOR_HUNDRED.div(INDICATOR_ONE.plus(rs)));
-}
-
-function copyRsi(target: RsiSession, source: RsiSession): void {
-  target.period = source.period;
-  target.points = source.points;
-  target.committedCount = source.committedCount;
-  target.seedCloses = source.seedCloses;
-  target.prevClose = source.prevClose;
-  target.avgGainThroughTMinus1 = source.avgGainThroughTMinus1;
-  target.avgLossThroughTMinus1 = source.avgLossThroughTMinus1;
-  target.committedPoints = source.committedPoints;
-  target.latest = source.latest;
-  target.latestPoint = source.latestPoint;
 }

@@ -113,4 +113,22 @@ describe("bollinger incremental contract", () => {
       computeBollinger([...older, ...current], 3, "2"),
     );
   });
+
+  it("rebuilds 10,000 candles linearly matching computeBollinger", () => {
+    const candles = manyIndicatorCandles(10_000);
+    const session = rebuildBollinger(candles, 20, "2");
+    expect(session?.points).toEqual(computeBollinger(candles, 20, "2"));
+
+    const replaced = replaceBollingerLatest(session!, {
+      ...candles[candles.length - 1]!,
+      close: "250",
+    });
+    expect(replaced?.points).toEqual(
+      computeBollinger(
+        [...candles.slice(0, -1), { ...candles[candles.length - 1]!, close: "250" }],
+        20,
+        "2",
+      ),
+    );
+  }, 20_000);
 });

@@ -147,25 +147,38 @@ export function rebuildMacd(candles: readonly Candle[], params: MacdParams): Mac
     return null;
   }
 
-  const empty = emptyMacd(params);
+  const fast = rebuildEmaFromSamples(samples, params.fast);
+  const slow = rebuildEmaFromSamples(samples, params.slow);
 
-  if (!empty) {
+  if (!fast || !slow) {
     return null;
   }
 
-  let session = empty;
+  const macdSamples = macdSamplesFromEmaSessions(fast, slow);
 
-  for (const sample of samples) {
-    const next = appendMacdSample(session, sample);
-
-    if (!next) {
-      return null;
-    }
-
-    session = next;
+  if (!macdSamples) {
+    return null;
   }
 
-  return session;
+  const signal = rebuildEmaFromSamples(macdSamples, params.signal);
+
+  if (!signal) {
+    return null;
+  }
+
+  const points = assembleMacdPoints(macdSamples, signal);
+
+  if (!points) {
+    return null;
+  }
+
+  const last = samples[samples.length - 1];
+  const lastMacd = points[points.length - 1];
+  const latestPoint =
+    last && lastMacd && lastMacd.openTime === last.openTime ? lastMacd : null;
+  const committedPoints = latestPoint ? points.slice(0, -1) : points;
+
+  return { params, points, committedPoints, fast, slow, signal };
 }
 
 export function replaceMacdLatest(session: MacdSession, candle: Candle): MacdSession | null {
@@ -204,16 +217,84 @@ export function isValidMacdParams(params: MacdParams): boolean {
   );
 }
 
-function emptyMacd(params: MacdParams): MacdSession | null {
-  const fast = rebuildEmaFromSamples([], params.fast);
-  const slow = rebuildEmaFromSamples([], params.slow);
-  const signal = rebuildEmaFromSamples([], params.signal);
+function macdSamplesFromEmaSessions(
+  fast: EmaSession,
+  slow: EmaSession,
+): IndicatorSample[] | null {
+  const fastByTime = new Map<number, IndicatorDecimal>();
 
-  if (!fast || !slow || !signal) {
-    return null;
+  for (let index = 0; index < fast.points.length; index += 1) {
+    const point = fast.points[index];
+    const value = fast.values[index];
+
+    if (!point || !value) {
+      return null;
+    }
+
+    fastByTime.set(point.openTime, value);
   }
 
-  return { params, points: [], committedPoints: [], fast, slow, signal };
+  const samples: IndicatorSample[] = [];
+
+  for (let index = 0; index < slow.points.length; index += 1) {
+    const point = slow.points[index];
+    const value = slow.values[index];
+    const fastValue = point ? fastByTime.get(point.openTime) : undefined;
+
+    if (!point || !value || !fastValue) {
+      return null;
+    }
+
+    samples.push({ openTime: point.openTime, close: fastValue.minus(value) });
+  }
+
+  return samples;
+}
+
+function assembleMacdPoints(
+  macdSamples: readonly IndicatorSample[],
+  signal: EmaSession,
+): ExactMacdPoint[] | null {
+  const signalByTime = new Map<number, { value: IndicatorDecimal; serialized: string }>();
+
+  for (let index = 0; index < signal.points.length; index += 1) {
+    const point = signal.points[index];
+    const value = signal.values[index];
+
+    if (!point || !value) {
+      return null;
+    }
+
+    signalByTime.set(point.openTime, { value, serialized: point.value });
+  }
+
+  const points: ExactMacdPoint[] = [];
+
+  for (const sample of macdSamples) {
+    const macdSerialized = serializeIndicatorValue(sample.close);
+
+    if (macdSerialized === null) {
+      return null;
+    }
+
+    const assembled: ExactMacdPoint = { openTime: sample.openTime, macd: macdSerialized };
+    const signalAt = signalByTime.get(sample.openTime);
+
+    if (signalAt) {
+      const histogram = serializeIndicatorValue(sample.close.minus(signalAt.value));
+
+      if (histogram === null) {
+        return null;
+      }
+
+      assembled.signal = signalAt.serialized;
+      assembled.histogram = histogram;
+    }
+
+    points.push(assembled);
+  }
+
+  return points;
 }
 
 function appendMacdSample(session: MacdSession, sample: IndicatorSample): MacdSession | null {

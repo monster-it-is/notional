@@ -43,7 +43,22 @@ import {
   type ChartCandleSelection,
 } from "../../lib/chart/resolve-legend-candle.ts";
 import { shouldRequestOlderCandles } from "../../lib/chart/should-request-older-candles.ts";
-import { computeEnabledIndicators } from "../../lib/chart/indicators/compute-enabled.ts";
+import {
+  anyIndicatorEnabled,
+  applyLiveIndicatorAppend,
+  applyLiveIndicatorReplace,
+  bootstrapIndicatorSessions,
+  canApplyLiveAppend,
+  canApplyLiveReplace,
+  classifyLiveIndicatorPath,
+  createIndicatorSessionIdentity,
+  reconcileIndicatorSettings,
+  rebuildIndicatorKind,
+  type IndicatorKind,
+  type IndicatorLiveSessions,
+  type IndicatorLiveUpdates,
+  type IndicatorSessionIdentity,
+} from "../../lib/chart/indicators/live-session.ts";
 import {
   DEFAULT_INDICATOR_SETTINGS,
   oscillatorEnabledCount,
@@ -51,9 +66,12 @@ import {
 } from "../../lib/chart/indicators/settings.ts";
 import {
   toChartBollingerLines,
+  toChartBollingerPoint,
   toChartIndicatorLine,
+  toChartIndicatorLinePoint,
   toChartMacdHistogram,
   toChartMacdLines,
+  toChartMacdPoint,
 } from "../../lib/chart/to-chart-indicators.ts";
 import {
   colorChartVolumePoints,
@@ -136,7 +154,12 @@ export function MarketChart({
   const rsiMidLineRef = useRef<IPriceLine | null>(null);
   const rsiOversoldLineRef = useRef<IPriceLine | null>(null);
   const macdZeroLineRef = useRef<IPriceLine | null>(null);
-  const overlayValuesRef = useRef(computeEnabledIndicators([], DEFAULT_INDICATOR_SETTINGS));
+  const indicatorSessionsRef = useRef<IndicatorLiveSessions | null>(null);
+  const indicatorSettingsRef = useRef(indicatorSettings);
+  const indicatorDataIdentityRef = useRef<string | null>(null);
+  const indicatorReconnectRepairRef = useRef<{ symbol: string; interval: CandleInterval } | null>(
+    null,
+  );
   const fittedKeyRef = useRef<string | null>(null);
   const previousPointsRef = useRef<CandlestickData[]>([]);
   const pointsRef = useRef(EMPTY_POINTS);
@@ -183,15 +206,10 @@ export function MarketChart({
     [candlesQuery.data],
   );
   const hasRenderableData = points.candles.length > 0;
-  const overlayValues = useMemo(
-    () =>
-      computeEnabledIndicators(candlesQuery.data?.candles ?? EMPTY_CANDLES, indicatorSettings),
-    [candlesQuery.data, indicatorSettings],
-  );
 
   useLayoutEffect(() => {
-    overlayValuesRef.current = overlayValues;
-  }, [overlayValues]);
+    indicatorSettingsRef.current = indicatorSettings;
+  }, [indicatorSettings]);
 
   useLayoutEffect(() => {
     const controller = new AbortController();
@@ -202,6 +220,7 @@ export function MarketChart({
     backfillGenerationRef.current += 1;
     identitySessionRef.current += 1;
     emittedSelectionKeyRef.current = candleSelectionKey(null);
+    indicatorReconnectRepairRef.current = null;
     setIdentitySession(identitySessionRef.current);
     setLoadingOlder(false);
 
@@ -375,6 +394,7 @@ export function MarketChart({
             return;
           }
 
+          indicatorReconnectRepairRef.current = { symbol, interval };
           queryClient.setQueryData<CandleListResponse>(candleQueryKey, (current) => {
             return mergeLatestSnapshot(current, latest, TRADE_CHART_MAX_CANDLES) ?? current;
           });
@@ -464,13 +484,16 @@ export function MarketChart({
       macdZeroLineRef.current = null;
       fittedKeyRef.current = null;
       previousPointsRef.current = [];
+      indicatorSessionsRef.current = null;
+      indicatorDataIdentityRef.current = null;
+      indicatorReconnectRepairRef.current = null;
     };
   }, [symbol, hasRenderableData]);
 
   useEffect(() => {
     const chart = chartRef.current;
 
-    if (!chart || !hasRenderableData) {
+    if (!chart || !hasRenderableData || !symbol) {
       return;
     }
 
@@ -490,26 +513,6 @@ export function MarketChart({
       { smaEnabled, emaEnabled, bollingerEnabled },
       colors,
     );
-    applyOverlaySeriesData(
-      {
-        sma: smaSeriesRef.current,
-        ema: emaSeriesRef.current,
-        bbUpper: bbUpperSeriesRef.current,
-        bbMiddle: bbMiddleSeriesRef.current,
-        bbLower: bbLowerSeriesRef.current,
-      },
-      overlayValuesRef.current,
-    );
-  }, [symbol, hasRenderableData, indicatorSettings.sma.enabled, indicatorSettings.ema.enabled, indicatorSettings.bollinger.enabled]);
-
-  useEffect(() => {
-    const chart = chartRef.current;
-
-    if (!chart || !hasRenderableData) {
-      return;
-    }
-
-    const colors = readChartColors();
     reconcileOscillatorSeries(
       chart,
       {
@@ -528,41 +531,35 @@ export function MarketChart({
       },
       colors,
     );
-    applyOscillatorSeriesData(
-      {
-        rsi: rsiSeriesRef.current,
-        macdLine: macdLineSeriesRef.current,
-        macdSignal: macdSignalSeriesRef.current,
-        macdHistogram: macdHistogramSeriesRef.current,
-      },
-      overlayValuesRef.current,
-      colors,
-    );
-  }, [symbol, hasRenderableData, indicatorSettings.rsi.enabled, indicatorSettings.macd.enabled]);
 
-  useEffect(() => {
-    const colors = readChartColors();
-    applyOverlaySeriesData(
+    if (indicatorDataIdentityRef.current !== `${symbol}:${interval}`) {
+      return;
+    }
+
+    const identity = createIndicatorSessionIdentity(symbol, interval, indicatorSettings);
+    const { sessions, rebuilt } = reconcileIndicatorSettings(
+      indicatorSessionsRef.current,
+      candlesRef.current,
+      identity,
+    );
+    indicatorSessionsRef.current = sessions;
+    applyIndicatorKindsSetData(
+      rebuilt,
       {
         sma: smaSeriesRef.current,
         ema: emaSeriesRef.current,
         bbUpper: bbUpperSeriesRef.current,
         bbMiddle: bbMiddleSeriesRef.current,
         bbLower: bbLowerSeriesRef.current,
-      },
-      overlayValues,
-    );
-    applyOscillatorSeriesData(
-      {
         rsi: rsiSeriesRef.current,
         macdLine: macdLineSeriesRef.current,
         macdSignal: macdSignalSeriesRef.current,
         macdHistogram: macdHistogramSeriesRef.current,
       },
-      overlayValues,
+      sessions,
       colors,
     );
-  }, [overlayValues]);
+  }, [symbol, interval, hasRenderableData, indicatorSettings]);
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -583,19 +580,63 @@ export function MarketChart({
     const lastLine = points.line[points.line.length - 1];
     const lastVolume = volume[volume.length - 1];
     const identityChanged = fittedKeyRef.current !== identity;
+    const previousChartPoints = previousPointsRef.current;
     const mutation = identityChanged
       ? "setData"
-      : classifyChartSeriesMutation(previousPointsRef.current, points.candles);
+      : classifyChartSeriesMutation(previousChartPoints, points.candles);
     const prepended = identityChanged
       ? 0
-      : countLeftPrependedBars(previousPointsRef.current, points.candles);
+      : countLeftPrependedBars(previousChartPoints, points.candles);
     const visibleLogicalRange =
       prepended > 0 ? chart.timeScale().getVisibleLogicalRange() : null;
+    const candles = candlesRef.current;
+    const indicatorIdentity = createIndicatorSessionIdentity(
+      symbol,
+      interval,
+      indicatorSettingsRef.current,
+    );
+    const indicatorSeries = {
+      sma: smaSeriesRef.current,
+      ema: emaSeriesRef.current,
+      bbUpper: bbUpperSeriesRef.current,
+      bbMiddle: bbMiddleSeriesRef.current,
+      bbLower: bbLowerSeriesRef.current,
+      rsi: rsiSeriesRef.current,
+      macdLine: macdLineSeriesRef.current,
+      macdSignal: macdSignalSeriesRef.current,
+      macdHistogram: macdHistogramSeriesRef.current,
+    };
+    const reconnectRepair = takeIndicatorReconnectRepair(
+      indicatorReconnectRepairRef,
+      symbol,
+      interval,
+    );
 
     if (mutation === "update" && lastCandle && lastLine && lastVolume) {
       candleSeries.update(lastCandle);
       lineSeries.update(lastLine);
       volumeSeries.update(lastVolume);
+      if (reconnectRepair) {
+        rebuildIndicatorChartSessions(
+          candles,
+          indicatorIdentity,
+          indicatorSeries,
+          colors,
+          indicatorSessionsRef,
+          indicatorDataIdentityRef,
+        );
+      } else {
+        applyLiveIndicatorChartPath({
+          mutation,
+          previousLength: previousChartPoints.length,
+          candles,
+          identity: indicatorIdentity,
+          colors,
+          sessionsRef: indicatorSessionsRef,
+          dataIdentityRef: indicatorDataIdentityRef,
+          series: indicatorSeries,
+        });
+      }
     } else {
       candleSeries.setData(points.candles);
       lineSeries.setData(points.line);
@@ -607,6 +648,15 @@ export function MarketChart({
           to: visibleLogicalRange.to + prepended,
         });
       }
+
+      rebuildIndicatorChartSessions(
+        candles,
+        indicatorIdentity,
+        indicatorSeries,
+        colors,
+        indicatorSessionsRef,
+        indicatorDataIdentityRef,
+      );
     }
 
     if (identityChanged) {
@@ -649,16 +699,17 @@ export function MarketChart({
 
     if (previousThemeRef.current !== theme && latest.candles.length > 0) {
       volumeSeries.setData(colorVolume(latest, colors));
-      applyOscillatorSeriesData(
-        {
-          rsi: rsiSeriesRef.current,
-          macdLine: macdLineSeriesRef.current,
-          macdSignal: macdSignalSeriesRef.current,
-          macdHistogram: macdHistogramSeriesRef.current,
-        },
-        overlayValuesRef.current,
-        colors,
-      );
+      const histogram = macdHistogramSeriesRef.current;
+      const macdPoints = indicatorSessionsRef.current?.macd?.points ?? [];
+
+      if (histogram) {
+        histogram.setData(
+          toChartMacdHistogram(macdPoints, {
+            positive: colors.positive,
+            negative: colors.negative,
+          }),
+        );
+      }
     }
     previousThemeRef.current = theme;
   }, [theme]);
@@ -1052,17 +1103,17 @@ function applyOverlaySeriesData(
     bbMiddle: ISeriesApi<"Line"> | null;
     bbLower: ISeriesApi<"Line"> | null;
   },
-  values: ReturnType<typeof computeEnabledIndicators>,
+  sessions: IndicatorLiveSessions | null,
 ): void {
   if (series.sma) {
-    series.sma.setData(toChartIndicatorLine(values.sma ?? []));
+    series.sma.setData(toChartIndicatorLine(sessions?.sma?.points ?? []));
   }
 
   if (series.ema) {
-    series.ema.setData(toChartIndicatorLine(values.ema ?? []));
+    series.ema.setData(toChartIndicatorLine(sessions?.ema?.points ?? []));
   }
 
-  const bands = toChartBollingerLines(values.bollinger ?? []);
+  const bands = toChartBollingerLines(sessions?.bollinger?.points ?? []);
 
   if (series.bbUpper) {
     series.bbUpper.setData(bands.upper);
@@ -1232,15 +1283,16 @@ function applyOscillatorSeriesData(
     macdSignal: ISeriesApi<"Line"> | null;
     macdHistogram: ISeriesApi<"Histogram"> | null;
   },
-  values: ReturnType<typeof computeEnabledIndicators>,
+  sessions: IndicatorLiveSessions | null,
   colors: ChartColors,
 ): void {
   if (series.rsi) {
-    series.rsi.setData(toChartIndicatorLine(values.rsi ?? []));
+    series.rsi.setData(toChartIndicatorLine(sessions?.rsi?.points ?? []));
   }
 
-  const macd = toChartMacdLines(values.macd ?? []);
-  const histogram = toChartMacdHistogram(values.macd ?? [], {
+  const macdPoints = sessions?.macd?.points ?? [];
+  const macd = toChartMacdLines(macdPoints);
+  const histogram = toChartMacdHistogram(macdPoints, {
     positive: colors.positive,
     negative: colors.negative,
   });
@@ -1256,6 +1308,263 @@ function applyOscillatorSeriesData(
   if (series.macdHistogram) {
     series.macdHistogram.setData(histogram);
   }
+}
+
+type IndicatorChartSeries = {
+  sma: ISeriesApi<"Line"> | null;
+  ema: ISeriesApi<"Line"> | null;
+  bbUpper: ISeriesApi<"Line"> | null;
+  bbMiddle: ISeriesApi<"Line"> | null;
+  bbLower: ISeriesApi<"Line"> | null;
+  rsi: ISeriesApi<"Line"> | null;
+  macdLine: ISeriesApi<"Line"> | null;
+  macdSignal: ISeriesApi<"Line"> | null;
+  macdHistogram: ISeriesApi<"Histogram"> | null;
+};
+
+function applyIndicatorKindsSetData(
+  kinds: readonly IndicatorKind[],
+  series: IndicatorChartSeries,
+  sessions: IndicatorLiveSessions | null,
+  colors: ChartColors,
+): void {
+  for (const kind of kinds) {
+    applyIndicatorKindSetData(kind, series, sessions, colors);
+  }
+}
+
+function applyIndicatorKindSetData(
+  kind: IndicatorKind,
+  series: IndicatorChartSeries,
+  sessions: IndicatorLiveSessions | null,
+  colors: ChartColors,
+): void {
+  if (kind === "sma") {
+    series.sma?.setData(toChartIndicatorLine(sessions?.sma?.points ?? []));
+    return;
+  }
+
+  if (kind === "ema") {
+    series.ema?.setData(toChartIndicatorLine(sessions?.ema?.points ?? []));
+    return;
+  }
+
+  if (kind === "bollinger") {
+    const bands = toChartBollingerLines(sessions?.bollinger?.points ?? []);
+    series.bbUpper?.setData(bands.upper);
+    series.bbMiddle?.setData(bands.middle);
+    series.bbLower?.setData(bands.lower);
+    return;
+  }
+
+  if (kind === "rsi") {
+    series.rsi?.setData(toChartIndicatorLine(sessions?.rsi?.points ?? []));
+    return;
+  }
+
+  const macdPoints = sessions?.macd?.points ?? [];
+  const macd = toChartMacdLines(macdPoints);
+  series.macdLine?.setData(macd.macd);
+  series.macdSignal?.setData(macd.signal);
+  series.macdHistogram?.setData(
+    toChartMacdHistogram(macdPoints, {
+      positive: colors.positive,
+      negative: colors.negative,
+    }),
+  );
+}
+
+function rebuildIndicatorChartSessions(
+  candles: readonly Candle[],
+  identity: IndicatorSessionIdentity,
+  series: IndicatorChartSeries,
+  colors: ChartColors,
+  sessionsRef: { current: IndicatorLiveSessions | null },
+  dataIdentityRef: { current: string | null },
+): void {
+  const sessions = bootstrapIndicatorSessions(candles, identity);
+  sessionsRef.current = sessions;
+  dataIdentityRef.current = `${identity.symbol}:${identity.interval}`;
+
+  if (!anyIndicatorEnabled(identity.settings) || seriesDetached(series)) {
+    return;
+  }
+
+  applyOverlaySeriesData(series, sessions);
+  applyOscillatorSeriesData(series, sessions, colors);
+}
+
+function takeIndicatorReconnectRepair(
+  ref: { current: { symbol: string; interval: CandleInterval } | null },
+  symbol: string,
+  interval: CandleInterval,
+): boolean {
+  const pending = ref.current;
+  ref.current = null;
+
+  return Boolean(pending && pending.symbol === symbol && pending.interval === interval);
+}
+
+function applyLiveIndicatorChartPath({
+  mutation,
+  previousLength,
+  candles,
+  identity,
+  colors,
+  sessionsRef,
+  dataIdentityRef,
+  series,
+}: {
+  mutation: "update" | "setData";
+  previousLength: number;
+  candles: readonly Candle[];
+  identity: IndicatorSessionIdentity;
+  colors: ChartColors;
+  sessionsRef: { current: IndicatorLiveSessions | null };
+  dataIdentityRef: { current: string | null };
+  series: IndicatorChartSeries;
+}): void {
+  if (!anyIndicatorEnabled(identity.settings) || seriesDetached(series) || candles.length === 0) {
+    sessionsRef.current = bootstrapIndicatorSessions(candles, identity);
+    dataIdentityRef.current = `${identity.symbol}:${identity.interval}`;
+    return;
+  }
+
+  const latest = candles[candles.length - 1];
+  const path = classifyLiveIndicatorPath(mutation, previousLength, candles.length);
+  const current = sessionsRef.current;
+  const canLive =
+    current &&
+    current.identity.symbol === identity.symbol &&
+    current.identity.interval === identity.interval &&
+    latest &&
+    ((path === "replace" && canApplyLiveReplace(current, candles)) ||
+      (path === "append" && canApplyLiveAppend(current, previousLength, candles)));
+
+  if (!canLive || !current || !latest) {
+    rebuildIndicatorChartSessions(candles, identity, series, colors, sessionsRef, dataIdentityRef);
+    return;
+  }
+
+  const applied =
+    path === "replace"
+      ? applyLiveIndicatorReplace(current, latest)
+      : applyLiveIndicatorAppend(current, latest);
+
+  if (!applied) {
+    rebuildIndicatorChartSessions(candles, identity, series, colors, sessionsRef, dataIdentityRef);
+    return;
+  }
+
+  if (applied.updates.unsafe.length > 0) {
+    let sessions = applied.sessions;
+
+    for (const kind of applied.updates.unsafe) {
+      sessions = rebuildIndicatorKind(sessions, candles, kind);
+      applyIndicatorKindSetData(kind, series, sessions, colors);
+    }
+
+    sessionsRef.current = sessions;
+    applySafeLiveIndicatorUpdates(applied.updates, applied.updates.unsafe, series, colors);
+    return;
+  }
+
+  if (!applySafeLiveIndicatorUpdates(applied.updates, [], series, colors)) {
+    rebuildIndicatorChartSessions(candles, identity, series, colors, sessionsRef, dataIdentityRef);
+    return;
+  }
+
+  sessionsRef.current = applied.sessions;
+}
+
+function applySafeLiveIndicatorUpdates(
+  updates: IndicatorLiveUpdates,
+  skip: readonly IndicatorKind[],
+  series: IndicatorChartSeries,
+  colors: ChartColors,
+): boolean {
+  if (!skip.includes("sma") && updates.sma) {
+    const point = toChartIndicatorLinePoint(updates.sma);
+
+    if (!point || !series.sma) {
+      return false;
+    }
+
+    series.sma.update(point);
+  }
+
+  if (!skip.includes("ema") && updates.ema) {
+    const point = toChartIndicatorLinePoint(updates.ema);
+
+    if (!point || !series.ema) {
+      return false;
+    }
+
+    series.ema.update(point);
+  }
+
+  if (!skip.includes("bollinger") && updates.bollinger) {
+    const point = toChartBollingerPoint(updates.bollinger);
+
+    if (!point || !series.bbUpper || !series.bbMiddle || !series.bbLower) {
+      return false;
+    }
+
+    series.bbUpper.update(point.upper);
+    series.bbMiddle.update(point.middle);
+    series.bbLower.update(point.lower);
+  }
+
+  if (!skip.includes("rsi") && updates.rsi) {
+    const point = toChartIndicatorLinePoint(updates.rsi);
+
+    if (!point || !series.rsi) {
+      return false;
+    }
+
+    series.rsi.update(point);
+  }
+
+  if (!skip.includes("macd") && updates.macd) {
+    const mapped = toChartMacdPoint(updates.macd, {
+      positive: colors.positive,
+      negative: colors.negative,
+    });
+
+    if (!mapped || !series.macdLine) {
+      return false;
+    }
+
+    if (updates.macd.signal !== undefined && !mapped.signal) {
+      return false;
+    }
+
+    if (updates.macd.histogram !== undefined && !mapped.histogram) {
+      return false;
+    }
+
+    series.macdLine.update(mapped.macd);
+
+    if (mapped.signal && series.macdSignal) {
+      series.macdSignal.update(mapped.signal);
+    }
+
+    if (mapped.histogram && series.macdHistogram) {
+      series.macdHistogram.update(mapped.histogram);
+    }
+  }
+
+  return true;
+}
+
+function seriesDetached(series: IndicatorChartSeries): boolean {
+  return (
+    !series.sma &&
+    !series.ema &&
+    !series.bbUpper &&
+    !series.rsi &&
+    !series.macdLine
+  );
 }
 
 function readChartColors(): ChartColors {

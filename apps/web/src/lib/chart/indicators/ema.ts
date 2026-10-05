@@ -110,19 +110,7 @@ export function rebuildEmaFromSamples(
     return null;
   }
 
-  const session = emptyEma(period);
-
-  for (const sample of samples) {
-    const next = appendEmaSample(session, sample);
-
-    if (!next) {
-      return null;
-    }
-
-    copyEma(session, next);
-  }
-
-  return session;
+  return bootstrapEmaFromSamples(samples, period);
 }
 
 export function replaceEmaLatest(session: EmaSession, candle: Candle): EmaSession | null {
@@ -167,6 +155,88 @@ export function appendEmaSample(session: EmaSession, sample: IndicatorSample): E
 
   const committed = commitEmaLatest(session);
   return applyEmaLatest(committed, sample);
+}
+
+function bootstrapEmaFromSamples(
+  samples: readonly IndicatorSample[],
+  period: number,
+): EmaSession | null {
+  const session = emptyEma(period);
+
+  if (samples.length === 0) {
+    return session;
+  }
+
+  const committedPoints: ExactIndicatorPoint[] = [];
+  const committedValues: IndicatorDecimal[] = [];
+  const seedCloses: IndicatorDecimal[] = [];
+  let seedSum = INDICATOR_ZERO;
+  let emaThroughTMinus1: IndicatorDecimal | null = null;
+  const lastIndex = samples.length - 1;
+
+  for (let index = 0; index < lastIndex; index += 1) {
+    const sample = samples[index];
+
+    if (!sample) {
+      return null;
+    }
+
+    if (!emaThroughTMinus1 && seedCloses.length + 1 < period) {
+      seedCloses.push(sample.close);
+      seedSum = seedSum.plus(sample.close);
+      continue;
+    }
+
+    let ema: IndicatorDecimal;
+
+    if (emaThroughTMinus1) {
+      ema = sample.close.times(session.alpha).plus(emaThroughTMinus1.times(session.oneMinusAlpha));
+    } else {
+      ema = seedSum.plus(sample.close).div(indicatorInteger(period));
+      seedCloses.length = 0;
+      seedSum = INDICATOR_ZERO;
+    }
+
+    if (!ema.isFinite()) {
+      return null;
+    }
+
+    const serialized = serializeIndicatorValue(ema);
+
+    if (serialized === null) {
+      return null;
+    }
+
+    emaThroughTMinus1 = ema;
+    committedPoints.push({ openTime: sample.openTime, value: serialized });
+    committedValues.push(ema);
+  }
+
+  const last = samples[lastIndex];
+
+  if (!last) {
+    return null;
+  }
+
+  return applyEmaLatest(
+    {
+      period,
+      alpha: session.alpha,
+      oneMinusAlpha: session.oneMinusAlpha,
+      points: committedPoints,
+      committedCount: lastIndex,
+      seedCloses: emaThroughTMinus1 ? [] : seedCloses,
+      seedSum: emaThroughTMinus1 ? INDICATOR_ZERO : seedSum,
+      emaThroughTMinus1,
+      committedPoints,
+      committedValues,
+      latest: null,
+      latestPoint: null,
+      latestEma: null,
+      values: committedValues,
+    },
+    last,
+  );
 }
 
 function emptyEma(period: number): EmaSession {
@@ -274,21 +344,4 @@ function applyEmaLatest(session: EmaSession, sample: IndicatorSample): EmaSessio
   next.points = [...next.committedPoints, latestPoint];
   next.values = [...next.committedValues, ema];
   return next;
-}
-
-function copyEma(target: EmaSession, source: EmaSession): void {
-  target.period = source.period;
-  target.alpha = source.alpha;
-  target.oneMinusAlpha = source.oneMinusAlpha;
-  target.points = source.points;
-  target.committedCount = source.committedCount;
-  target.seedCloses = source.seedCloses;
-  target.seedSum = source.seedSum;
-  target.emaThroughTMinus1 = source.emaThroughTMinus1;
-  target.committedPoints = source.committedPoints;
-  target.committedValues = source.committedValues;
-  target.latest = source.latest;
-  target.latestPoint = source.latestPoint;
-  target.latestEma = source.latestEma;
-  target.values = source.values;
 }
