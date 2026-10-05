@@ -8,6 +8,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { MarketChart } from "./MarketChart.tsx";
 import { DrawingPrimitive } from "../../lib/chart/drawings/DrawingPrimitive.ts";
+import { parseDrawingHit } from "../../lib/chart/drawings/hit.ts";
+import type { TrendLineDrawing } from "../../lib/chart/drawings/types.ts";
 import { getCandles, TRADE_CHART_LIMIT, TRADE_CHART_MAX_CANDLES } from "../../lib/api/candles.ts";
 import {
   colorChartVolumePoints,
@@ -3913,6 +3915,44 @@ describe("MarketChart", () => {
     });
   }
 
+  function hostPointer(
+    type: "pointerdown" | "pointermove" | "pointerup" | "pointercancel",
+    x: number,
+    y: number,
+  ) {
+    const event = new PointerEvent(type, {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+      button: 0,
+      buttons: type === "pointerup" || type === "pointercancel" ? 0 : 1,
+      clientX: x,
+      clientY: y,
+    });
+    const target = type === "pointerdown" ? screen.getByRole("img") : window;
+    target.dispatchEvent(event);
+  }
+
+  async function createSelectedTrend(user: ReturnType<typeof userEvent.setup>) {
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    clickPane(0, 50, 80);
+    const drawing = drawingPrimitive().getState().drawings[0] as TrendLineDrawing;
+    clickPane(0, 30, 60, drawing.id);
+    return drawing;
+  }
+
+  async function createSelectedHorizontal(user: ReturnType<typeof userEvent.setup>) {
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const drawing = drawingPrimitive().getState().drawings[0];
+    clickPane(0, 20, 40, drawing?.id as string);
+    return drawing;
+  }
+
   function drawingPrimitive(): DrawingPrimitive {
     const current = attachedPrimitives.at(-1);
     expect(current).toBeInstanceOf(DrawingPrimitive);
@@ -4016,9 +4056,11 @@ describe("MarketChart", () => {
     await activateDrawingTool(user, "Horizontal Line");
     clickPane(0, 12, 40);
     const id = drawingPrimitive().getState().drawings[0]?.id as string;
-    expect(drawingPrimitive().hitTest(20, 40)?.externalId).toBe(id);
+    expect(drawingPrimitive().hitTest(20, 40)?.externalId).toBeDefined();
+    expect(parseDrawingHit(drawingPrimitive().hitTest(20, 40)?.externalId)?.drawingId).toBe(id);
     clickPane(0, 20, 40, id);
     expect(drawingPrimitive().getState().selectedId).toBe(id);
+    expect(document.activeElement).toBe(screen.getByRole("img"));
     clickPane(0, 20, 40);
     expect(drawingPrimitive().getState().selectedId).toBeNull();
   });
@@ -4051,6 +4093,26 @@ describe("MarketChart", () => {
     expect(drawingPrimitive().getState().drawings).toEqual([
       expect.objectContaining({ id: thirdId }),
     ]);
+  });
+
+  it("does not delete a selected drawing while an unrelated control is focused", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    const id = drawingPrimitive().getState().drawings[0]?.id as string;
+    clickPane(0, 20, 40, id);
+    expect(document.activeElement).toBe(screen.getByRole("img"));
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    expect(document.activeElement).not.toBe(screen.getByRole("img"));
+    await user.keyboard("{Delete}{Backspace}");
+    expect(drawingPrimitive().getState().drawings).toEqual([expect.objectContaining({ id })]);
+    document.body.tabIndex = 0;
+    document.body.focus();
+    await user.keyboard("{Delete}");
+    expect(drawingPrimitive().getState().drawings).toEqual([expect.objectContaining({ id })]);
+    document.body.removeAttribute("tabIndex");
   });
 
   it("isolates completed drawings by symbol", async () => {
@@ -4185,5 +4247,258 @@ describe("MarketChart", () => {
     view.unmount();
     expect(candlestick.detachPrimitive).toHaveBeenCalled();
     expect(unsubscribeClick).toHaveBeenCalled();
+  });
+
+  it("drags trend endpoint A without moving B and commits on pointer up", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    const lineCalls = line.setData.mock.calls.length;
+    const volumeCalls = volume.setData.mock.calls.length;
+    const overlayCalls = overlaySeries.reduce((sum, series) => sum + series.setData.mock.calls.length, 0);
+    const extraCalls = extraSeries.reduce((sum, series) => sum + series.setData.mock.calls.length, 0);
+    const fitCalls = fitContent.mock.calls.length;
+    const fetchCalls = mockedGetCandles.mock.calls.length;
+    const charts = createChart.mock.calls.length;
+    const rangeCalls = setVisibleLogicalRange.mock.calls.length;
+    hostPointer("pointerdown", 10, 40);
+    hostPointer("pointermove", 20, 50);
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({
+        id: original.id,
+        a: { time: 1_499_040_020, price: 350 },
+        b: original.b,
+      }),
+    ]);
+    hostPointer("pointerup", 20, 50);
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({
+        id: original.id,
+        a: { time: 1_499_040_020, price: 350 },
+        b: original.b,
+      }),
+    ]);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(line.setData.mock.calls.length).toBe(lineCalls);
+    expect(volume.setData.mock.calls.length).toBe(volumeCalls);
+    expect(overlaySeries.reduce((sum, series) => sum + series.setData.mock.calls.length, 0)).toBe(
+      overlayCalls,
+    );
+    expect(extraSeries.reduce((sum, series) => sum + series.setData.mock.calls.length, 0)).toBe(
+      extraCalls,
+    );
+    expect(fitContent.mock.calls.length).toBe(fitCalls);
+    expect(mockedGetCandles.mock.calls.length).toBe(fetchCalls);
+    expect(createChart).toHaveBeenCalledTimes(charts);
+    expect(setVisibleLogicalRange.mock.calls.length).toBe(rangeCalls);
+  });
+
+  it("drags trend endpoint B without moving A", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    hostPointer("pointerdown", 50, 80);
+    hostPointer("pointermove", 60, 90);
+    hostPointer("pointerup", 60, 90);
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({
+        id: original.id,
+        a: original.a,
+        b: { time: 1_499_040_060, price: 310 },
+      }),
+    ]);
+  });
+
+  it("drags the trend body while preserving shape and without compounding", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    hostPointer("pointerdown", 30, 60);
+    hostPointer("pointermove", 40, 70);
+    const first = drawingPrimitive().getState().drawings[0] as TrendLineDrawing;
+    expect(first.a).toEqual({ time: 1_499_040_020, price: 350 });
+    expect(first.b).toEqual({ time: 1_499_040_060, price: 310 });
+    expect(first.b.price - first.a.price).toBe(original.b.price - original.a.price);
+    hostPointer("pointermove", 50, 80);
+    const second = drawingPrimitive().getState().drawings[0] as TrendLineDrawing;
+    expect(second.a).toEqual({ time: 1_499_040_030, price: 340 });
+    expect(second.b).toEqual({ time: 1_499_040_070, price: 300 });
+    expect(second.b.price - second.a.price).toBe(original.b.price - original.a.price);
+    hostPointer("pointerup", 50, 80);
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(second);
+  });
+
+  it("keeps the last valid trend preview when coordinate conversion fails", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await createSelectedTrend(user);
+    hostPointer("pointerdown", 10, 40);
+    hostPointer("pointermove", 20, 50);
+    const preview = drawingPrimitive().getState().drawings[0];
+    hostPointer("pointermove", -1, 50);
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(preview);
+    hostPointer("pointerup", -1, 50);
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(preview);
+  });
+
+  it("restores the original trend on Escape during a drag and keeps selection", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    hostPointer("pointerdown", 30, 60);
+    hostPointer("pointermove", 40, 70);
+    expect(drawingPrimitive().getState().drawings[0]).not.toEqual(original);
+    await user.keyboard("{Escape}");
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(original);
+    expect(drawingPrimitive().getState().selectedId).toBe(original.id);
+  });
+
+  it("cancels an in-progress drag on pointercancel without committing", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    const fitCalls = fitContent.mock.calls.length;
+    const charts = createChart.mock.calls.length;
+    hostPointer("pointerdown", 30, 60);
+    hostPointer("pointermove", 40, 70);
+    expect(drawingPrimitive().getState().drawings[0]).not.toEqual(original);
+    hostPointer("pointercancel", 40, 70);
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(original);
+    expect(drawingPrimitive().getState().selectedId).toBe(original.id);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(fitContent.mock.calls.length).toBe(fitCalls);
+    expect(createChart).toHaveBeenCalledTimes(charts);
+  });
+
+  it("drags a horizontal line vertically and ignores invalid conversions until commit", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedHorizontal(user);
+    hostPointer("pointerdown", 20, 40);
+    hostPointer("pointermove", 20, 20);
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({ id: original?.id, price: 380 }),
+    ]);
+    hostPointer("pointermove", 20, -1);
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({ id: original?.id, price: 380 }),
+    ]);
+    hostPointer("pointerup", 20, 20);
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({ id: original?.id, price: 380 }),
+    ]);
+  });
+
+  it("does not expose endpoint drag on an unselected trend", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    clickPane(0, 50, 80);
+    const original = drawingPrimitive().getState().drawings[0];
+    expect(drawingPrimitive().getState().selectedId).toBeNull();
+    hostPointer("pointerdown", 10, 40);
+    hostPointer("pointermove", 20, 50);
+    hostPointer("pointerup", 20, 50);
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(original);
+  });
+
+  it("cancels an in-progress drag on symbol change without committing the preview", async () => {
+    const user = userEvent.setup();
+    mockedGetCandles.mockImplementation(async ({ symbol }) =>
+      symbol === "ETHUSDT" ? ethCandles : btcCandles,
+    );
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const tree = (symbol: string) => (
+      <ThemeProvider>
+        <QueryClientProvider client={client}>
+          <MarketChart symbol={symbol} interval="15m" onIntervalChange={vi.fn()} />
+        </QueryClientProvider>
+      </ThemeProvider>
+    );
+    const view = render(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    hostPointer("pointerdown", 30, 60);
+    hostPointer("pointermove", 40, 70);
+    expect(drawingPrimitive().getState().drawings[0]).not.toEqual(original);
+    view.rerender(tree("ETHUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(2));
+    expect(drawingPrimitive().getState().drawings).toEqual([]);
+    view.rerender(tree("BTCUSDT"));
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(3));
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(original);
+    expect(drawingPrimitive().getState().selectedId).toBeNull();
+  });
+
+  it("cancels an in-progress drag on interval change and keeps the last committed drawing", async () => {
+    const user = userEvent.setup();
+    const hourCandles: CandleListResponse = { ...btcCandles, interval: "1h" };
+    mockedGetCandles.mockImplementation(async ({ interval }) =>
+      interval === "1h" ? hourCandles : btcCandles,
+    );
+    const onIntervalChange = vi.fn();
+    const view = renderChart("BTCUSDT", false, { onIntervalChange });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    const attached = drawingPrimitive();
+    await view.client.prefetchQuery({
+      queryKey: queryKeys.candles.list({
+        symbol: "BTCUSDT",
+        interval: "1h",
+        limit: TRADE_CHART_LIMIT,
+      }),
+      queryFn: () => getCandles({ symbol: "BTCUSDT", interval: "1h", limit: TRADE_CHART_LIMIT }),
+    });
+    hostPointer("pointerdown", 30, 60);
+    hostPointer("pointermove", 40, 70);
+    expect(drawingPrimitive().getState().drawings[0]).not.toEqual(original);
+    view.rerender(
+      <ThemeProvider>
+        <QueryClientProvider client={view.client}>
+          <MarketChart symbol="BTCUSDT" interval="1h" onIntervalChange={onIntervalChange} />
+        </QueryClientProvider>
+      </ThemeProvider>,
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("img")).toHaveAttribute("aria-label", "BTCUSDT 1h historical candlestick chart"),
+    );
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(drawingPrimitive()).toBe(attached);
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(original);
+  });
+
+  it("does not duplicate drawing pointer listeners under Strict Mode", async () => {
+    const user = userEvent.setup();
+    const view = renderChart("BTCUSDT", true);
+    await waitFor(() => expect(createChart).toHaveBeenCalled());
+    await createSelectedTrend(user);
+    const addSpy = vi.spyOn(window, "addEventListener");
+    hostPointer("pointerdown", 30, 60);
+    const pointerMoves = addSpy.mock.calls.filter((call) => call[0] === "pointermove");
+    expect(pointerMoves).toHaveLength(1);
+    hostPointer("pointermove", 40, 70);
+    hostPointer("pointermove", 50, 80);
+    expect(drawingPrimitive().getState().drawings).toEqual([
+      expect.objectContaining({
+        a: { time: 1_499_040_030, price: 340 },
+        b: { time: 1_499_040_070, price: 300 },
+      }),
+    ]);
+    addSpy.mockRestore();
+    view.unmount();
+    hostPointer("pointermove", 80, 90);
   });
 });

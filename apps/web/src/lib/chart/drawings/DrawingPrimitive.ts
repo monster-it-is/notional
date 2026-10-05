@@ -13,9 +13,14 @@ import type {
 
 import {
   DRAWING_HANDLE_RADIUS_PX,
+  DRAWING_SELECTED_HANDLE_RADIUS_PX,
   hitsHorizontalLine,
+  hitsTrendEndpoint,
   hitsTrendSegment,
+  pointDistance,
+  pointToSegmentDistance,
 } from "./geometry.ts";
+import { drawingHitExternalId, type DrawingHitRegion } from "./hit.ts";
 import {
   EMPTY_DRAWING_STATE,
   type ChartDrawing,
@@ -68,6 +73,10 @@ function strokeColor(item: ProjectedDrawing, colors: DrawingColors): string {
 }
 
 function strokeWidthPx(item: ProjectedDrawing): number {
+  if (item.kind === "horizontal-line" && item.selected) {
+    return 2.5;
+  }
+
   return item.selected ? 2 : 1.5;
 }
 
@@ -151,15 +160,19 @@ export class DrawingPrimitive implements ISeriesPrimitive {
         continue;
       }
 
-      if (!itemHits(item, x, y)) {
+      const region = itemHitRegion(item, x, y);
+
+      if (!region) {
         continue;
       }
 
       return {
-        externalId: item.id,
-        cursorStyle: "pointer",
+        externalId: drawingHitExternalId(item.id, region),
+        cursorStyle: cursorForHit(region, item.selected),
         zOrder: VIEW_Z_ORDER,
-        itemType: "primitive",
+        itemType: region === "trend-a" || region === "trend-b" ? "marker" : "primitive",
+        hitTestPriority: region === "trend-a" || region === "trend-b" ? 2 : 1,
+        distance: hitDistance(item, region, x, y),
       };
     }
 
@@ -360,12 +373,63 @@ function projectTrend(
   };
 }
 
-function itemHits(item: ProjectedDrawing, x: number, y: number): boolean {
+function itemHitRegion(item: ProjectedDrawing, x: number, y: number): DrawingHitRegion | null {
   if (item.kind === "horizontal-line") {
-    return hitsHorizontalLine(y, item.y);
+    return hitsHorizontalLine(y, item.y) ? "horizontal" : null;
   }
 
-  return hitsTrendSegment(x, y, item.x1, item.y1, item.x2, item.y2);
+  if (item.selected) {
+    if (hitsTrendEndpoint(x, y, item.x1, item.y1)) {
+      return "trend-a";
+    }
+
+    if (hitsTrendEndpoint(x, y, item.x2, item.y2)) {
+      return "trend-b";
+    }
+  }
+
+  return hitsTrendSegment(x, y, item.x1, item.y1, item.x2, item.y2) ? "trend-body" : null;
+}
+
+function cursorForHit(region: DrawingHitRegion, selected: boolean): string {
+  if (region === "trend-a" || region === "trend-b") {
+    return "pointer";
+  }
+
+  if (!selected) {
+    return "pointer";
+  }
+
+  if (region === "horizontal") {
+    return "ns-resize";
+  }
+
+  return "grab";
+}
+
+function hitDistance(
+  item: ProjectedDrawing,
+  region: DrawingHitRegion,
+  x: number,
+  y: number,
+): number {
+  if (item.kind === "horizontal-line") {
+    return Math.abs(y - item.y);
+  }
+
+  if (region === "trend-a") {
+    return pointDistance(x, y, item.x1, item.y1);
+  }
+
+  if (region === "trend-b" && item.x2 !== null && item.y2 !== null) {
+    return pointDistance(x, y, item.x2, item.y2);
+  }
+
+  if (item.x2 === null || item.y2 === null) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  return pointToSegmentDistance(x, y, item.x1, item.y1, item.x2, item.y2);
 }
 
 function drawProjected(
@@ -395,15 +459,13 @@ function drawProjected(
     ctx.stroke();
   }
 
-  const showHandles = item.kind === "trend-line" && (item.selected || (item.draft && item.x2 === null));
-
   if (item.kind === "trend-line" && item.selected) {
-    drawHandle(ctx, item.x1, item.y1, hr, vr, colors);
+    drawHandle(ctx, item.x1, item.y1, hr, vr, colors, DRAWING_SELECTED_HANDLE_RADIUS_PX);
     if (item.x2 !== null && item.y2 !== null) {
-      drawHandle(ctx, item.x2, item.y2, hr, vr, colors);
+      drawHandle(ctx, item.x2, item.y2, hr, vr, colors, DRAWING_SELECTED_HANDLE_RADIUS_PX);
     }
-  } else if (showHandles) {
-    drawHandle(ctx, item.x1, item.y1, hr, vr, colors);
+  } else if (item.kind === "trend-line" && item.draft && item.x2 === null) {
+    drawHandle(ctx, item.x1, item.y1, hr, vr, colors, DRAWING_HANDLE_RADIUS_PX);
   }
 
   ctx.setLineDash([]);
@@ -417,6 +479,7 @@ function drawHandle(
   hr: number,
   vr: number,
   colors: DrawingColors,
+  radiusPx: number,
 ): void {
   ctx.save();
   ctx.globalAlpha = 1;
@@ -425,13 +488,7 @@ function drawHandle(
   ctx.strokeStyle = colors.selected;
   ctx.lineWidth = Math.max(1, hr);
   ctx.beginPath();
-  ctx.arc(
-    Math.round(x * hr),
-    Math.round(y * vr),
-    DRAWING_HANDLE_RADIUS_PX * hr,
-    0,
-    Math.PI * 2,
-  );
+  ctx.arc(Math.round(x * hr), Math.round(y * vr), radiusPx * hr, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
   ctx.restore();

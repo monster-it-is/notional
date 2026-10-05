@@ -163,6 +163,8 @@ const drawingFiles = [
   "src/lib/chart/drawings/types.ts",
   "src/lib/chart/drawings/geometry.ts",
   "src/lib/chart/drawings/point.ts",
+  "src/lib/chart/drawings/hit.ts",
+  "src/lib/chart/drawings/drag.ts",
   "src/lib/chart/drawings/DrawingPrimitive.ts",
   "src/components/trade/DrawingsMenu.tsx",
 ];

@@ -2,6 +2,7 @@ import type { Time } from "lightweight-charts";
 import { describe, expect, it, vi } from "vitest";
 
 import { DrawingPrimitive } from "./DrawingPrimitive.ts";
+import { parseDrawingHit } from "./hit.ts";
 import { DEFAULT_DRAWING_COLORS, type ChartDrawing } from "./types.ts";
 
 const TIME_A = 1_000 as Time;
@@ -224,7 +225,7 @@ describe("DrawingPrimitive", () => {
       drawings: [horizontal("older", PRICE_A), horizontal("newer", PRICE_A)],
     });
     const hit = primitive.hitTest(20, 40);
-    expect(hit?.externalId).toBe("newer");
+    expect(parseDrawingHit(hit?.externalId)?.drawingId).toBe("newer");
     expect(hit?.cursorStyle).toBe("pointer");
     expect(hit?.zOrder).toBe("top");
   });
@@ -232,8 +233,45 @@ describe("DrawingPrimitive", () => {
   it("hits a trend segment near the line and misses outside the tolerance", () => {
     const { primitive } = attachPrimitive();
     primitive.setState({ drawings: [trend("t1")] });
-    expect(primitive.hitTest(10, 40)?.externalId).toBe("t1");
+    expect(parseDrawingHit(primitive.hitTest(10, 40)?.externalId)?.drawingId).toBe("t1");
     expect(primitive.hitTest(10, 49)).toBeNull();
+  });
+
+  it("exposes selected trend endpoints before the body and hides them when unselected", () => {
+    const { primitive } = attachPrimitive();
+    primitive.setState({ drawings: [trend("t1")] });
+    expect(parseDrawingHit(primitive.hitTest(10, 40)?.externalId)).toEqual({
+      drawingId: "t1",
+      region: "trend-body",
+    });
+    expect(primitive.hitTest(10, 40)?.cursorStyle).toBe("pointer");
+    primitive.setState({ selectedId: "t1" });
+    expect(parseDrawingHit(primitive.hitTest(10, 40)?.externalId)).toEqual({
+      drawingId: "t1",
+      region: "trend-a",
+    });
+    expect(primitive.hitTest(10, 40)?.cursorStyle).toBe("pointer");
+    expect(parseDrawingHit(primitive.hitTest(50, 80)?.externalId)).toEqual({
+      drawingId: "t1",
+      region: "trend-b",
+    });
+    expect(parseDrawingHit(primitive.hitTest(30, 60)?.externalId)).toEqual({
+      drawingId: "t1",
+      region: "trend-body",
+    });
+    expect(primitive.hitTest(30, 60)?.cursorStyle).toBe("grab");
+  });
+
+  it("uses a stronger selected horizontal stroke and a vertical resize cursor", () => {
+    const { primitive } = attachPrimitive();
+    primitive.setState({ drawings: [horizontal("h1", PRICE_A)], selectedId: "h1" });
+    const ctx = render(primitive);
+    expect(ctx.lineWidth).toBeGreaterThan(2);
+    expect(parseDrawingHit(primitive.hitTest(20, 40)?.externalId)).toEqual({
+      drawingId: "h1",
+      region: "horizontal",
+    });
+    expect(primitive.hitTest(20, 40)?.cursorStyle).toBe("ns-resize");
   });
 
   it("does not hit-test draft geometry", () => {

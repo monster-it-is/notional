@@ -81,6 +81,14 @@ import {
 } from "../../lib/chart/to-chart-candles.ts";
 import { DrawingPrimitive } from "../../lib/chart/drawings/DrawingPrimitive.ts";
 import {
+  previewDrawingDrag,
+  replaceDrawing,
+  startDrawingDrag,
+  type DrawingDrag,
+} from "../../lib/chart/drawings/drag.ts";
+import { parseDrawingHit } from "../../lib/chart/drawings/hit.ts";
+import {
+  chartPointFromPointer,
   isEditableKeyboardTarget,
   readHoveredDrawingId,
   resolveDrawingPoint,
@@ -101,6 +109,42 @@ const HOST_HEIGHT_CLASSES = {
   2: "h-[34rem] w-full min-w-0 md:h-[36rem] lg:h-[40rem] xl:h-[42rem]",
 } as const;
 
+const CHART_INTERACTION_LOCKED = {
+  handleScroll: {
+    pressedMouseMove: false,
+    horzTouchDrag: false,
+    vertTouchDrag: false,
+  },
+  handleScale: {
+    axisPressedMouseMove: false,
+    pinch: false,
+  },
+} as const;
+
+const CHART_INTERACTION_UNLOCKED = {
+  handleScroll: {
+    pressedMouseMove: true,
+    horzTouchDrag: true,
+    vertTouchDrag: true,
+  },
+  handleScale: {
+    axisPressedMouseMove: true,
+    pinch: true,
+  },
+} as const;
+
+function dragCursor(type: DrawingDrag["type"]): string {
+  if (type === "trend-a" || type === "trend-b") {
+    return "pointer";
+  }
+
+  if (type === "horizontal") {
+    return "ns-resize";
+  }
+
+  return "grabbing";
+}
+
 function chartHostHeightClass(oscillatorCount: number): string {
   if (oscillatorCount >= 2) {
     return HOST_HEIGHT_CLASSES[2];
@@ -114,7 +158,7 @@ function chartHostHeightClass(oscillatorCount: number): string {
 }
 
 function chartHostClass(oscillatorCount: number): string {
-  return `${chartHostHeightClass(oscillatorCount)} overflow-hidden`;
+  return `${chartHostHeightClass(oscillatorCount)} overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring`;
 }
 
 function chartSlotClass(oscillatorCount: number): string {
@@ -194,12 +238,23 @@ export function MarketChart({
   const handleCrosshairMoveRef = useRef<(param: MouseEventParams) => void>(() => undefined);
   const handleChartClickRef = useRef<(param: MouseEventParams) => void>(() => undefined);
   const handleDrawingKeyDownRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  const handleDrawingPointerDownRef = useRef<(event: PointerEvent) => void>(() => undefined);
+  const handleDrawingPointerMoveRef = useRef<(event: PointerEvent) => void>(() => undefined);
+  const handleDrawingPointerUpRef = useRef<(event: PointerEvent) => void>(() => undefined);
+  const handleDrawingPointerCancelRef = useRef<(event: PointerEvent) => void>(() => undefined);
   const drawingPrimitiveRef = useRef<DrawingPrimitive | null>(null);
   const drawingToolRef = useRef<DrawingTool>("select");
   const drawingDraftRef = useRef<DrawingDraft | null>(null);
   const drawingsBySymbolRef = useRef<Record<string, ChartDrawing[]>>({});
   const selectedDrawingIdRef = useRef<string | null>(null);
   const hoveredDrawingIdRef = useRef<string | null>(null);
+  const drawingDragRef = useRef<DrawingDrag | null>(null);
+  const drawingDragPreviewRef = useRef<ChartDrawing | null>(null);
+  const drawingDragWindowAttachedRef = useRef(false);
+  const skipChartClickRef = useRef(false);
+  const attachDrawingDragListenersRef = useRef<() => void>(() => undefined);
+  const detachDrawingDragListenersRef = useRef<() => void>(() => undefined);
+  const cancelDrawingDragRef = useRef<() => void>(() => undefined);
   const drawingsSymbolRef = useRef(symbol);
   const [drawingTool, setDrawingTool] = useState<DrawingTool>("select");
   const [drawingsBySymbol, setDrawingsBySymbol] = useState<Record<string, ChartDrawing[]>>({});
@@ -260,6 +315,7 @@ export function MarketChart({
     indicatorReconnectRepairRef.current = null;
     drawingDraftRef.current = null;
     hoveredDrawingIdRef.current = null;
+    cancelDrawingDragRef.current();
     drawingPrimitiveRef.current?.setState({ draft: null, hoveredId: null });
 
     if (drawingsSymbolRef.current !== symbol) {
@@ -425,6 +481,15 @@ export function MarketChart({
         return;
       }
 
+      if (skipChartClickRef.current) {
+        skipChartClickRef.current = false;
+        return;
+      }
+
+      if (drawingDragRef.current) {
+        return;
+      }
+
       const chart = chartRef.current;
       const series = candleSeriesRef.current;
       const identity = identityRef.current.symbol;
@@ -433,6 +498,8 @@ export function MarketChart({
       if (!chart || !series || !identity || !param.point) {
         return;
       }
+
+      hostRef.current?.focus({ preventScroll: true });
 
       if (tool === "trend-line") {
         const point = resolveDrawingPoint(chart, series, param.point);
@@ -503,8 +570,207 @@ export function MarketChart({
       setSelectedDrawingId(nextSelected);
     };
 
+    function setChartInteractionLocked(locked: boolean): void {
+      chartRef.current?.applyOptions(locked ? CHART_INTERACTION_LOCKED : CHART_INTERACTION_UNLOCKED);
+    }
+
+    function publishDragPreview(preview: ChartDrawing): void {
+      drawingDragPreviewRef.current = preview;
+      const identity = identityRef.current.symbol;
+      const drawings = identity
+        ? replaceDrawing(drawingsBySymbolRef.current[identity] ?? [], preview)
+        : [preview];
+      drawingPrimitiveRef.current?.setState({
+        drawings,
+        selectedId: preview.id,
+        draft: null,
+      });
+    }
+
+    function cancelDrawingDrag(): void {
+      if (!drawingDragRef.current) {
+        detachDrawingDragListenersRef.current();
+        return;
+      }
+
+      drawingDragRef.current = null;
+      drawingDragPreviewRef.current = null;
+      skipChartClickRef.current = false;
+      setChartInteractionLocked(false);
+      detachDrawingDragListenersRef.current();
+      const host = hostRef.current;
+      if (host) {
+        host.style.cursor = "";
+      }
+      const identity = identityRef.current.symbol;
+      const drawings = identity ? (drawingsBySymbolRef.current[identity] ?? []) : [];
+      drawingPrimitiveRef.current?.setState({
+        drawings,
+        selectedId: selectedDrawingIdRef.current,
+        draft: drawingDraftRef.current,
+      });
+    }
+
+    cancelDrawingDragRef.current = cancelDrawingDrag;
+
+    handleDrawingPointerDownRef.current = (event: PointerEvent) => {
+      skipChartClickRef.current = false;
+
+      if (event.button !== 0 || drawingToolRef.current !== "select" || drawingDragRef.current) {
+        return;
+      }
+
+      const host = hostRef.current;
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current;
+      const primitive = drawingPrimitiveRef.current;
+      const identity = identityRef.current.symbol;
+      const selectedId = selectedDrawingIdRef.current;
+
+      if (!host || !chart || !series || !primitive || !identity || !selectedId) {
+        return;
+      }
+
+      const pointer = chartPointFromPointer(host, event);
+      const hit = parseDrawingHit(primitive.hitTest(pointer.x, pointer.y)?.externalId);
+
+      if (!hit || hit.drawingId !== selectedId || !hit.region) {
+        return;
+      }
+
+      const drawing = (drawingsBySymbolRef.current[identity] ?? []).find(
+        (item) => item.id === selectedId,
+      );
+
+      if (!drawing) {
+        return;
+      }
+
+      const drag = startDrawingDrag(drawing, hit.region, pointer, chart, series);
+
+      if (!drag) {
+        return;
+      }
+
+      event.preventDefault();
+      host.focus({ preventScroll: true });
+      drawingDragRef.current = drag;
+      drawingDragPreviewRef.current = drawing;
+      skipChartClickRef.current = true;
+      setChartInteractionLocked(true);
+      host.style.cursor = dragCursor(drag.type);
+      attachDrawingDragListenersRef.current();
+
+      if (typeof host.setPointerCapture === "function" && event.pointerId !== undefined) {
+        try {
+          host.setPointerCapture(event.pointerId);
+        } catch {
+          // jsdom and some browsers reject capture on detached nodes.
+        }
+      }
+    };
+
+    handleDrawingPointerMoveRef.current = (event: PointerEvent) => {
+      const drag = drawingDragRef.current;
+      const host = hostRef.current;
+      const chart = chartRef.current;
+      const series = candleSeriesRef.current;
+
+      if (!drag || !host || !chart || !series) {
+        return;
+      }
+
+      const pointer = chartPointFromPointer(host, event);
+      const preview = previewDrawingDrag(drag, pointer, chart, series);
+
+      if (!preview) {
+        return;
+      }
+
+      publishDragPreview(preview);
+    };
+
+    handleDrawingPointerUpRef.current = (event: PointerEvent) => {
+      const drag = drawingDragRef.current;
+      const preview = drawingDragPreviewRef.current;
+      const identity = identityRef.current.symbol;
+      const host = hostRef.current;
+
+      if (!drag) {
+        return;
+      }
+
+      if (host && typeof host.releasePointerCapture === "function" && event.pointerId !== undefined) {
+        try {
+          if (host.hasPointerCapture?.(event.pointerId)) {
+            host.releasePointerCapture(event.pointerId);
+          }
+        } catch {
+          // Capture may already have been released.
+        }
+      }
+
+      drawingDragRef.current = null;
+      drawingDragPreviewRef.current = null;
+      setChartInteractionLocked(false);
+      detachDrawingDragListenersRef.current();
+      if (host) {
+        host.style.cursor = "";
+      }
+
+      if (!preview || !identity) {
+        skipChartClickRef.current = false;
+        return;
+      }
+
+      const nextDrawings = replaceDrawing(drawingsBySymbolRef.current[identity] ?? [], preview);
+      drawingsBySymbolRef.current = { ...drawingsBySymbolRef.current, [identity]: nextDrawings };
+      selectedDrawingIdRef.current = preview.id;
+      drawingPrimitiveRef.current?.setState({
+        drawings: nextDrawings,
+        selectedId: preview.id,
+        draft: null,
+      });
+      setDrawingsBySymbol((current) => ({
+        ...current,
+        [identity]: replaceDrawing(current[identity] ?? [], preview),
+      }));
+      setSelectedDrawingId(preview.id);
+    };
+
+    handleDrawingPointerCancelRef.current = (event: PointerEvent) => {
+      if (!drawingDragRef.current) {
+        return;
+      }
+
+      const host = hostRef.current;
+
+      if (host && typeof host.releasePointerCapture === "function" && event.pointerId !== undefined) {
+        try {
+          if (host.hasPointerCapture?.(event.pointerId)) {
+            host.releasePointerCapture(event.pointerId);
+          }
+        } catch {
+          // Capture may already have been released.
+        }
+      }
+
+      const selectedId = selectedDrawingIdRef.current;
+      cancelDrawingDrag();
+      selectedDrawingIdRef.current = selectedId;
+      drawingPrimitiveRef.current?.setState({ selectedId });
+    };
+
     handleDrawingKeyDownRef.current = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (drawingDragRef.current) {
+          const selectedId = selectedDrawingIdRef.current;
+          cancelDrawingDrag();
+          selectedDrawingIdRef.current = selectedId;
+          drawingPrimitiveRef.current?.setState({ selectedId });
+          return;
+        }
+
         if (drawingDraftRef.current) {
           drawingDraftRef.current = null;
           drawingPrimitiveRef.current?.setState({ draft: null });
@@ -529,6 +795,12 @@ export function MarketChart({
       }
 
       if (isEditableKeyboardTarget(event.target)) {
+        return;
+      }
+
+      const host = hostRef.current;
+
+      if (!host || document.activeElement !== host) {
         return;
       }
 
@@ -661,6 +933,40 @@ export function MarketChart({
     chart.subscribeCrosshairMove(onCrosshairMove);
     chart.subscribeClick(onChartClick);
 
+    const onPointerDown = (event: PointerEvent) => {
+      handleDrawingPointerDownRef.current(event);
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      handleDrawingPointerMoveRef.current(event);
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      handleDrawingPointerUpRef.current(event);
+    };
+    const onPointerCancel = (event: PointerEvent) => {
+      handleDrawingPointerCancelRef.current(event);
+    };
+    host.addEventListener("pointerdown", onPointerDown, true);
+    attachDrawingDragListenersRef.current = () => {
+      if (drawingDragWindowAttachedRef.current) {
+        return;
+      }
+
+      drawingDragWindowAttachedRef.current = true;
+      window.addEventListener("pointermove", onPointerMove);
+      window.addEventListener("pointerup", onPointerUp);
+      window.addEventListener("pointercancel", onPointerCancel);
+    };
+    detachDrawingDragListenersRef.current = () => {
+      if (!drawingDragWindowAttachedRef.current) {
+        return;
+      }
+
+      drawingDragWindowAttachedRef.current = false;
+      window.removeEventListener("pointermove", onPointerMove);
+      window.removeEventListener("pointerup", onPointerUp);
+      window.removeEventListener("pointercancel", onPointerCancel);
+    };
+
     const drawingPrimitive = new DrawingPrimitive();
     candleSeries.attachPrimitive(drawingPrimitive);
     drawingPrimitiveRef.current = drawingPrimitive;
@@ -673,6 +979,13 @@ export function MarketChart({
     });
 
     return () => {
+      drawingDragRef.current = null;
+      drawingDragPreviewRef.current = null;
+      detachDrawingDragListenersRef.current();
+      attachDrawingDragListenersRef.current = () => undefined;
+      detachDrawingDragListenersRef.current = () => undefined;
+      host.removeEventListener("pointerdown", onPointerDown, true);
+      host.style.cursor = "";
       chart.unsubscribeClick(onChartClick);
       chart.unsubscribeCrosshairMove(onCrosshairMove);
       timeScale.unsubscribeVisibleLogicalRangeChange(onVisibleLogicalRangeChange);
@@ -956,12 +1269,23 @@ export function MarketChart({
       selectedDrawingId && symbolDrawings.some((drawing) => drawing.id === selectedDrawingId)
         ? selectedDrawingId
         : null;
+    const colors = drawingColorsFrom(readChartColors());
+
+    if (drawingDragRef.current) {
+      primitive.setState({
+        selectedId: selected,
+        hoveredId: hoveredDrawingIdRef.current,
+        colors,
+      });
+      return;
+    }
+
     primitive.setState({
       drawings: symbolDrawings,
       draft: drawingDraftRef.current,
       selectedId: selected,
       hoveredId: hoveredDrawingIdRef.current,
-      colors: drawingColorsFrom(readChartColors()),
+      colors,
     });
   }, [symbol, drawingsBySymbol, selectedDrawingId, theme, hasRenderableData]);
 
@@ -977,6 +1301,7 @@ export function MarketChart({
   }, []);
 
   function changeDrawingTool(next: DrawingTool): void {
+    cancelDrawingDragRef.current();
     drawingDraftRef.current = null;
     hoveredDrawingIdRef.current = null;
     drawingToolRef.current = next;
@@ -1068,6 +1393,7 @@ export function MarketChart({
           ref={hostRef}
           className={hostClass}
           role="img"
+          tabIndex={0}
           aria-label={`${symbol} ${interval} historical ${chartKind} chart`}
         />
       </div>
