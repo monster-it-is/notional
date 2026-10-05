@@ -60,11 +60,12 @@ import {
   type IndicatorLiveUpdates,
   type IndicatorSessionIdentity,
 } from "../../lib/chart/indicators/live-session.ts";
+import { oscillatorEnabledCount, type IndicatorSettings } from "../../lib/chart/indicators/settings.ts";
 import {
-  DEFAULT_INDICATOR_SETTINGS,
-  oscillatorEnabledCount,
-  type IndicatorSettings,
-} from "../../lib/chart/indicators/settings.ts";
+  readTradeChartPreferences,
+  writeTradeChartPreferences,
+  type ChartDisplayMode,
+} from "../../lib/chart/preferences.ts";
 import {
   toChartBollingerLines,
   toChartBollingerPoint,
@@ -157,12 +158,32 @@ function chartHostHeightClass(oscillatorCount: number): string {
   return HOST_HEIGHT_CLASSES[0];
 }
 
-function chartHostClass(oscillatorCount: number): string {
-  return `${chartHostHeightClass(oscillatorCount)} overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring`;
+const CHART_FOCUS_RING =
+  "overflow-hidden focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring";
+
+function chartHostClass(oscillatorCount: number, isFullscreen: boolean): string {
+  const height = isFullscreen
+    ? "h-full min-h-0 w-full min-w-0 flex-1"
+    : chartHostHeightClass(oscillatorCount);
+  return `${height} ${CHART_FOCUS_RING}`;
 }
 
-function chartSlotClass(oscillatorCount: number): string {
+function chartSlotClass(oscillatorCount: number, isFullscreen: boolean): string {
+  if (isFullscreen) {
+    return "flex min-h-0 w-full min-w-0 flex-1 items-center justify-center";
+  }
+
   return `${chartHostHeightClass(oscillatorCount)} flex items-center justify-center`;
+}
+
+function chartWrapperClass(isFullscreen: boolean): string {
+  return isFullscreen
+    ? "flex h-svh max-h-svh min-h-0 min-w-0 flex-col overflow-hidden bg-background p-3"
+    : "min-w-0";
+}
+
+function chartPaneClass(isFullscreen: boolean): string {
+  return isFullscreen ? "relative min-h-0 min-w-0 flex-1" : "relative min-w-0";
 }
 
 const EMPTY_POINTS: AlignedChartPoints = {
@@ -171,8 +192,6 @@ const EMPTY_POINTS: AlignedChartPoints = {
   volume: [],
 };
 const EMPTY_CANDLES: Candle[] = [];
-
-type ChartDisplayMode = "candles" | "line";
 
 export function MarketChart({
   symbol,
@@ -186,13 +205,16 @@ export function MarketChart({
   const { theme } = useTheme();
   const previousThemeRef = useRef(theme);
   const queryClient = useQueryClient();
-  const [mode, setMode] = useState<ChartDisplayMode>("candles");
+  const [initialPreferences] = useState(readTradeChartPreferences);
+  const [mode, setMode] = useState<ChartDisplayMode>(initialPreferences.mode);
   const [indicatorSettings, setIndicatorSettings] = useState<IndicatorSettings>(
-    DEFAULT_INDICATOR_SETTINGS,
+    initialPreferences.indicators,
   );
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [selection, setSelection] = useState<ChartCandleSelection>(null);
   const [identitySession, setIdentitySession] = useState(0);
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -220,7 +242,7 @@ export function MarketChart({
   const fittedKeyRef = useRef<string | null>(null);
   const previousPointsRef = useRef<CandlestickData[]>([]);
   const pointsRef = useRef(EMPTY_POINTS);
-  const modeRef = useRef<ChartDisplayMode>("candles");
+  const modeRef = useRef<ChartDisplayMode>(initialPreferences.mode);
   const abortRef = useRef<AbortController | null>(null);
   const exhaustedRef = useRef(false);
   const blockedBeforeRef = useRef<number | null>(null);
@@ -238,6 +260,9 @@ export function MarketChart({
   const handleCrosshairMoveRef = useRef<(param: MouseEventParams) => void>(() => undefined);
   const handleChartClickRef = useRef<(param: MouseEventParams) => void>(() => undefined);
   const handleDrawingKeyDownRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  const handleViewKeyDownRef = useRef<(event: KeyboardEvent) => void>(() => undefined);
+  const resetChartViewRef = useRef<() => void>(() => undefined);
+  const toggleChartFullscreenRef = useRef<() => Promise<void>>(async () => undefined);
   const handleDrawingPointerDownRef = useRef<(event: PointerEvent) => void>(() => undefined);
   const handleDrawingPointerMoveRef = useRef<(event: PointerEvent) => void>(() => undefined);
   const handleDrawingPointerUpRef = useRef<(event: PointerEvent) => void>(() => undefined);
@@ -1292,11 +1317,80 @@ export function MarketChart({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       handleDrawingKeyDownRef.current(event);
+      handleViewKeyDownRef.current(event);
     };
 
     window.addEventListener("keydown", onKeyDown);
     return () => {
       window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
+  useEffect(() => {
+    const onFullscreenChange = () => {
+      setIsFullscreen(document.fullscreenElement === wrapperRef.current);
+    };
+
+    document.addEventListener("fullscreenchange", onFullscreenChange);
+    onFullscreenChange();
+    return () => {
+      document.removeEventListener("fullscreenchange", onFullscreenChange);
+    };
+  }, []);
+
+  useLayoutEffect(() => {
+    resetChartViewRef.current = () => {
+      chartRef.current?.timeScale().fitContent();
+    };
+    toggleChartFullscreenRef.current = async () => {
+      const wrapper = wrapperRef.current;
+
+      if (!wrapper) {
+        return;
+      }
+
+      try {
+        if (document.fullscreenElement === wrapper) {
+          await document.exitFullscreen();
+          return;
+        }
+
+        if (document.fullscreenElement) {
+          return;
+        }
+
+        await wrapper.requestFullscreen();
+      } catch {
+        // Browsers may reject requestFullscreen; keep listening for fullscreenchange.
+      }
+    };
+    handleViewKeyDownRef.current = (event: KeyboardEvent) => {
+      if (event.ctrlKey || event.metaKey || event.altKey) {
+        return;
+      }
+
+      if (event.key !== "f" && event.key !== "F" && event.key !== "r" && event.key !== "R") {
+        return;
+      }
+
+      if (isEditableKeyboardTarget(event.target)) {
+        return;
+      }
+
+      const host = hostRef.current;
+
+      if (!host || document.activeElement !== host) {
+        return;
+      }
+
+      if (event.key === "f" || event.key === "F") {
+        event.preventDefault();
+        void toggleChartFullscreenRef.current();
+        return;
+      }
+
+      event.preventDefault();
+      resetChartViewRef.current();
     };
   }, []);
 
@@ -1309,9 +1403,33 @@ export function MarketChart({
     setDrawingTool(next);
   }
 
+  function changeChartMode(next: ChartDisplayMode): void {
+    modeRef.current = next;
+    setMode(next);
+    writeTradeChartPreferences({ mode: next, indicators: indicatorSettingsRef.current });
+  }
+
+  function changeIndicatorSettings(next: IndicatorSettings): void {
+    indicatorSettingsRef.current = next;
+    setIndicatorSettings(next);
+    writeTradeChartPreferences({ mode: modeRef.current, indicators: next });
+  }
+
+  function resetChartView(): void {
+    resetChartViewRef.current();
+  }
+
+  function toggleChartFullscreen(): void {
+    void toggleChartFullscreenRef.current();
+  }
+
   const oscillatorCount = oscillatorEnabledCount(indicatorSettings);
-  const hostClass = chartHostClass(oscillatorCount);
-  const slotClass = chartSlotClass(oscillatorCount);
+  const hostClass = chartHostClass(oscillatorCount, isFullscreen);
+  const slotClass = chartSlotClass(oscillatorCount, isFullscreen);
+  const wrapperClass = chartWrapperClass(isFullscreen);
+  const paneClass = chartPaneClass(isFullscreen);
+  const chartReady =
+    Boolean(symbol) && hasRenderableData && !candlesQuery.isLoading && !candlesQuery.error;
   const heading = (
     <ChartToolbar
       symbol={symbol}
@@ -1319,17 +1437,26 @@ export function MarketChart({
       mode={mode}
       loadingOlder={loadingOlder}
       indicatorSettings={indicatorSettings}
+      isFullscreen={isFullscreen}
+      chartReady={chartReady}
       onIntervalChange={onIntervalChange}
-      onModeChange={setMode}
-      onIndicatorSettingsChange={setIndicatorSettings}
+      onModeChange={changeChartMode}
+      onIndicatorSettingsChange={changeIndicatorSettings}
       drawingTool={drawingTool}
       onDrawingToolChange={changeDrawingTool}
+      onResetView={resetChartView}
+      onToggleFullscreen={toggleChartFullscreen}
     />
   );
 
   if (!symbol) {
     return (
-      <div className="min-w-0">
+      <div
+        ref={wrapperRef}
+        className={wrapperClass}
+        data-chart-shell=""
+        data-chart-fullscreen={isFullscreen ? "true" : "false"}
+      >
         {heading}
         <div className={slotClass}>
           <EmptyState>Select an instrument to load historical candles.</EmptyState>
@@ -1340,7 +1467,13 @@ export function MarketChart({
 
   if (candlesQuery.isLoading) {
     return (
-      <div className="min-w-0" aria-busy="true">
+      <div
+        ref={wrapperRef}
+        className={wrapperClass}
+        data-chart-shell=""
+        aria-busy="true"
+        data-chart-fullscreen={isFullscreen ? "true" : "false"}
+      >
         {heading}
         <div
           className={`${hostClass} animate-pulse rounded-md bg-surface-subtle`}
@@ -1353,7 +1486,12 @@ export function MarketChart({
 
   if (candlesQuery.error) {
     return (
-      <div className="min-w-0">
+      <div
+        ref={wrapperRef}
+        className={wrapperClass}
+        data-chart-shell=""
+        data-chart-fullscreen={isFullscreen ? "true" : "false"}
+      >
         {heading}
         <div className={slotClass}>
           <ErrorBanner error={candlesQuery.error} />
@@ -1364,7 +1502,12 @@ export function MarketChart({
 
   if (points.candles.length === 0) {
     return (
-      <div className="min-w-0">
+      <div
+        ref={wrapperRef}
+        className={wrapperClass}
+        data-chart-shell=""
+        data-chart-fullscreen={isFullscreen ? "true" : "false"}
+      >
         {heading}
         <div className={slotClass}>
           <EmptyState>No candle data available</EmptyState>
@@ -1383,9 +1526,14 @@ export function MarketChart({
   });
 
   return (
-    <div className="min-w-0">
+    <div
+      ref={wrapperRef}
+      className={wrapperClass}
+      data-chart-shell=""
+      data-chart-fullscreen={isFullscreen ? "true" : "false"}
+    >
       {heading}
-      <div className="relative min-w-0">
+      <div className={paneClass}>
         {legendCandle ? (
           <CandleLegend symbol={symbol} interval={interval} candle={legendCandle} />
         ) : null}
@@ -1408,10 +1556,14 @@ function ChartToolbar({
   loadingOlder,
   indicatorSettings,
   drawingTool,
+  isFullscreen,
+  chartReady,
   onIntervalChange,
   onModeChange,
   onIndicatorSettingsChange,
   onDrawingToolChange,
+  onResetView,
+  onToggleFullscreen,
 }: {
   symbol: string | null;
   interval: CandleInterval;
@@ -1419,13 +1571,19 @@ function ChartToolbar({
   loadingOlder: boolean;
   indicatorSettings: IndicatorSettings;
   drawingTool: DrawingTool;
+  isFullscreen: boolean;
+  chartReady: boolean;
   onIntervalChange: (interval: CandleInterval) => void;
   onModeChange: (mode: ChartDisplayMode) => void;
   onIndicatorSettingsChange: (settings: IndicatorSettings) => void;
   onDrawingToolChange: (tool: DrawingTool) => void;
+  onResetView: () => void;
+  onToggleFullscreen: () => void;
 }) {
+  const fullscreenLabel = isFullscreen ? "Exit fullscreen" : "Enter fullscreen";
+
   return (
-    <div className="mb-2 flex min-w-0 flex-wrap items-center gap-2">
+    <div className="mb-2 flex min-w-0 max-w-full flex-wrap items-center gap-2">
       <h2 className="shrink-0 font-heading text-base text-foreground">{symbol ?? "Chart"}</h2>
       <div
         role="group"
@@ -1472,8 +1630,32 @@ function ChartToolbar({
       </div>
       <IndicatorsMenu settings={indicatorSettings} onSettingsChange={onIndicatorSettingsChange} />
       <DrawingsMenu tool={drawingTool} onToolChange={onDrawingToolChange} />
+      <div role="group" aria-label="Chart view" className="flex shrink-0 items-center gap-1">
+        <Button
+          type="button"
+          size="sm"
+          variant="secondary"
+          aria-label="Reset view"
+          title="Reset view"
+          disabled={!chartReady}
+          onClick={onResetView}
+        >
+          Reset
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          variant={isFullscreen ? "primary" : "secondary"}
+          aria-label={fullscreenLabel}
+          title={fullscreenLabel}
+          aria-pressed={isFullscreen}
+          onClick={onToggleFullscreen}
+        >
+          {isFullscreen ? "Exit" : "Fullscreen"}
+        </Button>
+      </div>
       {loadingOlder ? (
-        <p className="text-xs text-secondary" aria-live="polite">
+        <p className="min-w-0 max-w-full basis-full text-xs text-secondary sm:basis-auto" aria-live="polite">
           Loading older data…
         </p>
       ) : null}

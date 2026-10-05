@@ -199,3 +199,29 @@ describe("D11D1 drawing financial safeguards", () => {
     expect(source).not.toMatch(/candle\.(open|high|low|close|volume)/);
   });
 });
+
+describe("D11E chart preference financial safeguards", () => {
+  it("keeps preference persistence isolated from trading state and number conversion", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/chart/preferences.ts"), "utf8");
+    expect(source).not.toMatch(/\bparseFloat\s*\(/);
+    expect(source).not.toMatch(/\bparseInt\s*\(/);
+    expect(source).not.toMatch(/\bNumber\s*\(/);
+    expect(source).not.toMatch(/\.toFixed\s*\(/);
+    expect(source).not.toMatch(/balance|pnl|margin|qty|execution/i);
+    expect(source).not.toMatch(/@notional\/trading/);
+    expect(source).not.toMatch(/lib\/api\//);
+    expect(source).not.toMatch(/to-chart-candles/);
+    expect(source).not.toMatch(/to-chart-indicators/);
+    expect(source).toMatch(/TRADE_CHART_PREFERENCES_KEY/);
+    expect(source).toMatch(/parseSmaPeriod/);
+    expect(source).toMatch(/parseBollingerMultiplierInput/);
+  });
+
+  it("does not persist drawings, candles, or interval in the preference schema", () => {
+    const source = readFileSync(resolve(process.cwd(), "src/lib/chart/preferences.ts"), "utf8");
+    expect(source).not.toMatch(/drawingsBySymbol/);
+    expect(source).not.toMatch(/selectedDrawingId/);
+    expect(source).toMatch(/mode: ChartDisplayMode/);
+    expect(source).toMatch(/indicators: IndicatorSettings/);
+  });
+});

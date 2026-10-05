@@ -30,6 +30,8 @@ import {
   toChartMacdPoint,
 } from "../../lib/chart/to-chart-indicators.ts";
 import { queryKeys } from "../../lib/query-keys.ts";
+import { TRADE_CHART_PREFERENCES_KEY } from "../../lib/chart/preferences.ts";
+import { DEFAULT_INDICATOR_SETTINGS } from "../../lib/chart/indicators/settings.ts";
 import { ThemeProvider, useTheme } from "../../theme/ThemeProvider.tsx";
 import { ApiError } from "../../lib/api/errors.ts";
 
@@ -670,6 +672,26 @@ function rampedOscillatorCandles(count: number, start: number, step: number): Ca
 const DEFAULT_MACD_PARAMS = { fast: 12, slow: 26, signal: 9 };
 const MACD_HISTOGRAM_COLORS = { positive: "#2ebd85", negative: "#f0544c" };
 
+let fullscreenElement: Element | null = null;
+function enterMockFullscreen(element: Element): void {
+  fullscreenElement = element;
+  document.dispatchEvent(new Event("fullscreenchange"));
+}
+
+function exitMockFullscreen(): void {
+  fullscreenElement = null;
+  document.dispatchEvent(new Event("fullscreenchange"));
+}
+
+const requestFullscreen = vi.fn(function (this: Element) {
+  enterMockFullscreen(this);
+  return Promise.resolve();
+});
+const exitFullscreen = vi.fn(() => {
+  exitMockFullscreen();
+  return Promise.resolve();
+});
+
 function expectedMacdChartData(candles: Candle[]) {
   const points = computeMacd(candles, DEFAULT_MACD_PARAMS) ?? [];
   const lines = toChartMacdLines(points);
@@ -757,6 +779,25 @@ describe("MarketChart", () => {
     marketSocket.candleListeners.clear();
     marketSocket.reconnectListeners.clear();
     mockedGetCandles.mockResolvedValue(btcCandles);
+    localStorage.removeItem(TRADE_CHART_PREFERENCES_KEY);
+    fullscreenElement = null;
+    requestFullscreen.mockReset();
+    requestFullscreen.mockImplementation(function (this: Element) {
+      enterMockFullscreen(this);
+      return Promise.resolve();
+    });
+    exitFullscreen.mockReset();
+    exitFullscreen.mockImplementation(() => {
+      exitMockFullscreen();
+      return Promise.resolve();
+    });
+    Object.defineProperty(document, "fullscreenElement", {
+      configurable: true,
+      get: () => fullscreenElement,
+    });
+    HTMLElement.prototype.requestFullscreen =
+      requestFullscreen as unknown as typeof HTMLElement.prototype.requestFullscreen;
+    document.exitFullscreen = exitFullscreen as unknown as typeof document.exitFullscreen;
   });
 
   it("shows a loading skeleton while historical candles load", () => {
@@ -1514,6 +1555,8 @@ describe("MarketChart", () => {
     emitVisibleRange();
     emitVisibleRange();
     await waitFor(() => expect(screen.getByText("Loading older data…")).toBeInTheDocument());
+    expect(screen.getByText("Loading older data…").className).toContain("basis-full");
+    expect(screen.getByText("Loading older data…").className).toContain("max-w-full");
     await waitFor(() => expect(mockedGetCandles).toHaveBeenCalledTimes(2));
     expect(
       mockedGetCandles.mock.calls.filter((call) => call[0].before !== undefined),
@@ -4500,5 +4543,289 @@ describe("MarketChart", () => {
     addSpy.mockRestore();
     view.unmount();
     hostPointer("pointermove", 80, 90);
+  });
+
+  it("calls requestFullscreen once and reflects fullscreenchange on the wrapper", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const wrapper = document.querySelector("[data-chart-shell]");
+    expect(wrapper).toHaveAttribute("data-chart-fullscreen", "false");
+    expect(screen.getByRole("img").className).toContain("h-72");
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    const overlaySets = overlaySeries.map((series) => series.setData.mock.calls.length);
+    const overlayUpdates = overlaySeries.map((series) => series.update.mock.calls.length);
+    const fitCalls = fitContent.mock.calls.length;
+    const fetchCalls = mockedGetCandles.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Enter fullscreen" }));
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    expect(requestFullscreen.mock.instances[0]).toBe(wrapper);
+    expect(wrapper).toHaveAttribute("data-chart-fullscreen", "true");
+    expect(screen.getByRole("button", { name: "Exit fullscreen" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(screen.getByRole("img").className).toContain("h-full");
+    expect(screen.getByRole("img").className).toContain("flex-1");
+    expect(screen.getByRole("img").className).not.toContain("h-72");
+    expect(wrapper?.className).toContain("h-svh");
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(overlaySeries.map((series) => series.setData.mock.calls.length)).toEqual(overlaySets);
+    expect(overlaySeries.map((series) => series.update.mock.calls.length)).toEqual(overlayUpdates);
+    expect(fitContent.mock.calls.length).toBe(fitCalls);
+    expect(mockedGetCandles.mock.calls.length).toBe(fetchCalls);
+  });
+
+  it("exits fullscreen through document.exitFullscreen without recreating the chart", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Enter fullscreen" }));
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Exit fullscreen" }));
+    expect(exitFullscreen).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("[data-chart-shell]")).toHaveAttribute(
+      "data-chart-fullscreen",
+      "false",
+    );
+    expect(screen.getByRole("button", { name: "Enter fullscreen" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("img").className).toContain("h-72");
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(fitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("handles a rejected requestFullscreen without crashing", async () => {
+    const user = userEvent.setup();
+    requestFullscreen.mockImplementation(() => Promise.reject(new Error("denied")));
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Enter fullscreen" }));
+    await waitFor(() => expect(requestFullscreen).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Enter fullscreen" })).toBeInTheDocument();
+    expect(document.querySelector("[data-chart-shell]")).toHaveAttribute(
+      "data-chart-fullscreen",
+      "false",
+    );
+    expect(createChart).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps drawings intact across fullscreen and does not fitContent", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Trend Line");
+    clickPane(0, 10, 40);
+    clickPane(0, 50, 80);
+    const drawings = drawingPrimitive().getState().drawings;
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    const fitCalls = fitContent.mock.calls.length;
+    await user.click(screen.getByRole("button", { name: "Enter fullscreen" }));
+    expect(drawingPrimitive().getState().drawings).toEqual(drawings);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(fitContent.mock.calls.length).toBe(fitCalls);
+  });
+
+  it("removes the fullscreenchange listener on unmount", async () => {
+    const view = renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const removeSpy = vi.spyOn(document, "removeEventListener");
+    view.unmount();
+    expect(removeSpy).toHaveBeenCalledWith("fullscreenchange", expect.any(Function));
+    removeSpy.mockRestore();
+  });
+
+  it("fits content once from Reset view without recreating or refetching", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const setDataCalls = candlestick.setData.mock.calls.length;
+    const overlaySets = overlaySeries.map((series) => series.setData.mock.calls.length);
+    const fetchCalls = mockedGetCandles.mock.calls.length;
+    fitContent.mockClear();
+    await user.click(screen.getByRole("button", { name: "Reset view" }));
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    expect(createChart).toHaveBeenCalledTimes(1);
+    expect(candlestick.setData.mock.calls.length).toBe(setDataCalls);
+    expect(overlaySeries.map((series) => series.setData.mock.calls.length)).toEqual(overlaySets);
+    expect(mockedGetCandles.mock.calls.length).toBe(fetchCalls);
+  });
+
+  it("fits content from R only when the chart host is focused", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    fitContent.mockClear();
+    screen.getByRole("img").focus();
+    await user.keyboard("r");
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    await user.keyboard("r");
+    expect(fitContent).toHaveBeenCalledTimes(1);
+  });
+
+  it("toggles fullscreen from F only when the chart host is focused", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    await user.keyboard("f");
+    expect(requestFullscreen).not.toHaveBeenCalled();
+    screen.getByRole("img").focus();
+    await user.keyboard("f");
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+    expect(document.querySelector("[data-chart-shell]")).toHaveAttribute(
+      "data-chart-fullscreen",
+      "true",
+    );
+    await user.keyboard("f");
+    expect(exitFullscreen).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores F and R while an editable field is focused", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    fitContent.mockClear();
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    screen.getByLabelText("SMA period").focus();
+    await user.keyboard("f");
+    await user.keyboard("r");
+    expect(requestFullscreen).not.toHaveBeenCalled();
+    expect(fitContent).not.toHaveBeenCalled();
+  });
+
+  it("does not preventDefault on Escape so native fullscreen exit can proceed", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const original = await createSelectedTrend(user);
+    hostPointer("pointerdown", 30, 60);
+    hostPointer("pointermove", 40, 70);
+    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
+    const prevent = vi.spyOn(event, "preventDefault");
+    window.dispatchEvent(event);
+    expect(prevent).not.toHaveBeenCalled();
+    expect(drawingPrimitive().getState().drawings[0]).toEqual(original);
+    expect(drawingPrimitive().getState().selectedId).toBe(original.id);
+    await user.keyboard("{Escape}");
+    expect(drawingPrimitive().getState().selectedId).toBeNull();
+  });
+
+  it("does not duplicate keyboard or fullscreen listeners under Strict Mode", async () => {
+    const user = userEvent.setup();
+    renderChart("BTCUSDT", true);
+    await waitFor(() => expect(createChart).toHaveBeenCalled());
+    screen.getByRole("img").focus();
+    fitContent.mockClear();
+    await user.keyboard("r");
+    expect(fitContent).toHaveBeenCalledTimes(1);
+    await user.keyboard("f");
+    expect(requestFullscreen).toHaveBeenCalledTimes(1);
+  });
+
+  it("restores committed chart mode and indicator settings from preferences", async () => {
+    localStorage.setItem(
+      TRADE_CHART_PREFERENCES_KEY,
+      JSON.stringify({
+        version: 1,
+        mode: "line",
+        indicators: {
+          ...DEFAULT_INDICATOR_SETTINGS,
+          sma: { enabled: true, period: 30 },
+        },
+      }),
+    );
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: "Candles" })).toHaveAttribute("aria-pressed", "false");
+    await waitFor(() => expect(overlaySeries).toHaveLength(1));
+    expect(screen.getByRole("button", { name: "Indicators, 1 enabled" })).toBeInTheDocument();
+  });
+
+  it("writes preferences for committed mode and indicator changes but not interval", async () => {
+    const user = userEvent.setup();
+    const onIntervalChange = vi.fn();
+    renderChart("BTCUSDT", false, { onIntervalChange });
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    expect(JSON.parse(localStorage.getItem(TRADE_CHART_PREFERENCES_KEY) ?? "null")).toEqual({
+      version: 1,
+      mode: "line",
+      indicators: DEFAULT_INDICATOR_SETTINGS,
+    });
+    await user.click(screen.getByRole("button", { name: "Indicators" }));
+    await user.click(screen.getByLabelText("SMA"));
+    expect(JSON.parse(localStorage.getItem(TRADE_CHART_PREFERENCES_KEY) ?? "null")).toEqual({
+      version: 1,
+      mode: "line",
+      indicators: {
+        ...DEFAULT_INDICATOR_SETTINGS,
+        sma: { enabled: true, period: 20 },
+      },
+    });
+    const stored = localStorage.getItem(TRADE_CHART_PREFERENCES_KEY);
+    expect(JSON.parse(stored ?? "null")).not.toHaveProperty("interval");
+    const period = screen.getByLabelText("SMA period");
+    await user.clear(period);
+    await user.type(period, "9999");
+    await user.tab();
+    expect(JSON.parse(localStorage.getItem(TRADE_CHART_PREFERENCES_KEY) ?? "null").indicators.sma.period).toBe(
+      20,
+    );
+    await user.click(screen.getByRole("button", { name: "1h" }));
+    expect(onIntervalChange).toHaveBeenCalledWith("1h");
+    expect(localStorage.getItem(TRADE_CHART_PREFERENCES_KEY)).toBe(stored);
+  });
+
+  it("loads defaults when preference storage is unavailable", async () => {
+    const getItem = vi.spyOn(Storage.prototype, "getItem").mockImplementation(() => {
+      throw new Error("blocked");
+    });
+    const setItem = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("quota");
+    });
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("button", { name: "Candles" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "Line" }));
+    expect(screen.getByRole("button", { name: "Line" })).toHaveAttribute("aria-pressed", "true");
+    getItem.mockRestore();
+    setItem.mockRestore();
+  });
+
+  it("does not persist drawings in chart preferences", async () => {
+    const user = userEvent.setup();
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    await activateDrawingTool(user, "Horizontal Line");
+    clickPane(0, 12, 40);
+    expect(drawingPrimitive().getState().drawings).toHaveLength(1);
+    expect(localStorage.getItem(TRADE_CHART_PREFERENCES_KEY)).toBeNull();
+  });
+
+  it("keeps wrapping toolbar controls and mobile min-width protections", async () => {
+    renderChart();
+    await waitFor(() => expect(createChart).toHaveBeenCalledTimes(1));
+    const toolbar = screen.getByRole("heading", { name: "BTCUSDT" }).parentElement;
+    expect(toolbar?.className).toContain("flex-wrap");
+    expect(toolbar?.className).toContain("min-w-0");
+    expect(toolbar?.className).toContain("max-w-full");
+    expect(screen.getByRole("group", { name: "Chart interval" }).className).toContain("min-w-0");
+    expect(screen.getByRole("button", { name: "15m" }).className).toContain("min-w-11");
+    expect(screen.getByRole("button", { name: "Reset view" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Enter fullscreen" })).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(screen.getByRole("img").className).toContain("h-72");
+    expect(screen.getByRole("img").className).toContain("focus-visible:outline-2");
   });
 });
