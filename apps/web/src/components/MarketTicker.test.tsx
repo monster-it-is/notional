@@ -76,7 +76,7 @@ describe("MarketTicker", () => {
     seedQuote(now);
     render(<MarketTicker symbol="BTCUSDT" instrument={instrument} />);
     expect(screen.getByText("100000.10")).toBeInTheDocument();
-    expect(screen.getAllByText("99999.90").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("99999.90")).toHaveLength(1);
     expect(screen.getByText("99990.00")).toBeInTheDocument();
     expect(screen.getByText("1.2")).toBeInTheDocument();
     expect(screen.getByText("100010.00")).toBeInTheDocument();
@@ -85,7 +85,7 @@ describe("MarketTicker", () => {
     expect(screen.getByText("BTC/USDT")).toBeInTheDocument();
     expect(screen.getByText("PERPETUAL")).toBeInTheDocument();
     expect(screen.getByText("Mark Price")).toBeInTheDocument();
-    expect(screen.getAllByText("Index").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Index")).toHaveLength(1);
     expect(screen.getByText("Bid")).toBeInTheDocument();
     expect(screen.getByText("Ask")).toBeInTheDocument();
     expect(screen.getByText("Funding")).toBeInTheDocument();
@@ -95,8 +95,19 @@ describe("MarketTicker", () => {
     expect(screen.getByText(/Min Qty/)).toBeInTheDocument();
     expect(screen.getByText(/Min Notional/)).toBeInTheDocument();
     expect(screen.getAllByText("qty").length).toBe(2);
-    expect(screen.getByText("Bid").parentElement?.parentElement?.className).toContain("min-w-0");
-    expect(screen.getByText("Bid").parentElement?.parentElement?.className).toContain("grid");
+    const metricGrid = screen.getByText("Bid").parentElement?.parentElement;
+    expect(metricGrid?.className).toContain("min-w-0");
+    expect(metricGrid?.className).toContain("max-w-full");
+    expect(metricGrid?.className).toContain("grid");
+    expect(metricGrid?.className).toContain("grid-cols-2");
+    expect(metricGrid?.className).toContain("sm:grid-cols-3");
+    expect(metricGrid?.className).toContain(
+      "lg:grid-cols-[minmax(190px,240px)_repeat(5,minmax(90px,1fr))]",
+    );
+    const contractRow = screen.getByText(/Tick/).closest("div");
+    expect(contractRow?.className).toContain("border-t");
+    expect(contractRow?.className).toContain("min-w-0");
+    expect(contractRow?.className).toContain("lg:justify-between");
     expect(screen.queryByText(/order book/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/24h/i)).not.toBeInTheDocument();
     expect(screen.queryByText(/open interest/i)).not.toBeInTheDocument();
@@ -198,7 +209,7 @@ describe("MarketTicker", () => {
     expect(mark.className).toContain("min-w-0");
     expect(mark.className).toContain("max-w-full");
 
-    expect(screen.getAllByText(formattedIndex).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(formattedIndex)).toHaveLength(1);
     expect(screen.getByText(formattedBid).textContent).toBe(formattedBid);
     expect(screen.getByText(formattedAsk).textContent).toBe(formattedAsk);
     expect(screen.getByText(formattedBid).className).toContain("text-positive");
@@ -212,6 +223,7 @@ describe("MarketTicker", () => {
     expect(screen.getByText("0.1")).toBeInTheDocument();
     expect(screen.getAllByText("0.001").length).toBe(2);
     expect(container.firstElementChild?.className).toContain("min-w-0");
+    expect(container.firstElementChild?.className).toContain("max-w-full");
     expect(container.firstElementChild?.className).toContain("flex-col");
   });
 
@@ -231,7 +243,7 @@ describe("MarketTicker", () => {
     });
     render(<MarketTicker symbol="BTCUSDT" instrument={instrument} />);
     expect(screen.getByText("2.17822")).toBeInTheDocument();
-    expect(screen.getAllByText("2.17875").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2.17875")).toHaveLength(1);
     expect(screen.getByText("0.00005000")).toBeInTheDocument();
     expect(screen.getByText("20:00 UTC")).toBeInTheDocument();
     expect(screen.queryByText("2026-10-05 20:00:00 UTC")).not.toBeInTheDocument();

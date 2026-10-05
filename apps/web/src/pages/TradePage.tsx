@@ -70,8 +70,8 @@ export function TradePage() {
 
       <Surface as="section" className="min-w-0">
         <h2 className="sr-only">Instrument</h2>
-        <div className="flex min-w-0 flex-col gap-3 xl:flex-row xl:items-start xl:gap-6">
-          <div className="w-full min-w-0 xl:max-w-xs">
+        <div className="grid min-w-0 grid-cols-1 gap-3 md:grid-cols-[minmax(180px,220px)_minmax(0,1fr)] md:items-start md:gap-4">
+          <div className="min-w-0">
             {instrumentsQuery.isLoading ? (
               <p className="text-sm text-secondary">Loading instruments…</p>
             ) : null}
@@ -85,7 +85,7 @@ export function TradePage() {
               />
             )}
           </div>
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0">
             <MarketTicker symbol={symbol} instrument={instrument} />
           </div>
         </div>

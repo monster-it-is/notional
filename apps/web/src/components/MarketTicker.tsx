@@ -30,13 +30,19 @@ export function MarketTicker({
   const pair = instrument ? `${instrument.baseAsset}/${instrument.quoteAsset}` : symbol;
 
   return (
-    <div className="flex min-w-0 flex-col gap-3">
-      <div className="flex min-w-0 flex-col gap-3 lg:flex-row lg:items-end lg:gap-6">
-        <div className="min-w-0 lg:max-w-xs lg:shrink-0">
+    <div className="flex min-w-0 max-w-full flex-col">
+      <div
+        className={cn(
+          "grid min-w-0 max-w-full grid-cols-2 gap-x-4 gap-y-3",
+          "sm:grid-cols-3",
+          "lg:grid-cols-[minmax(190px,240px)_repeat(5,minmax(90px,1fr))] lg:items-start lg:gap-x-4 lg:gap-y-0",
+        )}
+      >
+        <div className="col-span-2 min-w-0 sm:col-span-3 lg:col-span-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-            <p className="font-heading text-base text-foreground">{pair}</p>
+            <p className="font-heading text-base font-medium tracking-tight text-foreground">{pair}</p>
             {instrument ? (
-              <span className="inline-flex items-center rounded-sm border border-warning-border bg-warning-background px-1.5 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide text-accent-ink">
+              <span className="inline-flex items-center rounded-sm border border-warning-border bg-warning-background px-1.5 py-px text-[0.65rem] font-medium uppercase leading-none tracking-wide text-accent-ink">
                 {instrument.contractType}
               </span>
             ) : null}
@@ -48,44 +54,34 @@ export function MarketTicker({
               {statusLabel}
             </span>
           </div>
-          <NumericText className="mt-1.5 block min-w-0 max-w-full overflow-x-auto whitespace-nowrap text-2xl leading-none xl:text-[1.75rem]">
+          <NumericText className="mt-1 block min-w-0 max-w-full overflow-x-auto overflow-y-hidden whitespace-nowrap text-2xl leading-none tracking-tight lg:text-[1.75rem]">
             {displayedMarketPrice(markPrice)}
           </NumericText>
-          <p className="mt-1 text-xs text-secondary">Mark Price</p>
-          {indexPrice ? (
-            <p className="mt-0.5 min-w-0 text-xs text-muted">
-              Index{" "}
-              <NumericText className="text-xs text-muted">
-                {formatAdaptiveMarketPriceDisplay(indexPrice)}
-              </NumericText>
-            </p>
-          ) : null}
+          <p className="mt-1 text-xs uppercase tracking-wide text-secondary">Mark Price</p>
         </div>
-        <div className="grid min-w-0 grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:flex lg:min-w-0 lg:flex-1 lg:flex-wrap lg:items-end lg:gap-x-5 lg:gap-y-3">
-          <TickerField label="Index" value={displayedMarketPrice(indexPrice)} />
-          <TickerField
-            label="Bid"
-            value={displayedMarketPrice(quote?.bbo?.bestBidPrice)}
-            quantity={quote?.bbo?.bestBidQty}
-            tone="bid"
-          />
-          <TickerField
-            label="Ask"
-            value={displayedMarketPrice(quote?.bbo?.bestAskPrice)}
-            quantity={quote?.bbo?.bestAskQty}
-            tone="ask"
-          />
-          <TickerField label="Funding" value={quote?.mark?.fundingRate} />
-          <TickerField
-            label="Next Funding"
-            value={
-              quote?.mark?.nextFundingTime !== undefined
-                ? formatCompactEpochMsUtc(quote.mark.nextFundingTime)
-                : undefined
-            }
-            numeric={false}
-          />
-        </div>
+        <TickerField label="Index" value={displayedMarketPrice(indexPrice)} />
+        <TickerField
+          label="Bid"
+          value={displayedMarketPrice(quote?.bbo?.bestBidPrice)}
+          quantity={quote?.bbo?.bestBidQty}
+          tone="bid"
+        />
+        <TickerField
+          label="Ask"
+          value={displayedMarketPrice(quote?.bbo?.bestAskPrice)}
+          quantity={quote?.bbo?.bestAskQty}
+          tone="ask"
+        />
+        <TickerField label="Funding" value={quote?.mark?.fundingRate} />
+        <TickerField
+          label="Next Funding"
+          value={
+            quote?.mark?.nextFundingTime !== undefined
+              ? formatCompactEpochMsUtc(quote.mark.nextFundingTime)
+              : undefined
+          }
+          numeric={false}
+        />
       </div>
       {instrument ? <ContractConstraints instrument={instrument} /> : null}
     </div>
@@ -122,17 +118,17 @@ function TickerField({
       {numeric ? (
         <NumericText
           className={cn(
-            "block min-w-0 max-w-full overflow-x-auto whitespace-nowrap text-sm",
+            "mt-1 block min-w-0 max-w-full overflow-x-auto overflow-y-hidden whitespace-nowrap text-sm leading-none",
             priceClass,
           )}
         >
           {value ?? "—"}
         </NumericText>
       ) : (
-        <p className="font-numeric text-sm text-foreground">{value ?? "—"}</p>
+        <p className="mt-1 font-numeric text-sm leading-none text-foreground">{value ?? "—"}</p>
       )}
       {quantity !== undefined ? (
-        <p className="min-w-0 max-w-full overflow-x-auto whitespace-nowrap text-xs text-secondary">
+        <p className="mt-1 min-w-0 max-w-full overflow-x-auto overflow-y-hidden whitespace-nowrap text-xs text-secondary">
           <NumericText className="text-xs text-secondary">{quantity}</NumericText>
           <span className="text-muted"> qty</span>
         </p>
@@ -143,7 +139,7 @@ function TickerField({
 
 function ContractConstraints({ instrument }: { instrument: InstrumentResponse }) {
   return (
-    <div className="flex min-w-0 max-w-full flex-wrap gap-x-3 gap-y-1 text-xs text-muted">
+    <div className="mt-2 flex min-w-0 max-w-full flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-border pt-1.5 text-xs text-muted lg:flex-nowrap lg:justify-between">
       <span className="whitespace-nowrap">
         Tick <NumericText className="text-xs text-muted">{instrument.tickSize}</NumericText>
       </span>
