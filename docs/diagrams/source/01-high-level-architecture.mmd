@@ -1,0 +1,27 @@
+flowchart LR
+  Browser[Browser] --> SPA["React / Vite SPA"]
+  SPA -->|"REST and WebSocket"| HTTP
+
+  subgraph API["Fastify API — modular monolith, one process"]
+    direction TB
+    HTTP[HTTP and WebSocket]
+    HTTP --> Auth[Better Auth]
+    HTTP --> Market[Market data]
+    HTTP --> Orders[Order placement]
+    Orders --> Matcher[Limit matcher]
+    Auth --> DB["@notional/db"]
+    Orders --> DB
+    Matcher --> DB
+    Liq[Liquidation scanner] --> DB
+    Funding[Funding scanner] --> DB
+    DB -->|"post-commit notify"| RT[WebSocket fanout]
+    Market -->|"quote and candle fanout"| RT
+  end
+
+  Binance["Binance public market data"] -->|"Market data only"| Market
+  DB --> PG[(PostgreSQL)]
+
+  classDef neutral fill:#f5f5f4,stroke:#57534e,color:#1c1917
+  classDef external fill:#eff6ff,stroke:#1e40af,color:#1e3a8a
+  class Browser,SPA,HTTP,Auth,Market,Orders,Matcher,Liq,Funding,RT,DB,PG neutral
+  class Binance external

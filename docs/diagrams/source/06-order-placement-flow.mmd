@@ -1,0 +1,32 @@
+sequenceDiagram
+  participant User
+  participant SPA as React SPA
+  participant API as Fastify
+  participant Auth as Better Auth
+  participant PG as PostgreSQL
+  participant Store as Market store
+  participant Math as @notional/trading
+  participant RT as Realtime
+
+  User->>SPA: Order and Idempotency-Key
+  SPA->>API: POST /api/orders
+  API->>Auth: getSession
+  API->>PG: Resolve account and instrument
+  API->>PG: Replay lookup by key
+  alt Same fingerprint already stored
+    API-->>SPA: 200 existing order
+  else New placement
+    API->>PG: BEGIN and lock paper_account
+    API->>PG: Funding barrier and position locks
+    API->>Store: Fresh BBO, and mark if required
+    API->>Math: Filters, margin, fill price
+    alt Resting limit
+      API->>PG: Insert OPEN trade_order
+    else Immediate fill
+      API->>PG: Order, execution, position, wallet, ledger
+    end
+    API->>PG: COMMIT
+    API->>RT: private.invalidate
+    API-->>SPA: 201 OrderResponse
+  end
+  Note over API,Store: No Binance order. Users do not match each other.

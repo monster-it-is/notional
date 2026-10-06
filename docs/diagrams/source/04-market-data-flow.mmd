@@ -1,0 +1,35 @@
+flowchart TB
+  subgraph Binance["Binance public market data"]
+    direction LR
+    subgraph BRest["REST"]
+      direction TB
+      EX["exchangeInfo"]
+      QuoteREST["premiumIndex, bookTicker"]
+      KlineREST["/fapi/v1/klines"]
+    end
+    subgraph BWs["WebSocket"]
+      direction TB
+      MarkWS["markPrice"]
+      BookWS["bookTicker"]
+      KlineWS["klines"]
+    end
+  end
+
+  EX --> Sync[Catalog sync] --> PG[(PostgreSQL<br/>instrument)]
+  QuoteREST --> Runtime
+  MarkWS --> Runtime
+  BookWS --> Runtime
+  KlineWS --> Runtime[Market-data runtime]
+  Runtime --> Store["Process-local store<br/>mark, index, funding reference, BBO"]
+  Store --> API[Fastify]
+  Runtime -->|"market.candle<br/>not kept in the quote store"| API
+  KlineREST -->|"historical candles<br/>no server cache"| API
+  API -->|"REST snapshot and /ws/market"| SPA[React application]
+  SPA -.-> Note["Browser never connects<br/>directly to Binance"]
+
+  classDef neutral fill:#f5f5f4,stroke:#57534e,color:#1c1917
+  classDef external fill:#eff6ff,stroke:#1e40af,color:#1e3a8a
+  classDef note fill:#fafaf9,stroke:#a8a29e,color:#44403c
+  class EX,QuoteREST,MarkWS,BookWS,KlineWS,KlineREST external
+  class Sync,Runtime,Store,API,SPA,PG neutral
+  class Note note

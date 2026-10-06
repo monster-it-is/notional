@@ -1,0 +1,15 @@
+flowchart LR
+  Web[apps/web]
+  API[apps/api]
+  Contracts["@notional/contracts"]
+  DB["@notional/db"]
+  Trading["@notional/trading"]
+
+  Web -->|"types"| Contracts
+  Web -->|"display math and landing lab"| Trading
+  API -->|"types"| Contracts
+  API -->|"schema and ledger"| DB
+  API -->|"order, margin, PnL, funding math"| Trading
+
+  classDef neutral fill:#f5f5f4,stroke:#57534e,color:#1c1917
+  class Web,API,Contracts,DB,Trading neutral

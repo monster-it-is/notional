@@ -1,0 +1,24 @@
+flowchart TB
+  REST["Binance REST /fapi/v1/klines"]
+  WS["Binance kline WebSocket"]
+
+  REST --> Hist["Notional API<br/>GET /api/market-data/:symbol/candles"]
+  WS --> Live["Market runtime<br/>refcounted kline feed"]
+  Live -->|"market.candle"| Cache
+  Hist --> Cache["TanStack Query candle cache<br/>OHLC and volume stay decimal strings"]
+
+  Cache --> ChartConv["Chart render conversion<br/>Number at render boundary only"]
+  ChartConv --> Chart[Lightweight Charts]
+
+  Cache --> IndEngine["IndicatorDecimal / indicator engine<br/>SMA, EMA, RSI, MACD, Bollinger"]
+  IndEngine --> IndConv["Indicator render conversion<br/>Number at render boundary only"]
+  IndConv --> Chart
+
+  Drawings["Drawings — browser-only UI/chart state<br/>trend line, horizontal line"] --> Chart
+
+  classDef neutral fill:#f5f5f4,stroke:#57534e,color:#1c1917
+  classDef external fill:#eff6ff,stroke:#1e40af,color:#1e3a8a
+  classDef boundary fill:#fafaf9,stroke:#57534e,color:#1c1917
+  class REST,WS external
+  class Hist,Live,Cache,Chart,IndEngine,Drawings neutral
+  class ChartConv,IndConv boundary

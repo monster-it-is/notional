@@ -1,0 +1,25 @@
+sequenceDiagram
+  participant Browser
+  participant SPA as React SPA
+  participant API as Fastify
+  participant BA as Better Auth
+  participant PG as PostgreSQL
+
+  Browser->>SPA: Email and password
+  SPA->>API: POST /api/auth/sign-in/email
+  API->>BA: auth.handler
+  BA->>PG: Read user and credential account
+  BA-->>API: Session cookie response
+  API-->>Browser: HttpOnly session cookie
+  Note over Browser,API: No JWT. Cookie is host-only, SameSite=Lax
+  SPA->>API: GET /api/account with cookie
+  API->>BA: getSession
+  BA->>PG: Load session
+  alt Signup allocation exists
+    API-->>SPA: 200 AccountResponse
+  else Account not initialized
+    API-->>SPA: 409 ACCOUNT_NOT_INITIALIZED
+    SPA->>API: POST /api/account/initialize
+    API->>PG: Paper account, ledger, balance
+    API-->>SPA: 200 AccountResponse
+  end

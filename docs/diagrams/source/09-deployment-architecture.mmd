@@ -1,0 +1,13 @@
+flowchart LR
+  subgraph Topo["Repository-defined production topology<br/>Provider-neutral. Not a host inventory."]
+    direction LR
+    Browser[Browser] -->|"only public web origin"| Web["notional-web<br/>nginx :80"]
+    Web -->|"SPA, plus proxy /api /health /ready /ws"| API["notional-api<br/>Fastify :3000"]
+    API --> PG[(PostgreSQL)]
+    API -->|"Market data only"| Binance["Binance public REST and WebSocket"]
+  end
+
+  classDef neutral fill:#f5f5f4,stroke:#57534e,color:#1c1917
+  classDef external fill:#eff6ff,stroke:#1e40af,color:#1e3a8a
+  class Browser,Web,API,PG neutral
+  class Binance external

@@ -1,0 +1,61 @@
+flowchart TB
+  subgraph auth["Better Auth"]
+    direction LR
+    userNode[user]
+    sessionNode[session]
+    credNode["account — credentials, not paper_account"]
+    verifyNode["verification — no foreign key"]
+    userNode -->|"user_id"| sessionNode
+    userNode -->|"user_id"| credNode
+  end
+
+  subgraph trading["Trading"]
+    paperNode[paper_account]
+    instrumentNode[instrument]
+    orderNode[trade_order]
+    positionNode[trading_position]
+    executionNode[execution]
+    liqNode[liquidation_event]
+    paperNode -->|"paper_account_id"| orderNode
+    paperNode -->|"paper_account_id"| positionNode
+    paperNode -->|"paper_account_id"| liqNode
+    instrumentNode -->|"instrument_id"| orderNode
+    instrumentNode -->|"instrument_id"| positionNode
+    instrumentNode -->|"instrument_id, nullable"| liqNode
+    orderNode -->|"order_id"| executionNode
+    liqNode -->|"liquidation_event_id, nullable"| orderNode
+  end
+
+  userNode -->|"user_id"| paperNode
+
+  subgraph ledger["Ledger"]
+    txnNode[ledger_transaction]
+    lacctNode["ledger_account<br/>system rows: paper_account_id null"]
+    entryNode[ledger_entry]
+    feventNode["funding_event"]
+    txnNode -->|"ledger_transaction_id"| entryNode
+    lacctNode -->|"ledger_account_id"| entryNode
+    txnNode -->|"ledger_transaction_id"| feventNode
+  end
+
+  paperNode -->|"paper_account_id"| txnNode
+  paperNode -->|"paper_account_id, nullable"| lacctNode
+  paperNode -->|"paper_account_id"| feventNode
+
+  subgraph funding["Perpetual Funding"]
+    srcNode[perp_funding_source_state]
+    cycleNode[perp_funding_cycle]
+    asetNode[perp_funding_account_settlement]
+    psetNode[perp_funding_settlement]
+    cycleNode -->|"funding_cycle_id"| psetNode
+    asetNode -->|"account_settlement_id"| psetNode
+  end
+
+  instrumentNode -->|"instrument_id"| srcNode
+  instrumentNode -->|"instrument_id"| cycleNode
+  paperNode -->|"paper_account_id"| asetNode
+  paperNode -->|"paper_account_id"| psetNode
+  positionNode -->|"position_id"| psetNode
+
+  classDef neutral fill:#f5f5f4,stroke:#57534e,color:#1c1917
+  class userNode,sessionNode,credNode,verifyNode,paperNode,instrumentNode,orderNode,positionNode,executionNode,liqNode,txnNode,lacctNode,entryNode,feventNode,srcNode,cycleNode,asetNode,psetNode neutral

@@ -1164,7 +1164,7 @@ Phase 18B deploys the Phase 18A production topology to Render without changing f
 
 ## ADR-040 — Northflank Developer Sandbox for zero-cost public demo deployment
 
-Status: Accepted (repository configuration in progress; not deployed)
+Status: Accepted (demo deployed)
 
 Phase 18B.2 records the hosting change after ADR-039. Phase 18A and ADR-038 remain the production-hardening and provider-independent operations architecture. This ADR does not change financial or domain behavior. Northflank Developer Sandbox is a public portfolio/demo environment. Provider documentation does not position that sandbox for production applications.
 
